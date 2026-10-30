@@ -1,0 +1,2 @@
+ShoppingApp connector write test — 2026-10-30
+Created in a separate test branch. No application files changed.
