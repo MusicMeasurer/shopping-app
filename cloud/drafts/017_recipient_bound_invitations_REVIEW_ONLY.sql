@@ -1,8 +1,13 @@
 -- ShoppingApp migration 017 DRAFT: recipient-bound, one-use invitations.
 -- Review only. DO NOT execute until independently reviewed and approved.
--- Product decision 2026-10-31: in-app inbox, explicit accept/decline, owner revoke;
--- no push notifications in current scope. Recipient lookup and safe display RPCs
--- remain to be designed; current migration is NOT feature-complete.
+-- Product decision 2026-10-31: in-app inbox and sent invitations,
+-- explicit accept/decline, owner revoke; no push notifications in current scope.
+-- PRIORITY RULE: a revoke request competing with an uncommitted acceptance
+-- must win. Existing row-lock approach CANNOT guarantee this: a transaction
+-- that obtains the lock first wins. This migration MUST NOT BE EXECUTED until
+-- a precise concurrency contract and implementation are approved/tested.
+-- A committed acceptance predating a revoke request is a membership removal,
+-- not a retroactive invitation revoke. Recipient discovery UX remains open.
 -- Depends on installed 001..016. All invitation mutations take the list lock first.
 create table public.list_invitations (
  token uuid primary key default gen_random_uuid(),
@@ -13,8 +18,13 @@ create table public.list_invitations (
  expires_at timestamptz not null,
  accepted_at timestamptz,
  revoked_at timestamptz,
+ declined_at timestamptz,
  constraint invitation_expiry check (expires_at > created_at),
- constraint invitation_terminal check (accepted_at is null or revoked_at is null)
+ constraint invitation_terminal check (
+   (case when accepted_at is null then 0 else 1 end) +
+   (case when revoked_at is null then 0 else 1 end) +
+   (case when declined_at is null then 0 else 1 end) <= 1
+ )
 );
 create index list_invitations_list_idx on public.list_invitations(list_id);
 alter table public.list_invitations enable row level security;
@@ -45,7 +55,7 @@ begin
  -- Revoke older pending invitations to this same recipient for this list.
  update public.list_invitations set revoked_at=now()
    where list_id=p_list and recipient_id=p_recipient
-     and accepted_at is null and revoked_at is null;
+     and accepted_at is null and revoked_at is null and declined_at is null;
  insert into public.list_invitations(list_id,recipient_id,created_by,expires_at)
  values(p_list,p_recipient,v_actor,now()+interval '24 hours')
  returning token into v_token;
@@ -70,7 +80,8 @@ begin
  if not found then raise exception 'Invitation unavailable'; end if;
  select * into v_inv from public.list_invitations where token=p_token for update;
  if not found or v_inv.list_id<>v_list or v_inv.recipient_id<>v_actor
-    or v_inv.revoked_at is not null or v_inv.accepted_at is not null
+    or v_inv.revoked_at is not null or v_inv.declined_at is not null
+    or v_inv.accepted_at is not null
     or v_inv.expires_at<=now() then
    raise exception 'Invitation unavailable';
  end if;
@@ -107,11 +118,85 @@ grant execute on function public.create_list_invitation(uuid,uuid) to authentica
 grant execute on function public.accept_list_invitation(uuid) to authenticated;
 grant execute on function public.revoke_list_invitation(uuid) to authenticated;
 
--- TODO: add recipient-scoped inbox RPC (without exposing bearer tokens to other users),
--- decline RPC, owner-scoped sent-invitations listing, and recipient discovery policy.
--- Owner revoke RPC already exists above. No push notification integration.
+
+-- Recipient-only inbox. No invitation bearer token is exposed to other users.
+-- token is used as an opaque invitation ID by the authenticated recipient.
+create or replace function public.get_incoming_list_invitations()
+returns table(invitation_id uuid, list_id uuid, list_name text,
+              invited_at timestamptz, expires_at timestamptz)
+language sql stable security definer set search_path = ''
+as $
+ select i.token, i.list_id, l.name, i.created_at, i.expires_at
+ from public.list_invitations i
+ join public.shopping_lists l on l.id=i.list_id
+ where i.recipient_id=(select auth.uid())
+   and i.accepted_at is null and i.revoked_at is null
+   and i.declined_at is null and i.expires_at>now()
+   and l.deleted_at is null
+ order by i.created_at desc;
+$;
+
+-- Owner-only sent-invitation listing. Recipient UUID is exposed to the owner
+-- who supplied it, not to other list members or outsiders.
+create or replace function public.get_sent_list_invitations(p_list uuid)
+returns table(invitation_id uuid, recipient_id uuid,
+              invited_at timestamptz, expires_at timestamptz,
+              status text)
+language plpgsql stable security definer set search_path = ''
+as $
+begin
+ if auth.uid() is null or not public.is_list_owner(p_list) then
+   raise exception 'List unavailable';
+ end if;
+ return query
+ select i.token,i.recipient_id,i.created_at,i.expires_at,
+  case when i.revoked_at is not null then 'revoked'
+       when i.declined_at is not null then 'declined'
+       when i.accepted_at is not null then 'accepted'
+       when i.expires_at<=now() then 'expired'
+       else 'pending' end
+ from public.list_invitations i where i.list_id=p_list
+ order by i.created_at desc;
+end;
+$;
+
+-- Decline is an authenticated recipient-only operation. Same lock order as
+-- accept/revoke: list row first, invitation row second.
+create or replace function public.decline_list_invitation(p_token uuid)
+returns void language plpgsql security definer set search_path = ''
+as $
+declare v_actor uuid := auth.uid(); v_list uuid;
+begin
+ if current_setting('transaction_isolation') <> 'read committed' then
+   raise exception 'Operation requires READ COMMITTED isolation' using errcode='0A000';
+ end if;
+ if v_actor is null or p_token is null then raise exception 'Invitation unavailable'; end if;
+ select list_id into v_list from public.list_invitations
+  where token=p_token and recipient_id=v_actor;
+ if not found then raise exception 'Invitation unavailable'; end if;
+ perform 1 from public.shopping_lists
+  where id=v_list and deleted_at is null for update;
+ if not found then raise exception 'Invitation unavailable'; end if;
+ update public.list_invitations set declined_at=now()
+ where token=p_token and recipient_id=v_actor and accepted_at is null
+   and revoked_at is null and declined_at is null and expires_at>now();
+ if not found then raise exception 'Invitation unavailable'; end if;
+end;
+$;
+
+revoke all on function public.get_incoming_list_invitations() from public, anon;
+revoke all on function public.get_sent_list_invitations(uuid) from public, anon;
+revoke all on function public.decline_list_invitation(uuid) from public, anon;
+grant execute on function public.get_incoming_list_invitations() to authenticated;
+grant execute on function public.get_sent_list_invitations(uuid) to authenticated;
+grant execute on function public.decline_list_invitation(uuid) to authenticated;
+
+-- TODO BEFORE EXECUTION: implement and prove revoke-over-accept priority under
+-- concurrent requests. Also resolve safe recipient discovery, audit function
+-- ownership/permissions and test in a disposable database. No push integration.
 -- Required validation before application:
 -- owner invite, outsider invite denied, wrong recipient denied, expiry,
--- revoke, replay, membership visibility, owner revocation, concurrent accept/revoke,
+-- revoke, decline, inbox/sent visibility, replay, membership visibility,
+-- owner revocation, concurrent accept/revoke priority,
 -- direct REST table read/write denied, and role/function privilege audit.
 -- Invitation UUID is a bearer secret: never log or share it publicly.
