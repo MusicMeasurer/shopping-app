@@ -20,3 +20,9 @@ Implementation note: use database server time for finalize_after and recheck it 
 Boundary: priority holds for revokes processed before finalization. A request delayed by network until after finalization cannot retroactively win. Agree this contract before coding.
 
 Needed operations: create, list incoming, list sent, accept request, finalize, decline, revoke. Recipient discovery must not leak other users. Verify RLS, SECURITY DEFINER grants, row lock order, expiry, replay and concurrent accept/revoke tests.
+
+## Approved ownership-transfer rule (2026-10-31)
+
+On transfer of shopping list ownership, all unfinished invitations for that list (pending and accept_requested/processing) MUST be revoked atomically in the SAME database transaction as the ownership change. Accepted memberships remain unchanged; already declined/revoked/expired invitations retain their historical state. The new owner can create fresh invitations.
+
+Implementation: the ownership-transfer RPC must lock the list row first (same lock ordering as invitation mutation RPCs), revoke unfinished invitation rows, and transfer ownership before committing. A competing finalize must either commit before ownership transfer (membership remains) or observe the revoked invitation after transfer and fail. Do not implement this as two separate client/API requests. Test both serialization orders and verify no unaccepted invitation remains usable after transfer. Existing transfer_list_ownership must be audited and changed as needed before migration 017 is deployed.
