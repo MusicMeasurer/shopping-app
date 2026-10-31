@@ -117,7 +117,14 @@ begin
  select * into v_inv from public.list_invitations where token=p_token for update;
  if not found or v_inv.recipient_id<>v_actor or v_inv.revoked_at is not null
    or v_inv.declined_at is not null then raise exception 'Invitation unavailable'; end if;
- if v_inv.accepted_at is not null then return v_list; end if;
+ -- A replay after acceptance must not silently restore a membership
+ -- that the owner subsequently removed.
+ if v_inv.accepted_at is not null then
+  if exists(select 1 from public.list_members where list_id=v_list and user_id=v_actor)
+   then return v_list;
+  end if;
+  raise exception 'Invitation already consumed';
+ end if;
  if v_inv.finalize_after is null or clock_timestamp()<v_inv.finalize_after
    or v_inv.expires_at<=clock_timestamp() then
   raise exception 'Invitation not ready or expired';
@@ -167,7 +174,7 @@ returns table(invitation_id uuid, list_id uuid, list_name text,
 language sql stable security definer set search_path = ''
 as $$
  select i.token, i.list_id, l.name, i.created_at, i.expires_at,
-  case when i.accept_requested_at is not null then 'processing' when i.accept_requested_at is not null then 'processing'
+  case when i.accept_requested_at is not null then 'processing'
        else 'pending' end
  from public.list_invitations i
  join public.shopping_lists l on l.id=i.list_id
@@ -196,6 +203,7 @@ begin
        when i.declined_at is not null then 'declined'
        when i.accepted_at is not null then 'accepted'
        when i.expires_at<=now() then 'expired'
+       when i.accept_requested_at is not null then 'processing'
        else 'pending' end
  from public.list_invitations i where i.list_id=p_list
  order by i.created_at desc;
@@ -233,6 +241,10 @@ grant execute on function public.get_incoming_list_invitations() to authenticate
 grant execute on function public.get_sent_list_invitations(uuid) to authenticated;
 grant execute on function public.decline_list_invitation(uuid) to authenticated;
 
+-- REVIEW FINDING: after the grace deadline, finalize and revoke still race
+-- for the list lock. Whichever acquires it first wins; the agreed priority
+-- applies to revokes committed during the grace window, NOT to every
+-- overlapping HTTP request. Must test and explicitly accept this boundary.
 -- TODO BEFORE EXECUTION: prove revoke-over-accept priority with concurrency tests,
 -- resolve safe recipient discovery, audit function
 -- ownership/permissions and test in a disposable database. No push integration.
