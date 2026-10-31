@@ -6,12 +6,16 @@ Requirements: in-app inbox and sent invitation list, explicit accept/decline, ow
 
 Existing SQL 017 locks rows but does not guarantee owner priority. Do not deploy it.
 
+Approved by product owner 2026-10-31: three-second grace period, with a visible processing state; network delays may extend the perceived wait. The three seconds are measured by the server, not by a client timer. Never show success or grant access until the server confirms finalized acceptance. If the client disconnects, reopening the app must reconcile the pending state.
+
 Proposed two-phase protocol:
 1. Accept request changes pending to accept_requested, without adding list membership. Record finalize_after timestamp.
 2. Owner may revoke both pending and accept_requested before finalization.
 3. Finalization after a short grace window rechecks invitation state under list and invitation locks, then atomically inserts membership and marks accepted.
 4. Client displays processing until finalization confirms accepted. Recovery must work if client closes.
 5. After finalization, revoke invitation cannot undo accepted membership; owner must remove the member.
+
+Implementation note: use database server time for finalize_after and recheck it in the finalization transaction. A pending acceptance must not grant list membership, including through existing access-check RPCs. Handle expiry, decline and revoke during the pending phase. Ensure finalization can be retried safely after a client crash; do not require an always-running paid background worker.
 
 Boundary: priority holds for revokes processed before finalization. A request delayed by network until after finalization cannot retroactively win. Agree this contract before coding.
 
