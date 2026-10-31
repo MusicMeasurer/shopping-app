@@ -165,7 +165,7 @@ create or replace function public.get_incoming_list_invitations()
 returns table(invitation_id uuid, list_id uuid, list_name text,
               invited_at timestamptz, expires_at timestamptz, status text)
 language sql stable security definer set search_path = ''
-as $
+as $$
  select i.token, i.list_id, l.name, i.created_at, i.expires_at,
   case when i.accept_requested_at is not null then 'processing' when i.accept_requested_at is not null then 'processing'
        else 'pending' end
@@ -176,7 +176,7 @@ as $
    and i.declined_at is null and i.expires_at>now()
    and l.deleted_at is null
  order by i.created_at desc;
-$;
+$$;
 
 -- Owner-only sent-invitation listing. Recipient UUID is exposed to the owner
 -- who supplied it, not to other list members or outsiders.
@@ -185,7 +185,7 @@ returns table(invitation_id uuid, recipient_id uuid,
               invited_at timestamptz, expires_at timestamptz,
               status text)
 language plpgsql stable security definer set search_path = ''
-as $
+as $$
 begin
  if auth.uid() is null or not public.is_list_owner(p_list) then
    raise exception 'List unavailable';
@@ -200,13 +200,13 @@ begin
  from public.list_invitations i where i.list_id=p_list
  order by i.created_at desc;
 end;
-$;
+$$;
 
 -- Decline is an authenticated recipient-only operation. Same lock order as
 -- accept/revoke: list row first, invitation row second.
 create or replace function public.decline_list_invitation(p_token uuid)
 returns void language plpgsql security definer set search_path = ''
-as $
+as $$
 declare v_actor uuid := auth.uid(); v_list uuid;
 begin
  if current_setting('transaction_isolation') <> 'read committed' then
@@ -224,7 +224,7 @@ begin
    and revoked_at is null and declined_at is null and expires_at>now();
  if not found then raise exception 'Invitation unavailable'; end if;
 end;
-$;
+$$;
 
 revoke all on function public.get_incoming_list_invitations() from public, anon;
 revoke all on function public.get_sent_list_invitations(uuid) from public, anon;
