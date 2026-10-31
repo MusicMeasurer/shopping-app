@@ -241,11 +241,58 @@ grant execute on function public.get_incoming_list_invitations() to authenticate
 grant execute on function public.get_sent_list_invitations(uuid) to authenticated;
 grant execute on function public.decline_list_invitation(uuid) to authenticated;
 
+-- Ownership transfer integration (replaces the existing 001..016 RPC).
+-- This MUST be deployed together with invitation table/functions: the same
+-- list-row lock serializes transfers, creation, acceptance and finalization.
+-- Unfinished invitations are revoked in the transfer transaction.
+-- Already accepted members are not removed by this invitation revocation.
+create or replace function public.transfer_list_ownership(p_list uuid,p_new_owner uuid)
+returns void language plpgsql security definer set search_path = ''
+as $
+declare v_actor uuid := auth.uid();
+declare v_old_owner uuid;
+begin
+ if current_setting('transaction_isolation') <> 'read committed' then
+  raise exception 'Operation requires READ COMMITTED isolation'
+    using errcode = '0A000';
+ end if;
+ if v_actor is null or p_list is null or p_new_owner is null then
+  raise exception 'Missing actor or identifiers';
+ end if;
+ select owner_id into v_old_owner from public.shopping_lists
+  where id = p_list and deleted_at is null for update;
+ if not found or v_old_owner <> v_actor then
+  raise exception 'Only current owner can transfer';
+ end if;
+ if p_new_owner = v_old_owner then
+  raise exception 'New owner must be a member';
+ end if;
+ if not exists (select 1 from public.list_members
+   where list_id=p_list and user_id=p_new_owner) then
+  raise exception 'New owner must be a current member';
+ end if;
+ -- Must precede the ownership change and commit atomically with it.
+ update public.list_invitations set revoked_at=clock_timestamp()
+  where list_id=p_list and accepted_at is null
+    and revoked_at is null and declined_at is null;
+ delete from public.list_members
+  where list_id=p_list and user_id=p_new_owner;
+ update public.shopping_lists set owner_id=p_new_owner where id=p_list;
+ insert into public.list_members(list_id,user_id)
+  values(p_list,v_old_owner);
+ insert into public.ownership_events(list_id,old_owner,new_owner,reason)
+  values(p_list,v_old_owner,p_new_owner,'voluntary');
+ insert into public.user_notifications(recipient_id,list_id,event_type,payload)
+  values(p_new_owner,p_list,'ownership_received',
+   jsonb_build_object('list_id',p_list,'previous_owner',v_old_owner));
+end;
+$;
+
 -- REVIEW FINDING: after the grace deadline, finalize and revoke still race
 -- for the list lock. Whichever acquires it first wins; the agreed priority
 -- applies to revokes committed during the grace window, NOT to every
 -- overlapping HTTP request. Must test and explicitly accept this boundary.
--- TODO BEFORE EXECUTION: prove revoke-over-accept priority with concurrency tests,
+-- TODO BEFORE EXECUTION: prove revoke-over-accept and ownership-transfer races with concurrency tests,
 -- resolve safe recipient discovery, audit function
 -- ownership/permissions and test in a disposable database. No push integration.
 -- Required validation before application:
