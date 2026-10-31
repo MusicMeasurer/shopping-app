@@ -2,10 +2,11 @@
 -- Review only. DO NOT execute until independently reviewed and approved.
 -- Product decision 2026-10-31: in-app inbox and sent invitations,
 -- explicit accept/decline, owner revoke; no push notifications in current scope.
--- PRIORITY RULE: a revoke request competing with an uncommitted acceptance
--- must win. Existing row-lock approach CANNOT guarantee this: a transaction
--- that obtains the lock first wins. This migration MUST NOT BE EXECUTED until
--- a precise concurrency contract and implementation are approved/tested.
+-- Approved 3-second server-side grace window: accept requests do not grant
+-- membership; owner may revoke before finalization. Finalization is explicit
+-- and retryable. This guarantees revoke priority DURING THE PENDING WINDOW,
+-- not for a network-delayed revoke arriving after finalization.
+-- REVIEW ONLY: no concurrent tests or live database validation yet.
 -- A committed acceptance predating a revoke request is a membership removal,
 -- not a retroactive invitation revoke. Recipient discovery UX remains open.
 -- Depends on installed 001..016. All invitation mutations take the list lock first.
@@ -19,7 +20,10 @@ create table public.list_invitations (
  accepted_at timestamptz,
  revoked_at timestamptz,
  declined_at timestamptz,
+ accept_requested_at timestamptz,
+ finalize_after timestamptz,
  constraint invitation_expiry check (expires_at > created_at),
+ constraint invitation_pending_pair check ((accept_requested_at is null) = (finalize_after is null)),
  constraint invitation_terminal check (
    (case when accepted_at is null then 0 else 1 end) +
    (case when revoked_at is null then 0 else 1 end) +
@@ -63,31 +67,64 @@ begin
 end;
 $$;
 
+-- Phase 1: request acceptance, never grant membership here.
 create or replace function public.accept_list_invitation(p_token uuid)
+returns timestamptz language plpgsql security definer set search_path = ''
+as $$
+declare v_actor uuid := auth.uid(); v_list uuid; v_inv public.list_invitations%rowtype;
+begin
+ if current_setting('transaction_isolation') <> 'read committed' then
+  raise exception 'Operation requires READ COMMITTED isolation' using errcode='0A000';
+ end if;
+ if v_actor is null or p_token is null then raise exception 'Invitation unavailable'; end if;
+ select list_id into v_list from public.list_invitations
+  where token=p_token and recipient_id=v_actor;
+ if not found then raise exception 'Invitation unavailable'; end if;
+ perform 1 from public.shopping_lists where id=v_list and deleted_at is null for update;
+ if not found then raise exception 'Invitation unavailable'; end if;
+ select * into v_inv from public.list_invitations where token=p_token for update;
+ if not found or v_inv.recipient_id<>v_actor or v_inv.revoked_at is not null
+    or v_inv.declined_at is not null or v_inv.accepted_at is not null
+    or v_inv.expires_at<=clock_timestamp() then
+  raise exception 'Invitation unavailable';
+ end if;
+ if v_inv.accept_requested_at is null then
+  update public.list_invitations
+   set accept_requested_at=clock_timestamp(),
+       finalize_after=clock_timestamp()+interval '3 seconds'
+   where token=p_token returning finalize_after into v_inv.finalize_after;
+ end if;
+ return v_inv.finalize_after;
+end;
+$$;
+
+-- Phase 2: recipient-triggered, retryable finalization. The list lock serializes
+-- with owner revoke. A revoke that commits before finalization wins.
+create or replace function public.finalize_list_invitation(p_token uuid)
 returns uuid language plpgsql security definer set search_path = ''
 as $$
 declare v_actor uuid := auth.uid(); v_list uuid; v_inv public.list_invitations%rowtype;
 begin
  if current_setting('transaction_isolation') <> 'read committed' then
-   raise exception 'Operation requires READ COMMITTED isolation' using errcode='0A000';
+  raise exception 'Operation requires READ COMMITTED isolation' using errcode='0A000';
  end if;
  if v_actor is null or p_token is null then raise exception 'Invitation unavailable'; end if;
- -- Read only the list identifier first; lock list before invitation to match
- -- create/revoke/member-removal lock ordering.
- select list_id into v_list from public.list_invitations where token=p_token;
+ select list_id into v_list from public.list_invitations
+  where token=p_token and recipient_id=v_actor;
  if not found then raise exception 'Invitation unavailable'; end if;
  perform 1 from public.shopping_lists where id=v_list and deleted_at is null for update;
  if not found then raise exception 'Invitation unavailable'; end if;
  select * into v_inv from public.list_invitations where token=p_token for update;
- if not found or v_inv.list_id<>v_list or v_inv.recipient_id<>v_actor
-    or v_inv.revoked_at is not null or v_inv.declined_at is not null
-    or v_inv.accepted_at is not null
-    or v_inv.expires_at<=now() then
-   raise exception 'Invitation unavailable';
+ if not found or v_inv.recipient_id<>v_actor or v_inv.revoked_at is not null
+   or v_inv.declined_at is not null then raise exception 'Invitation unavailable'; end if;
+ if v_inv.accepted_at is not null then return v_list; end if;
+ if v_inv.finalize_after is null or clock_timestamp()<v_inv.finalize_after
+   or v_inv.expires_at<=clock_timestamp() then
+  raise exception 'Invitation not ready or expired';
  end if;
  insert into public.list_members(list_id,user_id) values(v_list,v_actor)
- on conflict do nothing;
- update public.list_invitations set accepted_at=now() where token=p_token;
+  on conflict do nothing;
+ update public.list_invitations set accepted_at=clock_timestamp() where token=p_token;
  return v_list;
 end;
 $$;
@@ -107,15 +144,18 @@ begin
    where id=v_list and deleted_at is null for update;
  if not found or v_owner<>v_actor then raise exception 'Invitation unavailable'; end if;
  update public.list_invitations set revoked_at=now()
-   where token=p_token and accepted_at is null and revoked_at is null;
+   where token=p_token and accepted_at is null and revoked_at is null
+   and declined_at is null;
 end;
 $$;
 
 revoke all on function public.create_list_invitation(uuid,uuid) from public, anon;
 revoke all on function public.accept_list_invitation(uuid) from public, anon;
+revoke all on function public.finalize_list_invitation(uuid) from public, anon;
 revoke all on function public.revoke_list_invitation(uuid) from public, anon;
 grant execute on function public.create_list_invitation(uuid,uuid) to authenticated;
 grant execute on function public.accept_list_invitation(uuid) to authenticated;
+grant execute on function public.finalize_list_invitation(uuid) to authenticated;
 grant execute on function public.revoke_list_invitation(uuid) to authenticated;
 
 
@@ -123,10 +163,12 @@ grant execute on function public.revoke_list_invitation(uuid) to authenticated;
 -- token is used as an opaque invitation ID by the authenticated recipient.
 create or replace function public.get_incoming_list_invitations()
 returns table(invitation_id uuid, list_id uuid, list_name text,
-              invited_at timestamptz, expires_at timestamptz)
+              invited_at timestamptz, expires_at timestamptz, status text)
 language sql stable security definer set search_path = ''
 as $
- select i.token, i.list_id, l.name, i.created_at, i.expires_at
+ select i.token, i.list_id, l.name, i.created_at, i.expires_at,
+  case when i.accept_requested_at is not null then 'processing' when i.accept_requested_at is not null then 'processing'
+       else 'pending' end
  from public.list_invitations i
  join public.shopping_lists l on l.id=i.list_id
  where i.recipient_id=(select auth.uid())
@@ -191,8 +233,8 @@ grant execute on function public.get_incoming_list_invitations() to authenticate
 grant execute on function public.get_sent_list_invitations(uuid) to authenticated;
 grant execute on function public.decline_list_invitation(uuid) to authenticated;
 
--- TODO BEFORE EXECUTION: implement and prove revoke-over-accept priority under
--- concurrent requests. Also resolve safe recipient discovery, audit function
+-- TODO BEFORE EXECUTION: prove revoke-over-accept priority with concurrency tests,
+-- resolve safe recipient discovery, audit function
 -- ownership/permissions and test in a disposable database. No push integration.
 -- Required validation before application:
 -- owner invite, outsider invite denied, wrong recipient denied, expiry,
