@@ -28,9 +28,22 @@ Create three real Auth test identities A (list owner), B (invitee), C (outsider)
 | I18 | Two concurrent finalize calls for same invite | At most one membership row; consistent accepted state |
 | I19 | A revokes during processing concurrently with B finalizing before deadline | Revoke wins; membership absent |
 | I20 | A revokes after deadline concurrently with B finalizing | Outcome may depend on list lock order; document exact observed order |
-| I21 | B accepts after ownership transfer/removal/deletion of list | Rejected or policy-consistent; no privilege escalation |
+| I21 | B accepts after ownership transfer/removal/deletion of list | Rejected; no privilege escalation |
 | I22 | Other list member attempts to invite/revoke | Rejected |
 | I23 | Account A/B removed during pending invite | FK behavior and permissions remain consistent |
+
+## Ownership-transfer integration tests (approved requirement)
+| ID | Operation | Expected result |
+| --- | --- | --- |
+| T01 | A transfers list to existing member C with B's invitation pending | B invite revoked atomically; B cannot accept/finalize |
+| T02 | A transfers list to C while B's acceptance is processing | B invite revoked atomically; B cannot finalize |
+| T03 | B finalizes and commits membership BEFORE A transfers to C | B remains a member; invitation remains accepted |
+| T04 | A transfers to C BEFORE B finalizes | B finalization fails; no membership created |
+| T05 | A transfers to C; C creates a fresh invite for B | New invite works; old revoked invite cannot be reused |
+| T06 | A transfers to C; verify A and all other existing members | A becomes member, C becomes owner, others retain membership |
+| T07 | Transfer fails due to invalid new owner or transaction error | No invitations revoked; original owner unchanged |
+
+Perform T03/T04 with two concurrent sessions and verify final state. The transfer RPC and invitation RPCs must lock the list row in the same order. Do not split revocation and transfer into two API requests.
 
 ## Concurrency protocol (two independent DB sessions or two authenticated HTTP clients)
 1. Start with a fresh invite; have B request acceptance and capture the server-returned finalize_after.
@@ -59,7 +72,7 @@ where table_schema='public' and table_name='list_invitations';
 
 ## Release gates
 - Parse and compile migration on a disposable PostgreSQL/Supabase instance.
-- All I01–I23 pass, including real concurrency trials; investigate failures, never mark skipped as passed.
+- All I01–I23 and T01–T07 pass, including real concurrency trials; investigate failures, never mark skipped as passed.
 - Independently audit SECURITY DEFINER, RLS, grants, ownership and existing membership-changing RPCs.
 - Resolve recipient discovery without exposing account directory.
 - Only then request explicit approval to apply a reviewed migration to the shared test project.
