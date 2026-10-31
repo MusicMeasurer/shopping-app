@@ -1,5 +1,8 @@
 -- ShoppingApp migration 017 DRAFT: recipient-bound, one-use invitations.
 -- Review only. DO NOT execute until independently reviewed and approved.
+-- Product decision 2026-10-31: in-app inbox, explicit accept/decline, owner revoke;
+-- no push notifications in current scope. Recipient lookup and safe display RPCs
+-- remain to be designed; current migration is NOT feature-complete.
 -- Depends on installed 001..016. All invitation mutations take the list lock first.
 create table public.list_invitations (
  token uuid primary key default gen_random_uuid(),
@@ -104,6 +107,9 @@ grant execute on function public.create_list_invitation(uuid,uuid) to authentica
 grant execute on function public.accept_list_invitation(uuid) to authenticated;
 grant execute on function public.revoke_list_invitation(uuid) to authenticated;
 
+-- TODO: add recipient-scoped inbox RPC (without exposing bearer tokens to other users),
+-- decline RPC, owner-scoped sent-invitations listing, and recipient discovery policy.
+-- Owner revoke RPC already exists above. No push notification integration.
 -- Required validation before application:
 -- owner invite, outsider invite denied, wrong recipient denied, expiry,
 -- revoke, replay, membership visibility, owner revocation, concurrent accept/revoke,
