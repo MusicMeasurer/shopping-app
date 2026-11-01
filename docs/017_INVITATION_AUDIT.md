@@ -16,3 +16,10 @@ Disposable GitHub Actions run 6 passed invitation, race and expiry_revoke jobs. 
 ## Release decision
 
 Deployment blocked pending fixes, adversarial tests and independent security review.
+
+## Audit progress — 2026-11-01
+
+- User screenshot confirms disposable audit workflow #4 succeeded (21 seconds), including static role privilege checks, owner/outsider scenarios and transaction-delay expiry regression.
+- Additional SQL role-execution and concurrent list-lock expiry tests are committed to the feature branch but their run results are not verified.
+- Automatic GitHub Actions push trigger was added on the feature branch; the available GitHub connector does not list push-triggered runs, so auto-execution is still unverified. No claims of passing CI should be made without run evidence.
+- Still required: confirm automated CI execution, fix any failing tests, inspect hosted Supabase ACL/extension configuration, and obtain independent security review before deployment.
