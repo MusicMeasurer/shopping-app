@@ -96,7 +96,9 @@ jobs:
           FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
           WHERE n.nspname='public' AND c.relkind IN ('r','p')
           UNION ALL
-          SELECT 'function|' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+          SELECT 'function|' || p.proname || '(' ||
+                 COALESCE((SELECT string_agg(format_type(a.argtype, NULL), ',' ORDER BY a.ord)
+                   FROM unnest(p.proargtypes::oid[]) WITH ORDINALITY AS a(argtype,ord)), '') || ')'
           FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
           WHERE n.nspname='public'
           UNION ALL
