@@ -30,6 +30,14 @@ WITH expected_tables(name) AS (
   CROSS JOIN (VALUES ('anon'),('authenticated')) r(rolname)
   WHERE n.nspname='public' AND p.proname='prepare_account_deletion'
     AND has_function_privilege(r.rolname, p.oid, 'EXECUTE')
+), public_function_checks AS (
+  SELECT 'unsafe_public_function_execute' AS violation,
+    p.proname || ':' || pg_get_function_identity_arguments(p.oid) AS object_name
+  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+  WHERE n.nspname='public'
+    AND p.proname IN ('apply_item_change','pull_item_changes',
+      'remove_list_member','transfer_list_ownership','prepare_account_deletion')
+    AND has_function_privilege('anon', p.oid, 'EXECUTE')
 ), effective_checks AS (
   SELECT 'unsafe_effective_table_privilege' AS violation,
     x.tablename||':'||x.role_name||':'||x.priv AS object_name
@@ -47,5 +55,6 @@ SELECT * FROM table_checks
 UNION ALL SELECT * FROM prohibited_grants
 UNION ALL SELECT * FROM expected_grants
 UNION ALL SELECT * FROM function_checks
+UNION ALL SELECT * FROM public_function_checks
 UNION ALL SELECT * FROM effective_checks
 ORDER BY violation, object_name;
