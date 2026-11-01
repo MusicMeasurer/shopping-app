@@ -62,3 +62,20 @@ Source: SQL Editor output provided by the user from the disposable migration lab
 - Invitation-specific functions: not present in the returned function list.
 
 Assessment: no mismatch identified in the tested configuration. These results do not validate RLS row behavior, complete migration history, hosted API/JWT behavior, or migration 017 security. Deployment remains blocked pending review and explicit approval.
+
+## Conditional approval and execution gate (2026-11-01)
+
+User authorized applying candidate migration 017 **only** to disposable project `shoppingapp-migration-lab` (`gmrqeubhotjpmtwokfeq`), **after** verifying a schema backup and a workable recovery path. Data API must remain OFF; other projects must not be touched. This is conditional authorization, **not** evidence of backup verification or migration execution.
+
+### Operator checklist — stop before migration until all items verified
+
+- [ ] Confirm Supabase dashboard project ref is exactly `gmrqeubhotjpmtwokfeq`; verify Data API remains OFF.
+- [ ] Obtain a current schema-only backup of the **target lab** including public/auth-related schema definitions, functions, grants, triggers and RLS policies as supported; record where it is stored privately (never commit secrets or user data).
+- [ ] Verify the backup is readable and can restore into a **separate disposable recovery database**, or otherwise demonstrate an actual tested recovery procedure. A downloaded backup alone is insufficient.
+- [ ] Confirm the recovery procedure covers newly created 017 objects and dependent functions; do not assume that simply running `DROP TABLE` safely reverses 017. Capture the baseline schema and 001–016 migration state.
+- [ ] Re-review the exact candidate SQL at the pinned commit and its SHA-256 checksum; check migration 017 has not already been applied.
+- [ ] Check for conflicts or destructive statements and confirm extension/function resolution against hosted PostgreSQL 17.11.
+- [ ] Only then apply 017 via an explicitly selected SQL editor session for the exact target lab; capture sanitized outcome and read-only post-migration schema/privilege snapshot.
+- [ ] Keep Data API OFF throughout. Do not claim H01–H15 are complete; real JWT/RPC tests require a separate approved API access plan.
+
+**Current execution state:** backup and recovery verification not yet evidenced; migration 017 **not applied by assistant**. No direct Supabase connector available in this session. Do not request or share service-role keys, database passwords, JWTs or invitation secrets in chat.
