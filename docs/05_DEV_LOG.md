@@ -56,6 +56,8 @@
 
 15. **Role-safe regression:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41280564663 failed because the new test queried the invitation table under `authenticated`, which correctly lacks direct SELECT. Updated the daily quota test to use only owner-authorized RPC calls and a fixed 8-cycle fixture (`b8ecb1b`). CI pending; no hosted writes.
 
+16. **Rolling-window fixture correction:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41281042542 failed with `daily cap bypass` because the expiry fixture had also been backdated 25 hours, removing one row from the 24-hour issuance count. Increased the test's revoke/create cycles from 8 to 9 (`d5eef87`). CI pending; SQL candidate unchanged.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
