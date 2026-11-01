@@ -34,7 +34,7 @@ BEGIN
 END $$;
 RESET ROLE;
 -- Simulate expiry of one unconsumed invitation in this disposable test transaction.
-UPDATE public.list_invitation_links SET expires_at=clock_timestamp()-interval '1 second'
+UPDATE public.list_invitation_links SET created_at=clock_timestamp()-interval '25 hours', expires_at=clock_timestamp()-interval '1 second'
 WHERE id=(SELECT id FROM public.list_invitation_links
  WHERE list_id='10000000-0000-4000-8000-000000000081'
  AND revoked_at IS NULL AND accepted_at IS NULL
