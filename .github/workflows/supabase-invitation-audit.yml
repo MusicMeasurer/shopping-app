@@ -100,6 +100,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: write
     steps:
       - name: Publish audit result to draft PR 1
         env:
@@ -124,5 +125,7 @@ jobs:
           lines += [f"| {label} | {env.get(key) or 'not run'} |" for label,key in fields]
           lines += ["", "Only disposable PostgreSQL; not a hosted Supabase security certification."]
           body="\n".join(lines)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write(body+'\n')
           subprocess.run(["gh","api",f"repos/{env['GITHUB_REPOSITORY']}/issues/1/comments","-X","POST","-f",f"body={body}"],check=True)
           PY
