@@ -38,3 +38,9 @@ No service_role credentials in client, logs or repository. Do not run on origina
 - cloud/drafts/OWNERSHIP_TRANSFER_RULES.md explicitly requires serialization against membership changes and transfers; add invite issuance/acceptance/revocation races to the test plan.
 - Requirement documents state FR-010 is a later product stage and 017 is REVIEW_ONLY, not deployed or integration-tested.
 - Blocker: obtain exact 017 SQL path/content (or draft a new review-only implementation) before claiming implementation matches these invariants.
+
+## Updated product decision 2026-11-01
+- Invitations use a shareable bearer link claimable by the first authenticated user to explicitly accept. No recipient email/account binding.
+- Opening, link previews, or sign-up MUST NOT consume the invitation. Atomic first-claim-wins acceptance and membership insert.
+- Negative cases: anonymous opening, preview bot, two simultaneous claimants, replay by same/different user, expired/revoked link, current owner attempting to join, revocation during claim, ownership transfer during claim.
+- Threat model: anyone holding a leaked link may claim it; mitigate with strong token, hashed storage, expiration, explicit confirmation and owner revocation. Prior recipient-bound tests are superseded.
