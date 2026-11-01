@@ -4,11 +4,13 @@ create table public.list_invitation_links (
  id uuid primary key default gen_random_uuid(),
  list_id uuid not null references public.shopping_lists(id) on delete cascade,
  token_hash text not null unique,
- created_by uuid not null references auth.users(id),
+ -- Invitation records are ephemeral; remove them if the issuer deletes their account.
+ created_by uuid not null references auth.users(id) on delete cascade,
  created_at timestamptz not null default now(),
  expires_at timestamptz not null,
  accepted_at timestamptz,
- accepted_by uuid references auth.users(id),
+ -- Delete accepted invitation history if the accepting account is deleted.
+ accepted_by uuid references auth.users(id) on delete cascade,
  revoked_at timestamptz,
  check (expires_at > created_at),
  check ((accepted_at is null) = (accepted_by is null))
