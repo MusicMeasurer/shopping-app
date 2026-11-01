@@ -20,6 +20,8 @@
 
 10. **Pending cap boundary regressions:** extended the disposable test to confirm revoked and expired links free capacity (`39ede11`). CI result not yet verified. The pending cap is still not a request-rate limit.
 
+11. **CI failure and repair:** expanded pending-limit test at `39ede11` failed due to malformed PL/pgSQL dollar quoting in test source (run https://github.com/MusicMeasurer/shopping-app/actions/runs/41279338542), not a demonstrated application defect. Corrected quoting at `8fdb019`; rerun outcome pending verification.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
