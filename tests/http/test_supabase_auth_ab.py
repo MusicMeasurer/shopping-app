@@ -60,9 +60,7 @@ def main():
         a, b = sign_in("A"), sign_in("B")
         if a == b:
             raise AssertionError("Identical access tokens")
-        list_id = os.environ.get("SHOPPINGAPP_TEST_LIST_A")
-        if not list_id:
-            raise AssertionError("A list ID is not configured")
+        list_id = discover_owned_list(api, a)
         owner = get_list(a, list_id)
         other = get_list(b, list_id)
         anonymous = get_list(None, list_id)
