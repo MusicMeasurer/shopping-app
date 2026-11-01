@@ -21,7 +21,7 @@ BEGIN
  OR has_function_privilege('anon','public.accept_list_invitation_link(text)','EXECUTE')
  OR has_function_privilege('anon','public.revoke_list_invitation_link(uuid)','EXECUTE')
  OR has_function_privilege('anon','public.list_pending_invitation_links(uuid)','EXECUTE')
- OR has_function_privilege('PUBLIC','public.accept_list_invitation_link(text)','EXECUTE') THEN
+ OR has_function_privilege('anon','public.accept_list_invitation_link(text)','EXECUTE') THEN
   RAISE EXCEPTION 'anonymous function execution exposed';
  END IF;
  IF NOT has_function_privilege('authenticated','public.accept_list_invitation_link(text)','EXECUTE')
