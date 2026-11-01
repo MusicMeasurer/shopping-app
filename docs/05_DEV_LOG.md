@@ -176,3 +176,8 @@
 - Independently read GitHub Actions bot report for exact commit `a98d44d`: **success, eight of eight checks success**, run https://github.com/MusicMeasurer/shopping-app/actions/runs/41299125168 ; PR comment https://github.com/MusicMeasurer/shopping-app/pull/1#issuecomment-6556932695 .
 - `tests/http/README.md` updated on feature branch (`655412ea8c854cc4dd937a22ec54517b7e48fba3`) to distinguish prior partial real HTTP tests from invitation 017 HTTP tests not yet executed.
 - All new evidence remains disposable PostgreSQL only. Invitation 017 is REVIEW_ONLY. Do not merge draft PR #1 or deploy to Supabase without independent review and real HTTP/upgrade verification.
+
+## 2026-11-01 · Nine-check invitation 017 CI green
+- Added pre-017 existing-data fixture and post-upgrade verification on feature branch (`fe754c0`, `0945518`), wired into workflow (`dee0b0c`). The first nine-check run failed from fixture UUID collision with wall-clock expiry test; no product defect was established by that failure.
+- Isolated fixture UUIDs in seed and verification (`a222ac6`, `3a9bdce`). Independently retrieved the GitHub Actions bot report for exact latest commit `3a9bdce854122f9d0934842667f3d1f25566ed86`: **success, all nine checks success**. Run: https://github.com/MusicMeasurer/shopping-app/actions/runs/41300642982 ; PR comment https://github.com/MusicMeasurer/shopping-app/pull/1#issuecomment-6557138166 .
+- Verified scope: disposable PostgreSQL 16 with Auth shim, including upgrade of existing list/member/item fixtures. NOT a real Supabase Auth/HTTP invitation test or production upgrade proof. Migration 017 remains REVIEW_ONLY; no live DB changes, PR merge or paid service actions.
