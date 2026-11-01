@@ -31,7 +31,7 @@ begin
  if not found then raise exception 'Permission denied'; end if;
  v_token := encode(extensions.gen_random_bytes(32),'hex');
  insert into public.list_invitation_links(list_id,token_hash,created_by,expires_at)
- values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,now()+interval '7 days');
+ values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,now()+interval '24 hours');
  return v_token;
 end;
 $$;
