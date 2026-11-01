@@ -30,6 +30,12 @@ COMMIT;
 SQL
 holder=$!
 sleep 0.5
+# Fail early if lock holder has already crashed; never count unrelated failures as success.
+if ! kill -0 "$holder" 2>/dev/null; then
+  echo 'FAIL: lock holder exited before claim began'
+  cat /tmp/invite-lock-holder.log
+  exit 1
+fi
 set +e
 psql -v ON_ERROR_STOP=1 -v invite_token="$token" <<'SQL' >/tmp/invite-lock-claim.log 2>&1
 BEGIN;
