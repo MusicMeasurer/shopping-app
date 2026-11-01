@@ -58,6 +58,8 @@
 
 16. **Rolling-window fixture correction:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41281042542 failed with `daily cap bypass` because the expiry fixture had also been backdated 25 hours, removing one row from the 24-hour issuance count. Increased the test's revoke/create cycles from 8 to 9 (`d5eef87`). CI pending; SQL candidate unchanged.
 
+17. **CI green:** all seven disposable PostgreSQL checks passed on `d5eef874c72b0fc46698f53223afa897a2fc3a8c`, run https://github.com/MusicMeasurer/shopping-app/actions/runs/41281240482 (audit regressions, expiry, privileges, role execution, concurrency, deletion lifecycle, invitation caps). This does **not** certify hosted Supabase Auth/JWT/PostgREST, gateway throttling, or client token hygiene. User explicitly set a hard gate: finish all planned database/cloud tests before starting Siri. Hosted migration 017 remains unapplied pending separate approval.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
