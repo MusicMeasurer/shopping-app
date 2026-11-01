@@ -194,3 +194,8 @@
 - Supabase security advisor reported `rls_enabled_no_policy` INFO for four RPC-only tables and `auth_leaked_password_protection` WARN (Auth setting). Neither is newly demonstrated exploitable flaw in 017; Auth warning is a distinct configuration hardening item. Do not classify all advisor findings as new vulnerabilities. No HTTP/JWT invitation execution yet.
 - **Process corrective action:** adopt a fixed audit matrix before further migrations: migration pre/post snapshots of all relevant fields and schema objects, existing-function behavioral regressions, explicit grant/RLS checks, advisors baseline-versus-delta classification (new regression vs inherited warning vs intentional deny-by-default), real Auth HTTP checks only as separate acceptance gate. Freeze scope and track findings with severity, evidence, owner, disposition; avoid claiming 'complete security audit' from SQL-only CI.
 - Migration 017 lab verification is closed **within this bounded scope**. Production readiness/security certification is NOT claimed; draft stays REVIEW_ONLY, no prod DB changes.
+
+## 2026-11-01 · Explicit decision: audit governance becomes mandatory development principle
+- Илья согласовал включение процесса проверок и аудита в обязательные принципы разработки.
+- `docs/00_DEVELOPMENT_PRINCIPLES.md` updated in commit `6f34e94f19a7f9d5bc15d1f769882b54b9659000`: fixed audit scope and acceptance criteria, unified findings classification/registry, evidence-based closeout with explicit coverage limits, pre/post migration snapshots and regressions. Extended pre-change checklist.
+- This is a process improvement, not evidence of a newly discovered vulnerability or a production release approval.
