@@ -120,3 +120,8 @@
 - No 017 SQL file appears in PR #1 changed filenames; its exact content/path has not been located, so no 017 implementation review is claimed.
 - Existing 009 ownership transfer has no pending-invitation invalidation; this is an integration requirement for future invitation implementation.
 - Updated invitation security plan on feature branch. Status: REVIEW ONLY; no migrations or Supabase changes; Data API remains disabled.
+
+## 2026-11-01 · Invitation protocol design 017 drafted (review only)
+- Created `cloud/drafts/017_INVITATIONS_DESIGN_REVIEW_ONLY.md` on feature/cloud-schema-draft.
+- Proposed owner-only, recipient-bound invitation acceptance; list-row lock ordering; atomic membership creation and revocation on ownership transfer; explicit test gates and open product decisions.
+- No executable 017 SQL migration created or applied. No tests run. Supabase Data API remains disabled.
