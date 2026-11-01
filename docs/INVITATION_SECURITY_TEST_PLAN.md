@@ -31,3 +31,10 @@ Status: DESIGN / NOT RUN. FR-010 is a subsequent product stage; migration 017 re
 5. Record run ID, PASS/FAIL and limitations in docs/05_DEV_LOG.md.
 
 No service_role credentials in client, logs or repository. Do not run on original security lab or production.
+
+## Cross-check against available repository sources (2026-11-01)
+- The PR #1 changed-file inventory contains no migration file named 017. This does **not** prove no 017 exists elsewhere; the SQL for 017 has not been located or reviewed. Do not claim a source-code audit of 017.
+- Existing cloud/drafts/009_transfer_ownership.sql requires a current member as successor and atomically updates owner/member rows and notification, but contains no invitation invalidation. This is a missing integration requirement once invitations are implemented.
+- cloud/drafts/OWNERSHIP_TRANSFER_RULES.md explicitly requires serialization against membership changes and transfers; add invite issuance/acceptance/revocation races to the test plan.
+- Requirement documents state FR-010 is a later product stage and 017 is REVIEW_ONLY, not deployed or integration-tested.
+- Blocker: obtain exact 017 SQL path/content (or draft a new review-only implementation) before claiming implementation matches these invariants.
