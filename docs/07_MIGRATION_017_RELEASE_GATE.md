@@ -14,12 +14,12 @@
 | Baseline-vs-delta security advisors | hosted lab advisor: four RLS-no-policy informational findings, Auth leaked-password protection warning; no pre-017 advisor baseline | OPEN (classification recorded, delta not provable) |
 | Backup, recovery, rollout and rollback | no target production project confirmed, no tested recovery plan | OPEN |
 | Independent security review and release approval | not demonstrated for exact release candidate | OPEN |
-| Product decision: first authenticated claimant vs recipient binding | SQL explicitly implements first claimant; earlier design proposed recipient-bound; ensure requirements/UX acceptance | OPEN |
+| Invitation acceptance product rule | User explicitly confirmed: first authenticated claimant, **only if not already a member of the list**; no recipient binding. SQL 017 checks membership and rejects existing members | DECIDED; behavior verified in SQL logic, real HTTP gate still open |
 
 ## Release order
 
 1. Confirm which database is production; do not infer from project name. Obtain explicit approval before any production operation.
-2. Freeze migration file and exact commit; reconcile first-claimant invitation behavior with requirements.
+2. Freeze migration file and exact commit; preserve approved invitation contract: first authenticated non-member may claim a valid single-use link; existing members and the owner cannot claim it. Add/retain negative tests for both cases.
 3. Run controlled **new isolated rehearsal** with pre/post snapshots (data, functions, policies, grants, advisor baseline) and existing RPC regressions. Existing hosted lab cannot retrospectively supply pre-migration snapshots.
 4. Run real Auth HTTP checks on a lab with disposable fixtures and cleanup. Data API may require explicit temporary enablement; do not enable without checking current state and agreeing on the test window. No secrets in GitHub.
 5. Independent security review of release candidate and evidence-based closeout.
