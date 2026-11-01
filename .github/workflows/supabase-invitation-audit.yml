@@ -54,3 +54,6 @@ jobs:
 
       - name: Verify wall-clock expiry after transaction delay
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_wallclock_expiry.sql
+
+      - name: Verify direct privileges and owner outsider access
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_permissions.sql
