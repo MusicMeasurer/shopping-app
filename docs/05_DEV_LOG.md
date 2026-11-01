@@ -15,6 +15,9 @@
 
 7. **Timestamp consistency follow-up:** issuance now records both `created_at` and `expires_at` from the same post-lock wall-clock instant (`a65b68d`). This prevents a long-running transaction from producing a created_at/expiry inversion. CI result for this commit pending verification.
 
+8. **CI confirmation:** the timestamp fix at `a65b68d` passed all seven disposable PostgreSQL checks (run https://github.com/MusicMeasurer/shopping-app/actions/runs/41279184911). The later documentation-only commits do not change SQL test evidence.
+9. **Hosted test preparation:** documented a 15-case approval-gated Supabase Auth/JWT/RPC/RLS and app-security test matrix in `docs/017_HOSTED_INTEGRATION_TEST_PLAN.md` (`20ae3e8`). Plan only; not executed; Data API remains OFF.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
