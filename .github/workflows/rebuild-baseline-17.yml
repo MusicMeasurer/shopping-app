@@ -6,6 +6,7 @@ on:
     paths:
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - '.github/workflows/rebuild-baseline-17.yml'
+      - 'tests/sql/hosted_baseline_object_names.txt'
 permissions:
   contents: read
 jobs:
@@ -88,6 +89,30 @@ jobs:
           SQL
           test -s /tmp/baseline-inventory.txt
           cat /tmp/baseline-inventory.txt
+      - name: Compare application object names against hosted inventory
+        run: |
+          psql -At -v ON_ERROR_STOP=1 <<'SQL' | LC_ALL=C sort > /tmp/actual-object-names.txt
+          SELECT 'table|' || c.relname
+          FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname='public' AND c.relkind IN ('r','p')
+          UNION ALL
+          SELECT 'function|' || p.proname || '(' || pg_get_function_identity_arguments(p.oid) || ')'
+          FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+          WHERE n.nspname='public'
+          UNION ALL
+          SELECT 'policy|public.' || tablename || '.' || policyname
+          FROM pg_policies WHERE schemaname='public'
+          UNION ALL
+          SELECT 'trigger|' || c.relname || '.' || t.tgname
+          FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid
+          JOIN pg_namespace n ON n.oid=c.relnamespace
+          WHERE n.nspname='public' AND NOT t.tgisinternal
+          UNION ALL
+          SELECT 'index|public.' || indexname
+          FROM pg_indexes WHERE schemaname='public';
+          SQL
+          LC_ALL=C sort tests/sql/hosted_baseline_object_names.txt > /tmp/expected-object-names.txt
+          diff -u /tmp/expected-object-names.txt /tmp/actual-object-names.txt
       - name: Summarize limits
         run: |
           {
