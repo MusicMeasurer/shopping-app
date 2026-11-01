@@ -17,7 +17,7 @@ Recipient must accept invitation before gaining access; outsiders cannot access 
 
 ## Open product decisions
 1. DECIDED: shareable invitation link. Link acceptance requires sign-in and must be bound to the intended recipient account; define how recipient identity is established without account enumeration before SQL implementation.
-2. Proposed expiration 7 days (not yet approved).
+2. Proposed expiration 24 hours (approved 2026-11-01).
 3. Owner-only invitations versus delegation.
 4. Notification and invitation discovery UX.
 
@@ -35,5 +35,8 @@ User selected invitation by link, not email. Link is a delivery mechanism, not p
 - Opening or previewing the link MUST NOT consume it. Only an explicit authenticated Accept action claims it.
 - First successfully committed acceptance wins. Acceptance atomically creates membership and consumes the token, with concurrency-safe locking and uniqueness.
 - Link is a bearer capability: a forwarded/stolen link can be claimed by an unintended person. UI must explain this; owner can revoke before acceptance and remove member after acceptance.
-- Use cryptographically random high-entropy token, store only its hash, short expiry (7 days proposed, not yet confirmed), never log token or include it in analytics/referrer URLs.
+- Use cryptographically random high-entropy token, store only its hash, short expiry (24 hours approved, not yet confirmed), never log token or include it in analytics/referrer URLs.
 - Supersedes prior recipient-bound proposal; recipient account/email matching is NOT required.
+
+## Expiration decision 2026-11-01
+Invitation links expire exactly 24 hours after creation, independently of the shopping list lifetime. Server checks expiry on acceptance; an expired link cannot grant access. The owner may issue a new link.
