@@ -146,3 +146,8 @@
 - Added independent `race` job to `.github/workflows/supabase-invitation-sql.yml` on main; each job has its own disposable PostgreSQL service.
 - Two authenticated claimants race while list row is locked; expected exactly one successful acceptance, one membership, one consumed invitation.
 - Status: NOT RUN; must inspect GitHub Actions result. No Supabase changes.
+
+## 2026-11-01 · Invitation SQL workflow #5: PASS (screenshot)
+- User supplied screenshot: `Disposable PostgreSQL invitation links 017 #5`, Success, 23s; `invitation` PASS (15s), `race` PASS (18s).
+- Race test exercises two authenticated claimants against one single-use token and verifies exactly one committed membership/accepted invitation.
+- Scope is disposable PostgreSQL only. Expiry boundary, explicit cancellation, grant review and real Auth HTTP are still outstanding. Supabase Data API remains disabled.
