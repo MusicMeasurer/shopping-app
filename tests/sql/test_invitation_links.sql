@@ -12,12 +12,12 @@ INSERT INTO public.shopping_lists(id,owner_id,name) VALUES
 CREATE TEMP TABLE invitation_test_token(token text);
 INSERT INTO invitation_test_token SELECT public.create_list_invitation_link('10000000-0000-4000-8000-0000000000a1');
 RESET ROLE;
-DO $
+DO $$
 BEGIN
  IF (SELECT count(*) FROM public.list_invitation_links WHERE list_id='10000000-0000-4000-8000-0000000000a1' AND expires_at-created_at > interval '24 hours 1 second') <> 0 THEN
   RAISE EXCEPTION 'TTL exceeded 24 hours';
  END IF;
-END $;
+END $$;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-0000000000b1',true);
 DO $$
@@ -54,15 +54,15 @@ SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-0000000000a1'
 INSERT INTO invitation_test_token SELECT public.create_list_invitation_link('10000000-0000-4000-8000-0000000000a1');
 SELECT public.transfer_list_ownership('10000000-0000-4000-8000-0000000000a1','00000000-0000-4000-8000-0000000000b1');
 RESET ROLE;
-DO $
+DO $$
 BEGIN
  IF EXISTS (SELECT 1 FROM public.list_invitation_links WHERE accepted_at IS NULL AND revoked_at IS NULL) THEN
   RAISE EXCEPTION 'transfer left pending invitations';
  END IF;
-END $;
+END $$;
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-0000000000c1',true);
-DO $
+DO $$
 BEGIN
  BEGIN
   PERFORM public.accept_list_invitation_link((SELECT token FROM invitation_test_token ORDER BY token DESC LIMIT 1));
