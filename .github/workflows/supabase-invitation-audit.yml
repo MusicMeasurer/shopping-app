@@ -45,8 +45,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: feature/cloud-schema-draft
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || (github.event_name == 'push' && github.sha || 'feature/cloud-schema-draft') }}
           persist-credentials: false
+      - name: Report tested revision
+        run: |
+          echo "Event SHA: $GITHUB_SHA"
+          echo "Checked-out SHA: $(git rev-parse HEAD)"
+          git log -1 --format='%h %s'
       - name: Bootstrap disposable roles
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
