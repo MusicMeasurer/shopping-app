@@ -27,7 +27,15 @@ BEGIN
   RAISE EXCEPTION 'unrelated owner list was deleted';
  END IF;
 END $$;
--- Deleting issuer account must remove outstanding invitations.
+-- Transfer ownership before deleting issuer: a list must never be orphaned.
+-- Transfer revokes outstanding invitations, but retains their rows until issuer deletion.
+INSERT INTO public.list_members(list_id,user_id)
+ VALUES ('10000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000073');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000071',true);
+SELECT public.transfer_list_ownership('10000000-0000-4000-8000-000000000071','00000000-0000-4000-8000-000000000073');
+RESET ROLE;
+-- Deleting issuer account must remove historical revoked invitations.
 DELETE FROM auth.users WHERE id='00000000-0000-4000-8000-000000000071';
 DO $$
 BEGIN
