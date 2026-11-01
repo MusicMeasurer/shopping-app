@@ -41,9 +41,13 @@ def main():
     label = "SHOPPINGAPP_RPC_TEST_" + item_id.hex[:12]
     created = False
     deleted = False
+    last_version = None
     try:
         a, b = sign_in("A"), sign_in("B")
         list_id = discover_owned_list(api, a)
+        status, owned = api("/rest/v1/shopping_lists?select=id,name&id=eq." + list_id, token=a)
+        if status != 200 or not isinstance(owned, list) or len(owned) != 1 or owned[0].get("name") != "SHOPPINGAPP_HTTP_TEST_A":
+            raise AssertionError("Refusing to modify a list other than the seeded disposable test list")
         if get_list(b, list_id) != (200, []):
             raise AssertionError("B list isolation prerequisite failed")
         denied = rpc(b, uuid.uuid4(), list_id, "add", uuid.uuid4(), "UNAUTHORIZED_PROBE")
@@ -51,16 +55,19 @@ def main():
             raise AssertionError("B unauthorized add was accepted")
         add = require_success("A add", rpc(a, add_operation, list_id, "add", item_id, label))
         created = True
+        last_version = add["item_version"]
         replay = require_success("A idempotent replay", rpc(a, add_operation, list_id, "add", item_id, label))
         if replay != add:
             raise AssertionError("idempotent replay changed result")
         changed = require_success("A update", rpc(a, uuid.uuid4(), list_id, "update", item_id,
                                                     purchased=True, version=add["item_version"]))
+        last_version = changed["item_version"]
         if changed["item_version"] != add["item_version"] + 1:
             raise AssertionError("item version did not advance")
         removed = require_success("A delete", rpc(a, uuid.uuid4(), list_id, "delete", item_id,
                                                     version=changed["item_version"]))
         deleted = True
+        last_version = removed["item_version"]
         if removed["item_version"] != changed["item_version"] + 1:
             raise AssertionError("delete version did not advance")
     except Exception as exc:
@@ -68,8 +75,13 @@ def main():
         return 1
     finally:
         if created and not deleted:
-            # Version might have advanced; best effort only, never guess versions.
-            print("CLEANUP REQUIRED: synthetic item may remain; inspect disposable lab before rerun")
+            try:
+                cleanup = rpc(a, uuid.uuid4(), list_id, "delete", item_id, version=last_version)
+                deleted = cleanup[0] == 200
+            except Exception:
+                pass
+            if not deleted:
+                print("CLEANUP REQUIRED: synthetic item may remain; inspect disposable lab before rerun")
     print("PASS: A RPC add/update/delete, idempotent replay and B unauthorized add denied")
     print("NOTE: item is soft-deleted; operation/change audit rows remain in disposable lab")
     return 0
