@@ -7,6 +7,7 @@ on:
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - '.github/workflows/rebuild-baseline-17.yml'
       - 'tests/sql/hosted_baseline_object_names.txt'
+      - 'tests/sql/baseline_security_inventory.sql'
 permissions:
   contents: read
 jobs:
@@ -115,6 +116,19 @@ jobs:
           SQL
           LC_ALL=C sort tests/sql/hosted_baseline_object_names.txt > /tmp/expected-object-names.txt
           diff -u /tmp/expected-object-names.txt /tmp/actual-object-names.txt
+      - name: Generate security and schema inventory
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -P footer=off -F '|' -At \
+            -f tests/sql/baseline_security_inventory.sql \
+            > baseline-security-inventory.txt
+          test -s baseline-security-inventory.txt
+          echo "Inventory rows: $(wc -l < baseline-security-inventory.txt)"
+      - name: Upload baseline inventory for hosted comparison
+        uses: actions/upload-artifact@v4
+        with:
+          name: pg17-baseline-security-inventory
+          path: baseline-security-inventory.txt
+          retention-days: 14
       - name: Summarize limits
         run: |
           {
