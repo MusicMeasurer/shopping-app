@@ -123,6 +123,41 @@ jobs:
             > baseline-security-inventory.txt
           test -s baseline-security-inventory.txt
           echo "Inventory rows: $(wc -l < baseline-security-inventory.txt)"
+      - name: Drill logical backup and restore into a second disposable PostgreSQL 17 database
+        run: |
+          set -euo pipefail
+          pg_dump --format=custom --file=/tmp/shoppingapp-baseline.dump shoppingapp_rebuild
+          createdb shoppingapp_restore_drill
+          pg_restore --exit-on-error --dbname=shoppingapp_restore_drill /tmp/shoppingapp-baseline.dump
+          PGDATABASE=shoppingapp_restore_drill psql -X -v ON_ERROR_STOP=1 -P footer=off -F '|' -At \
+            -f tests/sql/baseline_security_inventory.sql \
+            > /tmp/restored-security-inventory.txt
+          diff -u baseline-security-inventory.txt /tmp/restored-security-inventory.txt
+          psql -X -At -v ON_ERROR_STOP=1 -d shoppingapp_rebuild <<'SQL' > /tmp/source-objects.txt
+          SELECT 'table|'||c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')
+          UNION ALL SELECT 'function|'||p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
+          UNION ALL SELECT 'index|'||indexname FROM pg_indexes WHERE schemaname='public'
+          UNION ALL SELECT 'policy|'||tablename||'.'||policyname FROM pg_policies WHERE schemaname='public'
+          UNION ALL SELECT 'trigger|'||c.relname||'.'||t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal
+          ORDER BY 1;
+          SQL
+          psql -X -At -v ON_ERROR_STOP=1 -d shoppingapp_restore_drill <<'SQL' > /tmp/restored-objects.txt
+          SELECT 'table|'||c.relname FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND c.relkind IN ('r','p')
+          UNION ALL SELECT 'function|'||p.oid::regprocedure::text FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='public'
+          UNION ALL SELECT 'index|'||indexname FROM pg_indexes WHERE schemaname='public'
+          UNION ALL SELECT 'policy|'||tablename||'.'||policyname FROM pg_policies WHERE schemaname='public'
+          UNION ALL SELECT 'trigger|'||c.relname||'.'||t.tgname FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='public' AND NOT t.tgisinternal
+          ORDER BY 1;
+          SQL
+          diff -u /tmp/source-objects.txt /tmp/restored-objects.txt
+          PGDATABASE=shoppingapp_restore_drill psql -X -v ON_ERROR_STOP=1 <<'SQL'
+          DO $ BEGIN
+            IF to_regclass('public.list_invitation_links') IS NOT NULL THEN
+              RAISE EXCEPTION 'Migration 017 object unexpectedly exists after restore';
+            END IF;
+          END $;
+          SQL
+          echo 'PG17 dump/restore drill passed; application object names and security inventory match.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload baseline inventory for hosted comparison
         uses: actions/upload-artifact@v4
         with:
