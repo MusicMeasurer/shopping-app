@@ -29,3 +29,11 @@ Existing 009 transfer function has no pending-invite revocation. PR #1 file inve
 
 ## Decision 2026-11-01
 User selected invitation by link, not email. Link is a delivery mechanism, not proof of authorization: authentication and recipient binding remain mandatory. Never accept a token alone as sufficient for membership. Token must be high-entropy, expire, be revocable and single-use, and be stored as a hash. Exact recipient binding and onboarding UX need design review.
+
+## Approved product decision 2026-11-01 — first authenticated claimant
+- Invite link is not bound to an email address or preselected account. Any signed-in user may claim it, including someone who registers after receiving it.
+- Opening or previewing the link MUST NOT consume it. Only an explicit authenticated Accept action claims it.
+- First successfully committed acceptance wins. Acceptance atomically creates membership and consumes the token, with concurrency-safe locking and uniqueness.
+- Link is a bearer capability: a forwarded/stolen link can be claimed by an unintended person. UI must explain this; owner can revoke before acceptance and remove member after acceptance.
+- Use cryptographically random high-entropy token, store only its hash, short expiry (7 days proposed, not yet confirmed), never log token or include it in analytics/referrer URLs.
+- Supersedes prior recipient-bound proposal; recipient account/email matching is NOT required.
