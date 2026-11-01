@@ -13,6 +13,8 @@
 5. **Revocation timestamps:** changed to `clock_timestamp()` in draft (`a66db96`). **A successful CI report specifically for this later revision has not yet been verified in this journal.**
 6. **Token and API controls:** requirements documented in `docs/017_INVITATION_SECURITY_OPERATIONS.md` (`8682f68`). Token redaction and server-side throttling are requirements, **not implemented or verified**.
 
+7. **Timestamp consistency follow-up:** issuance now records both `created_at` and `expires_at` from the same post-lock wall-clock instant (`a65b68d`). This prevents a long-running transaction from producing a created_at/expiry inversion. CI result for this commit pending verification.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
