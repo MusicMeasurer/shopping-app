@@ -199,3 +199,8 @@
 - Илья согласовал включение процесса проверок и аудита в обязательные принципы разработки.
 - `docs/00_DEVELOPMENT_PRINCIPLES.md` updated in commit `6f34e94f19a7f9d5bc15d1f769882b54b9659000`: fixed audit scope and acceptance criteria, unified findings classification/registry, evidence-based closeout with explicit coverage limits, pre/post migration snapshots and regressions. Extended pre-change checklist.
 - This is a process improvement, not evidence of a newly discovered vulnerability or a production release approval.
+
+## 2026-11-01 · Historical audit review completed
+- Created `docs/06_AUDIT_REVIEW_2026-11-01.md` (commit `b3ddb923c9c37e9f2f8cc6aeb3045f73cf32ead6`) with eight classified observations A01–A08, evidence, statuses and a reproducible migration-audit gate.
+- Root cause hypothesis: absent fixed scope, findings deduplication, environment advisor baseline and distinction between SQL CI, hosted migration, HTTP acceptance and release readiness. This is a process finding, not proof of an exploitable new vulnerability.
+- Next phase: evaluate production migration readiness against the fixed gates; no production migration authorized by this review.
