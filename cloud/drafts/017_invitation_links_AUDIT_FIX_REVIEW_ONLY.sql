@@ -23,6 +23,7 @@ create or replace function public.create_list_invitation_link(p_list uuid)
 returns text language plpgsql security definer set search_path = ''
 as $$
 declare v_actor uuid := auth.uid(); v_token text;
+        v_now timestamptz;
 begin
  if current_setting('transaction_isolation') <> 'read committed' then
   raise exception 'READ COMMITTED required' using errcode='0A000';
@@ -31,9 +32,20 @@ begin
  perform 1 from public.shopping_lists
   where id=p_list and owner_id=v_actor and deleted_at is null for update;
  if not found then raise exception 'Permission denied'; end if;
+ -- The list row lock serializes concurrent issuers for this list.
+ v_now := clock_timestamp();
+ if (select count(*) from public.list_invitation_links
+     where list_id=p_list and accepted_at is null and revoked_at is null
+       and expires_at > v_now) >= 10 then
+  raise exception 'Too many pending invitations';
+ end if;
+ if exists (select 1 from public.list_invitation_links
+     where list_id=p_list and created_at > v_now - interval '60 seconds') then
+  raise exception 'Invitation creation cooldown';
+ end if;
  v_token := encode(extensions.gen_random_bytes(32),'hex');
  insert into public.list_invitation_links(list_id,token_hash,created_by,expires_at)
- values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,clock_timestamp()+interval '24 hours');
+ values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,v_now+interval '24 hours');
  return v_token;
 end;
 $$;
