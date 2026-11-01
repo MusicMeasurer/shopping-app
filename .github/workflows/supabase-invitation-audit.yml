@@ -65,3 +65,6 @@ jobs:
 
       - name: Verify direct privileges and owner outsider access
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_permissions.sql
+
+      - name: Exercise anonymous and member SQL denials
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_role_execution.sql
