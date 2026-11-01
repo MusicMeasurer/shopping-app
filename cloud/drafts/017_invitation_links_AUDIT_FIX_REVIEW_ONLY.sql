@@ -39,6 +39,12 @@ begin
        and expires_at > v_now) >= 10 then
   raise exception 'Too many pending invitations';
  end if;
+ -- Bound creation churn even if the owner revokes every link immediately.
+ -- The same list lock serializes issuance; revoked/expired rows still count.
+ if (select count(*) from public.list_invitation_links
+     where list_id=p_list and created_at > v_now - interval '24 hours') >= 20 then
+  raise exception 'Daily invitation creation limit reached';
+ end if;
  v_token := encode(extensions.gen_random_bytes(32),'hex');
  insert into public.list_invitation_links(list_id,token_hash,created_by,created_at,expires_at)
  values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,v_now,v_now+interval '24 hours');
