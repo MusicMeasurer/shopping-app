@@ -48,4 +48,24 @@ BEGIN
   RAISE EXCEPTION 'expiry did not free a slot';
  END IF;
 END $;
+-- Repeated revoke/create cannot bypass the rolling 24-hour issuance cap.
+DO $
+DECLARE v_id uuid; v_total int;
+BEGIN
+ LOOP
+  SELECT count(*) INTO v_total FROM public.list_invitation_links
+   WHERE list_id='10000000-0000-4000-8000-000000000081'
+     AND created_at > clock_timestamp()-interval '24 hours';
+  EXIT WHEN v_total >= 20;
+  SELECT invitation_id INTO v_id FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081') LIMIT 1;
+  PERFORM public.revoke_list_invitation_link(v_id);
+  PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
+ END LOOP;
+ BEGIN
+  PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
+  RAISE EXCEPTION 'daily cap bypass';
+ EXCEPTION WHEN OTHERS THEN
+  IF SQLERRM <> 'Daily invitation creation limit reached' THEN RAISE; END IF;
+ END;
+END $;
 ROLLBACK;
