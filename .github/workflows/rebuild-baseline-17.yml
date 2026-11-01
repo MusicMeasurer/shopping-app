@@ -151,11 +151,11 @@ jobs:
           SQL
           diff -u /tmp/source-objects.txt /tmp/restored-objects.txt
           PGDATABASE=shoppingapp_restore_drill psql -X -v ON_ERROR_STOP=1 <<'SQL'
-          DO $ BEGIN
+          DO $do$ BEGIN
             IF to_regclass('public.list_invitation_links') IS NOT NULL THEN
               RAISE EXCEPTION 'Migration 017 object unexpectedly exists after restore';
             END IF;
-          END $;
+          END $do$;
           SQL
           echo 'PG17 dump/restore drill passed; application object names and security inventory match.' >> "$GITHUB_STEP_SUMMARY"
       - name: Upload baseline inventory for hosted comparison
