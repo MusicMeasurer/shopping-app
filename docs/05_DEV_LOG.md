@@ -60,6 +60,8 @@
 
 17. **CI green:** all seven disposable PostgreSQL checks passed on `d5eef874c72b0fc46698f53223afa897a2fc3a8c`, run https://github.com/MusicMeasurer/shopping-app/actions/runs/41281240482 (audit regressions, expiry, privileges, role execution, concurrency, deletion lifecycle, invitation caps). This does **not** certify hosted Supabase Auth/JWT/PostgREST, gateway throttling, or client token hygiene. User explicitly set a hard gate: finish all planned database/cloud tests before starting Siri. Hosted migration 017 remains unapplied pending separate approval.
 
+18. **Conditional hosted authorization (user, 2026-11-01):** permission granted to apply 017 only to disposable lab `gmrqeubhotjpmtwokfeq`, after a verified schema backup and recovery path; Data API OFF and all other projects untouched. Detailed execution gate recorded in `docs/017_HOSTED_SUPABASE_PREFLIGHT.md` (`e92c023`). No direct Supabase connector available, no verified backup/restore evidence, and no migration execution. Await operator evidence before proceeding.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
