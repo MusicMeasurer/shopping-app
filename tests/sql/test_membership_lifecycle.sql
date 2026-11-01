@@ -1,6 +1,8 @@
 -- Disposable PostgreSQL CI database ONLY; run after migrations 001-016.
 -- A trusted fixture inserts membership (not an invitation flow).
 -- All changes are rolled back. No persistent data or Data API needed.
+GRANT SELECT, INSERT ON public.shopping_lists TO authenticated;
+GRANT SELECT ON public.shopping_items, public.list_members TO authenticated;
 BEGIN;
 INSERT INTO auth.users(id) VALUES
  ('00000000-0000-4000-8000-0000000000a1'),
