@@ -10,6 +10,7 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+from discover_owned_list import discover_owned_list
 
 KEYS = ("SHOPPINGAPP_TEST_URL", "SHOPPINGAPP_TEST_ANON_KEY",
         "SHOPPINGAPP_TEST_EMAIL_A", "SHOPPINGAPP_TEST_PASSWORD_A",
