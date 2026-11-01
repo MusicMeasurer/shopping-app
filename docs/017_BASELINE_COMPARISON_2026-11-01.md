@@ -29,3 +29,9 @@ All other sampled anon/authenticated SELECT/INSERT/UPDATE/DELETE table privilege
 The inventory does not compare full function bodies, trigger/index definitions, function EXECUTE grants, column-level privileges, sequence privileges, role inheritance, schema grants, Supabase auth configuration, platform triggers, or a true restore operation. This is not a hosted backup and is not authorization to deploy 017.
 
 Next: inspect 001-016 GRANT statements and Supabase platform defaults; compare effective function EXECUTE/schema permissions and hosted `rls_auto_enable` ownership. Validate a rebuild/recovery drill before seeking explicit user approval to replace the backup requirement for the disposable lab.
+
+## Follow-up inspection of migration ACLs
+
+The atomic 001–016 migration file contains REVOKE statements for forbidden client writes and explicit GRANT EXECUTE on selected RPC functions, but does not explicitly GRANT the five hosted table privileges. Therefore a clean PostgreSQL 17 database with only stub Supabase roles does not reproduce the hosted initial ACL baseline. The five differences are not evidence of changed RLS policies; their origin remains unverified.
+
+Read-only hosted follow-up query: `tests/sql/hosted_acl_provenance_readonly.sql`. It inventories raw table/function ACLs, function EXECUTE permissions, schema USAGE, role membership, and ownership of `rls_auto_enable()`. Do not infer hosted function accessibility from table SELECT alone.
