@@ -15,7 +15,6 @@ jobs:
       SHOPPINGAPP_TEST_PASSWORD_A: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_A }}
       SHOPPINGAPP_TEST_EMAIL_B: ${{ secrets.SHOPPINGAPP_TEST_EMAIL_B }}
       SHOPPINGAPP_TEST_PASSWORD_B: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_B }}
-      SHOPPINGAPP_TEST_LIST_A: ${{ secrets.SHOPPINGAPP_TEST_LIST_A }}
     steps:
       - uses: actions/checkout@v4
       - name: Real Supabase Auth and read-only HTTP isolation
