@@ -79,3 +79,15 @@ User authorized applying candidate migration 017 **only** to disposable project 
 - [ ] Keep Data API OFF throughout. Do not claim H01–H15 are complete; real JWT/RPC tests require a separate approved API access plan.
 
 **Current execution state:** backup and recovery verification not yet evidenced; migration 017 **not applied by assistant**. No direct Supabase connector available in this session. Do not request or share service-role keys, database passwords, JWTs or invitation secrets in chat.
+
+## Recovery strategy clarification (2026-11-01)
+
+The user confirmed that `shoppingapp-migration-lab` contains **only disposable experimental data**; the app they actually use is separate. The preferred future workflow is iPhone-compatible, with reproducibility tests in GitHub Actions instead of requiring a local Windows `pg_dump` installation.
+
+**Important distinction:** CI already applies the combined 001–016 baseline and 017 to a disposable PostgreSQL instance, proving a clean bootstrap under its simulated roles. This does **not** prove exact reconstruction of the hosted Supabase lab (auth schemas, dashboard settings, extensions, ownership, grants, RLS, hosted PostgreSQL 17). A CI bootstrap is not a backup of the hosted project.
+
+**Revised gate proposal, requiring explicit reconciliation before execution:**
+1. Collect a read-only hosted inventory of all relevant public objects, functions, owners, grants, RLS policies, extensions and migration state, and compare against 001–016 expected structure.
+2. Verify a fresh isolated restore/rebuild using the 001–016 source and compare its object inventory to the hosted snapshot. Document any differences and whether they are reproducible via documented Supabase configuration.
+3. Because test data is disposable, an approved rebuild from migrations may serve as a **recovery strategy for the lab** after successful comparison; it does not meet the original requirement of a literal schema-only backup unless the user explicitly accepts that substitution.
+4. Keep migration 017 unapplied until the recovery strategy is validated and the user confirms this substitution. Never assume any production data can be reconstructed this way.
