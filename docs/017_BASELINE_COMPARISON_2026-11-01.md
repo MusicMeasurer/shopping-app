@@ -45,3 +45,11 @@ Application SECURITY DEFINER RPCs (apply_item_change, can_access_list, is_list_o
 The ACL provenance is established as stored grants, but whether they came from Supabase initial defaults or later changes cannot be determined from a current ACL snapshot. No historical ACL provenance is claimed.
 
 Next read-only query: tests/sql/hosted_trigger_function_review_readonly.sql. No authorization to deploy 017.
+
+## Hosted trigger/default ACL review (18 rows, 2026-11-01)
+
+The hosted read-only export reports four public ordinary trigger-returning functions owned by postgres with SECURITY INVOKER: guard_item_identity, guard_new_list_metadata, reject_item_list_change, set_updated_at. It also reports public.rls_auto_enable() owned by postgres, SECURITY DEFINER, returning event_trigger, search_path=pg_catalog. Active event trigger ensure_rls binds rls_auto_enable() to ddl_command_end. Six pg_default_acl rows show explicit public-schema defaults for postgres and supabase_admin; notably supabase_admin has broad table/function/sequence defaults for anon/authenticated/service_role, while postgres defaults differ. The present table ACLs and default ACLs are compatible with a Supabase-managed baseline, but current snapshots cannot prove when each specific table GRANT was issued.
+
+Other active hosted event triggers: issue_graphql_placeholder, issue_pg_cron_access, issue_pg_graphql_access, issue_pg_net_access, pgrst_ddl_watch, pgrst_drop_watch. CI baseline does not reproduce Supabase platform event triggers; the workflow is a portable application-schema rebuild, not a full hosted restoration.
+
+Four application trigger functions return trigger and cannot be invoked as ordinary SQL RPCs; rls_auto_enable returns event_trigger. EXECUTE defaults alone do not establish an exploitable client call path. No hosted ACL modifications recommended on this evidence. Remaining: functional rebuild drill, application function-body parity and hosted H01-H15 tests; explicit user approval before any migration 017 deployment.
