@@ -1,6 +1,15 @@
 name: Disposable invitation 017 audit candidate
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql'
+      - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
+      - 'tests/sql/test_invitation_*.sql'
+      - 'tests/sql/run_invitation_lock_expiry.sh'
+      - '.github/workflows/supabase-invitation-audit.yml'
   push:
     branches:
       - feature/cloud-schema-draft
