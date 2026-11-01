@@ -40,8 +40,8 @@ begin
   raise exception 'Too many pending invitations';
  end if;
  v_token := encode(extensions.gen_random_bytes(32),'hex');
- insert into public.list_invitation_links(list_id,token_hash,created_by,expires_at)
- values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,v_now+interval '24 hours');
+ insert into public.list_invitation_links(list_id,token_hash,created_by,created_at,expires_at)
+ values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,v_now,v_now+interval '24 hours');
  return v_token;
 end;
 $$;
