@@ -35,3 +35,13 @@ Next: inspect 001-016 GRANT statements and Supabase platform defaults; compare e
 The atomic 001–016 migration file contains REVOKE statements for forbidden client writes and explicit GRANT EXECUTE on selected RPC functions, but does not explicitly GRANT the five hosted table privileges. Therefore a clean PostgreSQL 17 database with only stub Supabase roles does not reproduce the hosted initial ACL baseline. The five differences are not evidence of changed RLS policies; their origin remains unverified.
 
 Read-only hosted follow-up query: `tests/sql/hosted_acl_provenance_readonly.sql`. It inventories raw table/function ACLs, function EXECUTE permissions, schema USAGE, role membership, and ownership of `rls_auto_enable()`. Do not infer hosted function accessibility from table SELECT alone.
+
+## Hosted ACL follow-up (74 rows)
+
+The hosted raw ACLs explicitly contain the five table grants to authenticated. All seven application tables are owned by postgres. Anon/authenticated/service_role have no cross-membership among these three roles.
+
+Application SECURITY DEFINER RPCs (apply_item_change, can_access_list, is_list_owner, pull_item_changes, remove_list_member, transfer_list_ownership) are executable by authenticated and not anon or service_role. prepare_account_deletion is executable by none of these three roles. Five ordinary trigger/helper functions (guard_item_identity, guard_new_list_metadata, reject_item_list_change, set_updated_at) and hosted-only rls_auto_enable have NULL proacl and effective EXECUTE=true for anon, authenticated, service_role, reflecting PostgreSQL default PUBLIC function EXECUTE. These functions' direct invocation properties and platform trigger bindings need verification before any changes. Data API remains OFF.
+
+The ACL provenance is established as stored grants, but whether they came from Supabase initial defaults or later changes cannot be determined from a current ACL snapshot. No historical ACL provenance is claimed.
+
+Next read-only query: tests/sql/hosted_trigger_function_review_readonly.sql. No authorization to deploy 017.
