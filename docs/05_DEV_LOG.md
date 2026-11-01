@@ -52,6 +52,8 @@
 
  in the test. Earlier JS string replacement interpreted `$` as a replacement metacharacter and did not fix the file. Repaired via function-based replacement in `3f35629`, verified zero malformed delimiters in fetched source. Awaiting CI. No hosted writes.
 
+14. **CI fixture correction:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41279899947 failed because the simulated expired row violated `expires_at > created_at`; the database correctly rejected it. Adjusted disposable fixture to backdate both timestamps (`fe9cadd`). New CI result pending. No hosted changes.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
