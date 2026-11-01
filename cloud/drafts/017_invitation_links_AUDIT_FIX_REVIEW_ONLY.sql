@@ -39,10 +39,6 @@ begin
        and expires_at > v_now) >= 10 then
   raise exception 'Too many pending invitations';
  end if;
- if exists (select 1 from public.list_invitation_links
-     where list_id=p_list and created_at > v_now - interval '60 seconds') then
-  raise exception 'Invitation creation cooldown';
- end if;
  v_token := encode(extensions.gen_random_bytes(32),'hex');
  insert into public.list_invitation_links(list_id,token_hash,created_by,expires_at)
  values(p_list,encode(extensions.digest(v_token,'sha256'),'hex'),v_actor,v_now+interval '24 hours');
