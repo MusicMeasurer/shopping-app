@@ -17,7 +17,7 @@ SELECT 'event_trigger', e.evtname,
 FROM pg_event_trigger e
 UNION ALL
 SELECT 'default_acl', coalesce(n.nspname,'<all>')||'|'||
-       pg_get_userbyid(d.defaclrole)||'|'||d.defaclobjtype,
+       pg_get_userbyid(d.defaclrole)||'|'||d.defaclobjtype::text,
        d.defaclacl::text
 FROM pg_default_acl d LEFT JOIN pg_namespace n ON n.oid=d.defaclnamespace
 WHERE n.nspname='public' OR d.defaclnamespace=0
