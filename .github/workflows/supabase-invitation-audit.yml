@@ -17,11 +17,20 @@ on:
       - 'cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql'
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - 'tests/sql/test_invitation_*.sql'
+      - 'tests/sql/run_invitation_lock_expiry.sh'
       - '.github/workflows/supabase-invitation-audit.yml'
 permissions:
   contents: read
 jobs:
   audit:
+    outputs:
+      regressions: ${{ steps.regressions.outcome }}
+      expiry: ${{ steps.expiry.outcome }}
+      privileges: ${{ steps.privileges.outcome }}
+      role_execution: ${{ steps.role_execution.outcome }}
+      lock_expiry: ${{ steps.lock_expiry.outcome }}
+      account_deletion: ${{ steps.account_deletion.outcome }}
+      pending_limit: ${{ steps.pending_limit.outcome }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -51,7 +60,6 @@ jobs:
         run: |
           echo "Event SHA: $GITHUB_SHA"
           echo "Checked-out SHA: $(git rev-parse HEAD)"
-          git log -1 --format='%h %s'
       - name: Bootstrap disposable roles
         run: |
           psql -v ON_ERROR_STOP=1 <<'SQL'
@@ -72,10 +80,68 @@ jobs:
       - name: Apply audit-fix candidate 017 in disposable database
         run: psql -v ON_ERROR_STOP=1 -f cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql
       - name: Verify audit regressions
+        id: regressions
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_audit_fixes.sql
 
       - name: Verify wall-clock expiry after transaction delay
+        id: expiry
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_wallclock_expiry.sql
 
       - name: Verify direct privileges and owner outsider access
+        id: privileges
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_permissions.sql
+
+      - name: Exercise anonymous and member SQL denials
+        id: role_execution
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_role_execution.sql
+
+      - name: Verify invitation lifecycle on account deletion
+        id: account_deletion
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_account_deletion.sql
+
+      - name: Verify pending invitation limit
+        id: pending_limit
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_pending_limit.sql
+
+      - name: Verify expiry during concurrent list lock wait
+        id: lock_expiry
+        run: bash tests/sql/run_invitation_lock_expiry.sh
+
+  report:
+    if: ${{ always() && github.event_name == 'push' && github.ref == 'refs/heads/feature/cloud-schema-draft' }}
+    needs: audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Publish audit result to draft PR 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          AUDIT_RESULT: ${{ needs.audit.result }}
+          REGRESSIONS: ${{ needs.audit.outputs.regressions }}
+          EXPIRY: ${{ needs.audit.outputs.expiry }}
+          PRIVILEGES: ${{ needs.audit.outputs.privileges }}
+          ROLE_EXECUTION: ${{ needs.audit.outputs.role_execution }}
+          LOCK_EXPIRY: ${{ needs.audit.outputs.lock_expiry }}
+          ACCOUNT_DELETION: ${{ needs.audit.outputs.account_deletion }}
+          PENDING_LIMIT: ${{ needs.audit.outputs.pending_limit }}
+        run: |
+          python3 - <<'PY'
+          import json, os, subprocess
+          env=os.environ
+          fields=[("Audit regressions","REGRESSIONS"),("Wall-clock expiry","EXPIRY"),("Privileges","PRIVILEGES"),("SQL role execution","ROLE_EXECUTION"),("Concurrent lock expiry","LOCK_EXPIRY"),("Account deletion lifecycle","ACCOUNT_DELETION"),("Pending invitation limit","PENDING_LIMIT")]
+          lines=["### Invitation 017 — disposable CI report",
+                 f"**Result:** {env['AUDIT_RESULT']}",
+                 f"**Commit:** `{env['GITHUB_SHA']}`",
+                 f"**Run:** https://github.com/{env['GITHUB_REPOSITORY']}/actions/runs/{env['GITHUB_RUN_ID']}",
+                 "", "| Check | Outcome |", "|---|---|"]
+          lines += [f"| {label} | {env.get(key) or 'not run'} |" for label,key in fields]
+          lines += ["", "Only disposable PostgreSQL; not a hosted Supabase security certification."]
+          body="\n".join(lines)
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              summary.write(body+'\n')
+          subprocess.run(["gh","api",f"repos/{env['GITHUB_REPOSITORY']}/issues/1/comments","-X","POST","-f",f"body={body}"],check=True)
+          PY
