@@ -1,0 +1,21 @@
+name: Supabase disposable HTTP A/B read-only
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  auth-http-ab:
+    if: github.ref == 'refs/heads/feature/cloud-schema-draft'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      SHOPPINGAPP_TEST_URL: ${{ secrets.SHOPPINGAPP_TEST_URL }}
+      SHOPPINGAPP_TEST_ANON_KEY: ${{ secrets.SHOPPINGAPP_TEST_ANON_KEY }}
+      SHOPPINGAPP_TEST_EMAIL_A: ${{ secrets.SHOPPINGAPP_TEST_EMAIL_A }}
+      SHOPPINGAPP_TEST_PASSWORD_A: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_A }}
+      SHOPPINGAPP_TEST_EMAIL_B: ${{ secrets.SHOPPINGAPP_TEST_EMAIL_B }}
+      SHOPPINGAPP_TEST_PASSWORD_B: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_B }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Real Supabase Auth and read-only HTTP isolation
+        run: python3 tests/http/test_supabase_auth_ab.py
