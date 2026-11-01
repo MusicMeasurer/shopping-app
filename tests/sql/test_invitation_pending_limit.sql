@@ -22,7 +22,7 @@ BEGIN
  END;
 END $$;
 -- Revoke one pending link: the slot must become reusable.
-DO $
+DO $$
 DECLARE v_id uuid;
 BEGIN
  SELECT invitation_id INTO v_id FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081') LIMIT 1;
@@ -31,7 +31,7 @@ BEGIN
  IF (SELECT count(*) FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081')) <> 10 THEN
   RAISE EXCEPTION 'revoke did not free a slot';
  END IF;
-END $;
+END $$;
 RESET ROLE;
 -- Simulate expiry of one unconsumed invitation in this disposable test transaction.
 UPDATE public.list_invitation_links SET expires_at=clock_timestamp()-interval '1 second'
@@ -41,15 +41,15 @@ WHERE id=(SELECT id FROM public.list_invitation_links
  ORDER BY created_at,id LIMIT 1);
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-000000000081',true);
-DO $
+DO $$
 BEGIN
  PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
  IF (SELECT count(*) FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081')) <> 10 THEN
   RAISE EXCEPTION 'expiry did not free a slot';
  END IF;
-END $;
+END $$;
 -- Repeated revoke/create cannot bypass the rolling 24-hour issuance cap.
-DO $
+DO $$
 DECLARE v_id uuid; v_total int;
 BEGIN
  LOOP
@@ -69,5 +69,5 @@ BEGIN
  EXCEPTION WHEN OTHERS THEN
   IF SQLERRM <> 'Daily invitation creation limit reached' THEN RAISE; END IF;
  END;
-END $;
+END $$;
 ROLLBACK;
