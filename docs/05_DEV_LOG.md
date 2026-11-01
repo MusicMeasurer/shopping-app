@@ -54,3 +54,8 @@
 ## 2026-11-01 · Mutation test
 - GitHub Actions run 41259000235: success. The test detected a temporary anonymous SELECT privilege and confirmed rollback.
 - PostgreSQL test only; Supabase API/JWT verification remains pending.
+
+## 2026-11-01 · Real Supabase HTTP A/B probe prepared
+- Added tests/http/test_supabase_readonly.py on feature/cloud-schema-draft (commit b8b4ef0f). Read-only GET checks for owner A, nonmember B and anonymous role.
+- Added tests/http/README.md (commit 8d4ab779). Requires isolated Supabase, real distinct test users, credentials and Data API enabled.
+- Status: NOT EXECUTED. No real Supabase HTTP validation or JWT provisioning completed. Existing databases untouched.
