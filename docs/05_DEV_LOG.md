@@ -65,3 +65,10 @@
 - Feature branch HTTP runner now discovers an existing list owned by A via Auth user endpoint; seventh list-ID secret not needed. Read-only, no seed/cleanup.
 - Manual workflow entrypoint added on main; it checks out feature/cloud-schema-draft. No schema migrations or database writes performed.
 - Status: NOT RUN. Requires A-owned seeded list and temporary Data API enablement in disposable lab. No real API result yet.
+
+## 2026-11-01 · Real Supabase HTTP A/B read isolation PASS
+- User supplied GitHub Actions run #1 screenshot: Success, 11 seconds, job auth-http-ab successful.
+- User supplied job output: `PASS: real Supabase Auth login and HTTP list isolation A/B/anon`.
+- Verified scope: Supabase Auth password login for A/B; owner A can read an A-owned seeded shopping list; nonmember B and anonymous cannot read it through Data API.
+- Scope limits: one list; read-only. No write, membership, concurrency, or cleanup testing. No claims of full security audit.
+- Disposable project shoppingapp-migration-lab; temporary Data API enablement reported by user. Recommended disabling Data API after test; user confirmation pending.
