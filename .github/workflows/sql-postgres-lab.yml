@@ -55,5 +55,26 @@ jobs:
             exit 1
           fi
           echo 'Effective ACL preflight: zero reported violations'
+      - name: Mutation test — preflight must detect unsafe anon SELECT
+        shell: bash
+        run: |
+          set -euo pipefail
+          # One PostgreSQL session; injected privilege is rolled back.
+          result="$(psql -X -At -v ON_ERROR_STOP=1 <<'SQL'
+          BEGIN;
+          GRANT SELECT ON public.shopping_lists TO anon;
+          \i cloud/drafts/SECURITY_PREFLIGHT_READ_ONLY.sql
+          ROLLBACK;
+          SQL
+          )"
+          if ! grep -q 'unsafe_effective_anon_read_or_write|shopping_lists:SELECT' <<< "$result"; then
+            echo 'MUTATION TEST FAILED: unsafe anon SELECT was not detected'
+            printf '%s\n' "$result"
+            exit 1
+          fi
+          echo 'Mutation detected as expected; transaction rolled back'
+          # Verify no privilege remains after rollback.
+          remaining="$(psql -X -At -v ON_ERROR_STOP=1 -c "SELECT has_table_privilege('anon','public.shopping_lists','SELECT')")"
+          test "$remaining" = 'f'
       - name: RLS isolation A/B and anon
         run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_acl_rls.sql
