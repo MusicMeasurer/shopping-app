@@ -52,8 +52,11 @@ DECLARE members integer; claims integer; winner uuid;
 BEGIN
  SELECT count(*) INTO members FROM public.list_members
  WHERE list_id='10000000-0000-4000-8000-0000000000a1';
- SELECT count(*),max(accepted_by) INTO claims,winner FROM public.list_invitation_links
+ SELECT count(*) INTO claims FROM public.list_invitation_links
  WHERE list_id='10000000-0000-4000-8000-0000000000a1' AND accepted_at IS NOT NULL;
+ SELECT accepted_by INTO winner FROM public.list_invitation_links
+ WHERE list_id='10000000-0000-4000-8000-0000000000a1' AND accepted_at IS NOT NULL
+ LIMIT 1;
  IF members <> 1 OR claims <> 1 OR NOT EXISTS (
  SELECT 1 FROM public.list_members
  WHERE list_id='10000000-0000-4000-8000-0000000000a1' AND user_id=winner
