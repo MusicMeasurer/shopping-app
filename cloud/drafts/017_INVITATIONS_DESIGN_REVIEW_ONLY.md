@@ -16,7 +16,7 @@ Recipient must accept invitation before gaining access; outsiders cannot access 
 - Ensure concurrent acceptance cannot duplicate membership; negative tests verify DB state as well as error response.
 
 ## Open product decisions
-1. Existing-account-only invitations versus email/deep-link onboarding.
+1. DECIDED: shareable invitation link. Link acceptance requires sign-in and must be bound to the intended recipient account; define how recipient identity is established without account enumeration before SQL implementation.
 2. Proposed expiration 7 days (not yet approved).
 3. Owner-only invitations versus delegation.
 4. Notification and invitation discovery UX.
@@ -26,3 +26,6 @@ Static security review; rollback-only SQL tests including races; real Auth A/B/C
 
 ## Repository cross-check
 Existing 009 transfer function has no pending-invite revocation. PR #1 file inventory contained no executable 017 migration. This document does not replace or claim to review missing SQL.
+
+## Decision 2026-11-01
+User selected invitation by link, not email. Link is a delivery mechanism, not proof of authorization: authentication and recipient binding remain mandatory. Never accept a token alone as sufficient for membership. Token must be high-entropy, expire, be revocable and single-use, and be stored as a hash. Exact recipient binding and onboarding UX need design review.
