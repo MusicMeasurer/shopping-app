@@ -8,6 +8,7 @@ on:
       - 'cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql'
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - 'tests/sql/test_invitation_*.sql'
+      - 'tests/sql/rehearse_017_prepost.sql'
       - 'tests/sql/run_invitation_lock_expiry.sh'
       - '.github/workflows/supabase-invitation-audit.yml'
   push:
@@ -17,6 +18,7 @@ on:
       - 'cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql'
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - 'tests/sql/test_invitation_*.sql'
+      - 'tests/sql/rehearse_017_prepost.sql'
       - 'tests/sql/run_invitation_lock_expiry.sh'
       - '.github/workflows/supabase-invitation-audit.yml'
 permissions:
@@ -33,6 +35,7 @@ jobs:
       pending_limit: ${{ steps.pending_limit.outcome }}
       transfer_revocation: ${{ steps.transfer_revocation.outcome }}
       upgrade: ${{ steps.upgrade.outcome }}
+      snapshot: ${{ steps.snapshot.outcome }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -81,6 +84,9 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql
       - name: Seed existing 001-016 data before upgrading
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_upgrade_seed.sql
+      - name: Rehearse 017 with full public-row snapshot and rollback
+        id: snapshot
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/rehearse_017_prepost.sql
       - name: Apply audit-fix candidate 017 in disposable database
         run: psql -v ON_ERROR_STOP=1 -f cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql
       - name: Verify upgrade preserved existing list member and item
@@ -141,11 +147,12 @@ jobs:
           PENDING_LIMIT: ${{ needs.audit.outputs.pending_limit }}
           TRANSFER_REVOCATION: ${{ needs.audit.outputs.transfer_revocation }}
           UPGRADE: ${{ needs.audit.outputs.upgrade }}
+          SNAPSHOT: ${{ needs.audit.outputs.snapshot }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess
           env=os.environ
-          fields=[("Audit regressions","REGRESSIONS"),("Wall-clock expiry","EXPIRY"),("Privileges","PRIVILEGES"),("SQL role execution","ROLE_EXECUTION"),("Concurrent lock expiry","LOCK_EXPIRY"),("Account deletion lifecycle","ACCOUNT_DELETION"),("Pending invitation limit","PENDING_LIMIT"),("Transfer revokes pending links","TRANSFER_REVOCATION"),("Upgrade preserves existing data","UPGRADE")]
+          fields=[("Audit regressions","REGRESSIONS"),("Wall-clock expiry","EXPIRY"),("Privileges","PRIVILEGES"),("SQL role execution","ROLE_EXECUTION"),("Concurrent lock expiry","LOCK_EXPIRY"),("Account deletion lifecycle","ACCOUNT_DELETION"),("Pending invitation limit","PENDING_LIMIT"),("Transfer revokes pending links","TRANSFER_REVOCATION"),("Upgrade preserves existing data","UPGRADE"),("Pre/post snapshot rehearsal","SNAPSHOT")]
           lines=["### Invitation 017 — disposable CI report",
                  f"**Result:** {env['AUDIT_RESULT']}",
                  f"**Commit:** `{env['GITHUB_SHA']}`",
