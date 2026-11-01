@@ -22,6 +22,8 @@
 
 11. **CI failure and repair:** expanded pending-limit test at `39ede11` failed due to malformed PL/pgSQL dollar quoting in test source (run https://github.com/MusicMeasurer/shopping-app/actions/runs/41279338542), not a demonstrated application defect. Corrected quoting at `8fdb019`; rerun outcome pending verification.
 
+12. **Server-side issuance quota candidate:** draft 017 now limits creation to 20 invitations per list per rolling 24 hours (including revoked/expired), serialized under the list row lock (`f6fe4db`). Regression extended to test repeated revoke/create (`a7f113c`, refined `50f6071`). CI outcome pending verification. This bounds per-list issuance but is **not** a per-user/IP request-rate limiter; acceptance floods still need gateway/edge protection.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
