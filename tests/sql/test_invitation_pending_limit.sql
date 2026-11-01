@@ -48,13 +48,13 @@ BEGIN
   RAISE EXCEPTION 'expiry did not free a slot';
  END IF;
 END $$;
--- Twelve links have been issued so far (10 initial + 1 after revoke + 1 after expiry).
--- Eight more revoke/create cycles reach the rolling 20-link issuance quota.
+-- Eleven links fall within the rolling window (10 initial + 1 after revoke; the expired fixture was backdated 25 hours; +1 after expiry).
+-- Nine more revoke/create cycles reach the rolling 20-link issuance quota.
 -- The authenticated role deliberately has no direct table SELECT permission.
 DO $$
 DECLARE v_id uuid; i integer;
 BEGIN
- FOR i IN 1..8 LOOP
+ FOR i IN 1..9 LOOP
   SELECT invitation_id INTO v_id FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081') LIMIT 1;
   PERFORM public.revoke_list_invitation_link(v_id);
   PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
