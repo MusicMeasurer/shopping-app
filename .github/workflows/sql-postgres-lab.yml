@@ -1,0 +1,59 @@
+name: SQL PostgreSQL disposable lab
+on:
+  push:
+    paths:
+      - 'cloud/drafts/**'
+      - 'tests/sql/**'
+      - '.github/workflows/sql-postgres-lab.yml'
+  pull_request:
+    paths:
+      - 'cloud/drafts/**'
+      - 'tests/sql/**'
+      - '.github/workflows/sql-postgres-lab.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  isolated-postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: ci-only-disposable
+          POSTGRES_DB: shoppingapp_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d shoppingapp_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: 5432
+      PGUSER: postgres
+      PGPASSWORD: ci-only-disposable
+      PGDATABASE: shoppingapp_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bootstrap local Auth shim (CI only)
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/bootstrap_pg.sql
+      - name: Apply atomic schema 001-016
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql
+      - name: Apply REVIEW_ONLY ACL draft (CI only)
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/018_acl_normalization_REVIEW_ONLY.sql
+      - name: Effective ACL preflight (zero violations required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          result="$(psql -X -v ON_ERROR_STOP=1 -At -f cloud/drafts/SECURITY_PREFLIGHT_READ_ONLY.sql)"
+          if [ -n "$result" ]; then
+            printf 'SECURITY PREFLIGHT FAILED:\n%s\n' "$result"
+            exit 1
+          fi
+          echo 'Effective ACL preflight: zero reported violations'
+      - name: RLS isolation A/B and anon
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_acl_rls.sql
