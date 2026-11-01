@@ -93,7 +93,7 @@ begin
  perform 1 from public.shopping_lists where id=v_list and owner_id=v_actor
   and deleted_at is null for update;
  if not found then raise exception 'Permission denied'; end if;
- update public.list_invitation_links set revoked_at=now()
+ update public.list_invitation_links set revoked_at=clock_timestamp()
   where id=p_invitation and list_id=v_list and accepted_at is null and revoked_at is null;
 end;
 $$;
@@ -115,7 +115,7 @@ begin
  if p_new_owner=v_old_owner or not exists (
   select 1 from public.list_members where list_id=p_list and user_id=p_new_owner
  ) then raise exception 'New owner must be a current member'; end if;
- update public.list_invitation_links set revoked_at=now()
+ update public.list_invitation_links set revoked_at=clock_timestamp()
   where list_id=p_list and accepted_at is null and revoked_at is null;
  delete from public.list_members where list_id=p_list and user_id=p_new_owner;
  update public.shopping_lists set owner_id=p_new_owner where id=p_list;
