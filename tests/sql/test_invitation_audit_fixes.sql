@@ -5,7 +5,7 @@ INSERT INTO auth.users(id) VALUES ('00000000-0000-4000-8000-0000000000a1'),('000
 SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-0000000000a1',true);
 INSERT INTO public.shopping_lists(id,owner_id,name) VALUES ('10000000-0000-4000-8000-0000000000a1','00000000-0000-4000-8000-0000000000a1','audit fixture');
-CREATE TEMP TABLE audit_token(token text);
+CREATE TEMP TABLE audit_token(token text, sequence integer generated always as identity);
 INSERT INTO audit_token SELECT public.create_list_invitation_link('10000000-0000-4000-8000-0000000000a1');
 DO $$
 BEGIN
@@ -30,7 +30,7 @@ SELECT set_config('request.jwt.claim.sub','00000000-0000-4000-8000-0000000000b1'
 DO $$
 BEGIN
  BEGIN
-  PERFORM public.accept_list_invitation_link((SELECT token FROM audit_token ORDER BY token DESC LIMIT 1));
+  PERFORM public.accept_list_invitation_link((SELECT token FROM audit_token ORDER BY sequence DESC LIMIT 1));
   RAISE EXCEPTION 'existing member consumed invitation';
  EXCEPTION WHEN OTHERS THEN
   IF SQLERRM='existing member consumed invitation' THEN RAISE; END IF;
