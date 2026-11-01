@@ -61,6 +61,8 @@ BEGIN
   PERFORM public.revoke_list_invitation_link(v_id);
   PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
  END LOOP;
+ SELECT invitation_id INTO v_id FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081') LIMIT 1;
+ PERFORM public.revoke_list_invitation_link(v_id);
  BEGIN
   PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
   RAISE EXCEPTION 'daily cap bypass';
