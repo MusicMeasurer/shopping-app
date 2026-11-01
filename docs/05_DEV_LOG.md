@@ -151,3 +151,9 @@
 - User supplied screenshot: `Disposable PostgreSQL invitation links 017 #5`, Success, 23s; `invitation` PASS (15s), `race` PASS (18s).
 - Race test exercises two authenticated claimants against one single-use token and verifies exactly one committed membership/accepted invitation.
 - Scope is disposable PostgreSQL only. Expiry boundary, explicit cancellation, grant review and real Auth HTTP are still outstanding. Supabase Data API remains disabled.
+
+## 2026-11-01 · Invitation 017 CI run #6: all three jobs PASS (screenshot)
+- Screenshot shows `Disposable PostgreSQL invitation links 017 #6` Success in 25s, commit `4ac5ad3` on main.
+- `expiry_revoke` PASS (18s), `invitation` PASS (20s), `race` PASS (22s).
+- Scope: isolated PostgreSQL CI only; expiry fixture simulates past creation and expiration, no wall-clock 24-hour wait.
+- 017 remains REVIEW_ONLY and not deployed; real Auth/HTTP tests, detailed permission audit and independent security review remain outstanding. Supabase Data API stays off.
