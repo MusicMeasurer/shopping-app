@@ -54,6 +54,8 @@
 
 14. **CI fixture correction:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41279899947 failed because the simulated expired row violated `expires_at > created_at`; the database correctly rejected it. Adjusted disposable fixture to backdate both timestamps (`fe9cadd`). New CI result pending. No hosted changes.
 
+15. **Role-safe regression:** run https://github.com/MusicMeasurer/shopping-app/actions/runs/41280564663 failed because the new test queried the invitation table under `authenticated`, which correctly lacks direct SELECT. Updated the daily quota test to use only owner-authorized RPC calls and a fixed 8-cycle fixture (`b8ecb1b`). CI pending; no hosted writes.
+
 ### Open decisions / release gates
 
 - Keep 017 **REVIEW ONLY** until independent security review, all relevant CI tests and explicitly approved hosted integration tests.
