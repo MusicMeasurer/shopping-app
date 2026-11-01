@@ -51,3 +51,6 @@ jobs:
         run: psql -v ON_ERROR_STOP=1 -f cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql
       - name: Verify audit regressions
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_audit_fixes.sql
+
+      - name: Verify wall-clock expiry after transaction delay
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_wallclock_expiry.sql
