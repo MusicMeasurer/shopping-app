@@ -45,3 +45,20 @@ where n.nspname='public' and proname in
 - Hosted read-only preflight reviewed, then explicit approval to apply 017 to disposable migration lab.
 - Hosted tests show owner/outsider/anon permissions, replay denial, expiry, revoke, transfer, concurrency and rollback.
 - No deployment to production until the separate release decision.
+
+## Hosted read-only preflight results (2026-11-01)
+
+Source: SQL Editor output provided by the user from the disposable migration lab. The assistant did not directly query Supabase.
+
+- PostgreSQL: 17.11.
+- pgcrypto schema: extensions; gen_random_bytes(integer) and digest(text,text) resolve.
+- RLS enabled: shopping_lists and list_members.
+- Invitation table: absent (017 not applied).
+- anon SELECT: denied for shopping_lists and list_members.
+- authenticated SELECT: allowed for both tables.
+- authenticated INSERT: allowed for shopping_lists, denied for list_members.
+- authenticated UPDATE and DELETE: denied for both tables.
+- transfer_list_ownership: owner postgres; SECURITY DEFINER enabled; anon EXECUTE denied; authenticated EXECUTE allowed.
+- Invitation-specific functions: not present in the returned function list.
+
+Assessment: no mismatch identified in the tested configuration. These results do not validate RLS row behavior, complete migration history, hosted API/JWT behavior, or migration 017 security. Deployment remains blocked pending review and explicit approval.
