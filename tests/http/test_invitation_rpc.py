@@ -17,8 +17,8 @@ missing = [key for key in REQUIRED if not os.getenv(key)]
 if missing:
     sys.exit("Missing isolated-test environment variables: " + ", ".join(missing))
 url = os.environ["TEST_SUPABASE_URL"].rstrip("/")
-if not url.startswith("https://") or "localhost" in url:
-    sys.exit("Expected a disposable HTTPS Supabase project URL")
+if url != "https://gmrqeubhotjpmtwokfeq.supabase.co":
+    sys.exit("Safety guard: only shoppingapp-migration-lab is allowed")
 key = os.environ["TEST_SUPABASE_ANON_KEY"]
 a, b, c = (os.environ[x] for x in
            ("TEST_OWNER_JWT", "TEST_INVITEE_JWT", "TEST_OUTSIDER_JWT"))
@@ -62,6 +62,8 @@ require(all("token_hash" not in item and "token" not in item for item in pending
 status, _ = rpc("list_pending_invitation_links", {"p_list": list_id}, c)
 require(status >= 400, "outsider cannot list pending invitations")
 
+status, _ = rpc("accept_list_invitation_link", {"p_token": token}, a)
+require(status >= 400, "owner cannot accept own invitation")
 status, accepted = rpc("accept_list_invitation_link", {"p_token": token}, b)
 require(status == 200 and accepted == list_id, "invitee accepts token")
 status, _ = rpc("accept_list_invitation_link", {"p_token": token}, c)
@@ -73,6 +75,8 @@ status, pending = rpc("list_pending_invitation_links", {"p_list": list_id}, a)
 require(status == 200 and isinstance(pending, list) and len(pending) == 1,
         "one pending token after first acceptance")
 invitation_id = pending[0]["invitation_id"]
+status, _ = rpc("accept_list_invitation_link", {"p_token": token2}, b)
+require(status >= 400, "existing member cannot accept another valid invitation")
 status, _ = rpc("revoke_list_invitation_link", {"p_invitation": invitation_id}, a)
 require(status in (200, 204), "owner revokes pending token")
 status, _ = rpc("accept_list_invitation_link", {"p_token": token2}, c)
