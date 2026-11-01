@@ -30,6 +30,7 @@ jobs:
       role_execution: ${{ steps.role_execution.outcome }}
       lock_expiry: ${{ steps.lock_expiry.outcome }}
       account_deletion: ${{ steps.account_deletion.outcome }}
+      pending_limit: ${{ steps.pending_limit.outcome }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
     services:
@@ -94,6 +95,10 @@ jobs:
         id: account_deletion
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_account_deletion.sql
 
+      - name: Verify pending invitation limit
+        id: pending_limit
+        run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_pending_limit.sql
+
       - name: Verify expiry during concurrent list lock wait
         id: lock_expiry
         run: bash tests/sql/run_invitation_lock_expiry.sh
@@ -118,11 +123,12 @@ jobs:
           ROLE_EXECUTION: ${{ needs.audit.outputs.role_execution }}
           LOCK_EXPIRY: ${{ needs.audit.outputs.lock_expiry }}
           ACCOUNT_DELETION: ${{ needs.audit.outputs.account_deletion }}
+          PENDING_LIMIT: ${{ needs.audit.outputs.pending_limit }}
         run: |
           python3 - <<'PY'
           import json, os, subprocess
           env=os.environ
-          fields=[("Audit regressions","REGRESSIONS"),("Wall-clock expiry","EXPIRY"),("Privileges","PRIVILEGES"),("SQL role execution","ROLE_EXECUTION"),("Concurrent lock expiry","LOCK_EXPIRY"),("Account deletion lifecycle","ACCOUNT_DELETION")]
+          fields=[("Audit regressions","REGRESSIONS"),("Wall-clock expiry","EXPIRY"),("Privileges","PRIVILEGES"),("SQL role execution","ROLE_EXECUTION"),("Concurrent lock expiry","LOCK_EXPIRY"),("Account deletion lifecycle","ACCOUNT_DELETION"),("Pending invitation limit","PENDING_LIMIT")]
           lines=["### Invitation 017 — disposable CI report",
                  f"**Result:** {env['AUDIT_RESULT']}",
                  f"**Commit:** `{env['GITHUB_SHA']}`",
