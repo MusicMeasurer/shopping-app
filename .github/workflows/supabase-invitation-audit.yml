@@ -8,6 +8,7 @@ on:
       - 'cloud/drafts/017_invitation_links_AUDIT_FIX_REVIEW_ONLY.sql'
       - 'cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql'
       - 'tests/sql/test_invitation_*.sql'
+      - 'tests/sql/run_invitation_lock_expiry.sh'
       - '.github/workflows/supabase-invitation-audit.yml'
 permissions:
   contents: read
@@ -68,3 +69,6 @@ jobs:
 
       - name: Exercise anonymous and member SQL denials
         run: psql -v ON_ERROR_STOP=1 -f tests/sql/test_invitation_role_execution.sql
+
+      - name: Verify expiry during concurrent list lock wait
+        run: bash tests/sql/run_invitation_lock_expiry.sh
