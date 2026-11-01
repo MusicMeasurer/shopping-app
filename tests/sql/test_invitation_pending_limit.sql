@@ -48,15 +48,13 @@ BEGIN
   RAISE EXCEPTION 'expiry did not free a slot';
  END IF;
 END $$;
--- Repeated revoke/create cannot bypass the rolling 24-hour issuance cap.
+-- Twelve links have been issued so far (10 initial + 1 after revoke + 1 after expiry).
+-- Eight more revoke/create cycles reach the rolling 20-link issuance quota.
+-- The authenticated role deliberately has no direct table SELECT permission.
 DO $$
-DECLARE v_id uuid; v_total int;
+DECLARE v_id uuid; i integer;
 BEGIN
- LOOP
-  SELECT count(*) INTO v_total FROM public.list_invitation_links
-   WHERE list_id='10000000-0000-4000-8000-000000000081'
-     AND created_at > clock_timestamp()-interval '24 hours';
-  EXIT WHEN v_total >= 20;
+ FOR i IN 1..8 LOOP
   SELECT invitation_id INTO v_id FROM public.list_pending_invitation_links('10000000-0000-4000-8000-000000000081') LIMIT 1;
   PERFORM public.revoke_list_invitation_link(v_id);
   PERFORM public.create_list_invitation_link('10000000-0000-4000-8000-000000000081');
