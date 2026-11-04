@@ -204,3 +204,9 @@
 - Created `docs/06_AUDIT_REVIEW_2026-11-01.md` (commit `b3ddb923c9c37e9f2f8cc6aeb3045f73cf32ead6`) with eight classified observations A01–A08, evidence, statuses and a reproducible migration-audit gate.
 - Root cause hypothesis: absent fixed scope, findings deduplication, environment advisor baseline and distinction between SQL CI, hosted migration, HTTP acceptance and release readiness. This is a process finding, not proof of an exploitable new vulnerability.
 - Next phase: evaluate production migration readiness against the fixed gates; no production migration authorized by this review.
+
+## 2026-11-04 · E1 — публикация с обязательными тестами
+- PR #2 (`feature/e1-release-gate`) объединён в `main`, squash commit `7e84d15b233ddc903baa64b16d93bb11709e3058`: в `.github/workflows/deploy.yml` добавлен `npm test` перед `npm run build`; deploy зависит от успешного build.
+- Пользователь подтвердил статус **Success** последнего запуска workflow `Deploy ShoppingApp to GitHub Pages` после объединения PR #2. Это пользовательское подтверждение; независимое чтение шагов run не выполнялось.
+- E1 принят как завершённый по критерию дорожной карты: изменение → автоматическая проверка → публикация, без ручной сборки. Не утверждается, что протестированы все возможные ошибки деплоя.
+- Далее E2: закрыть только обязательные зависимости базовой облачной интеграции E3; миграция 017 относится к E8 и остаётся вне текущего объёма.
