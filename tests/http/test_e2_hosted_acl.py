@@ -34,6 +34,7 @@ sa,ua=call('/auth/v1/user',a);sb,ub=call('/auth/v1/user',b)
 check(sa==200 and sb==200 and isinstance(ua,dict) and isinstance(ub,dict) and ua.get('id') and ub.get('id') and ua['id']!=ub['id'],'distinct valid Auth A/B JWT')
 status,lists=call('/rest/v1/shopping_lists?select=id,owner_id&deleted_at=is.null&limit=2',a)
 status_b,lists_b=call('/rest/v1/shopping_lists?select=id,owner_id&deleted_at=is.null&limit=2',b)
+print('DIAGNOSTIC: list inventory HTTP status A='+str(status)+' B='+str(status_b)+'; JSON arrays A='+str(isinstance(lists,list))+' B='+str(isinstance(lists_b,list)))
 check(status==200 and status_b==200 and isinstance(lists,list) and isinstance(lists_b,list),'A/B can query their visible list inventory')
 if len(lists)==0 and len(lists_b)==1 and lists_b[0]['owner_id']==ub['id']:
     a,b=b,a
