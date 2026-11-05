@@ -13,11 +13,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     env:
-      TEST_SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
-      TEST_SUPABASE_ANON_KEY: ${{ secrets.TEST_SUPABASE_ANON_KEY }}
-      TEST_OWNER_JWT: ${{ secrets.TEST_OWNER_JWT }}
-      TEST_INVITEE_JWT: ${{ secrets.TEST_INVITEE_JWT }}
-      TEST_OWNER_LIST_ID: ${{ secrets.TEST_OWNER_LIST_ID }}
+      TEST_SUPABASE_URL: ${{ secrets.SHOPPINGAPP_TEST_URL }}
+      TEST_SUPABASE_ANON_KEY: ${{ secrets.SHOPPINGAPP_TEST_ANON_KEY }}
+      TEST_EMAIL_A: ${{ secrets.SHOPPINGAPP_TEST_EMAIL_A }}
+      TEST_EMAIL_B: ${{ secrets.SHOPPINGAPP_TEST_EMAIL_B }}
+      TEST_PASSWORD_A: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_A }}
+      TEST_PASSWORD_B: ${{ secrets.SHOPPINGAPP_TEST_PASSWORD_B }}
     steps:
       - uses: actions/checkout@v4
       - name: Verify real hosted A/B/anonymous isolation (read-only)
