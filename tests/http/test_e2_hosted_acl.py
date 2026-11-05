@@ -2,14 +2,22 @@
 """Hosted Supabase E2 READ-ONLY A/B/anon HTTP gate. No fixture creation."""
 import json, os, sys, urllib.request, urllib.error
 from urllib.parse import quote
-keys=('TEST_SUPABASE_URL','TEST_SUPABASE_ANON_KEY','TEST_OWNER_JWT','TEST_INVITEE_JWT','TEST_OWNER_LIST_ID')
+keys=('TEST_SUPABASE_URL','TEST_SUPABASE_ANON_KEY','TEST_EMAIL_A','TEST_EMAIL_B','TEST_PASSWORD_A','TEST_PASSWORD_B')
 missing=[k for k in keys if not os.getenv(k)]
 if missing: sys.exit('NOT RUN: missing GitHub secrets: '+', '.join(missing))
 base=os.environ['TEST_SUPABASE_URL'].rstrip('/')
 if base!='https://gmrqeubhotjpmtwokfeq.supabase.co': sys.exit('Safety guard: wrong lab URL')
-key=os.environ['TEST_SUPABASE_ANON_KEY']; a=os.environ['TEST_OWNER_JWT']; b=os.environ['TEST_INVITEE_JWT']; lid=os.environ['TEST_OWNER_LIST_ID']
-import uuid
-uuid.UUID(lid)
+key=os.environ['TEST_SUPABASE_ANON_KEY']
+def sign_in(email,password):
+    req=urllib.request.Request(base+'/auth/v1/token?grant_type=password',data=json.dumps({'email':email,'password':password}).encode(),headers={'apikey':key,'Content-Type':'application/json'},method='POST')
+    try:
+        with urllib.request.urlopen(req,timeout=20) as res:
+            payload=json.loads(res.read())
+            return payload['access_token']
+    except urllib.error.HTTPError as e:
+        sys.exit('Auth sign-in failed (HTTP '+str(e.code)+'); credentials and response hidden')
+a=sign_in(os.environ['TEST_EMAIL_A'],os.environ['TEST_PASSWORD_A'])
+b=sign_in(os.environ['TEST_EMAIL_B'],os.environ['TEST_PASSWORD_B'])
 def call(path,jwt=None,method='GET',body=None):
     h={'apikey':key,'Accept':'application/json'}
     if jwt: h['Authorization']='Bearer '+jwt
@@ -24,6 +32,9 @@ def check(condition,label):
     print('PASS:',label)
 sa,ua=call('/auth/v1/user',a);sb,ub=call('/auth/v1/user',b)
 check(sa==200 and sb==200 and isinstance(ua,dict) and isinstance(ub,dict) and ua.get('id') and ub.get('id') and ua['id']!=ub['id'],'distinct valid Auth A/B JWT')
+status,lists=call('/rest/v1/shopping_lists?select=id,owner_id&deleted_at=is.null&limit=2',a)
+check(status==200 and isinstance(lists,list) and len(lists)==1 and lists[0]['owner_id']==ua['id'],'exactly one A-owned active fixture list')
+lid=lists[0]['id']
 path='/rest/v1/shopping_lists?id=eq.'+quote(lid)+'&select=id,owner_id'
 sa,ra=call(path,a);sb,rb=call(path,b);sc,rc=call(path)
 check(sa==200 and isinstance(ra,list) and len(ra)==1 and ra[0]['owner_id']==ua['id'],'A owns and reads fixture list')
