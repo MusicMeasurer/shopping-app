@@ -1,0 +1,53 @@
+name: E2 internal function ACL disposable gate
+on:
+  push:
+    branches: [feature/e2-function-acl-gate]
+    paths:
+      - 'cloud/drafts/019_internal_function_acl_REVIEW_ONLY.sql'
+      - 'tests/sql/test_internal_function_acl.sql'
+      - '.github/workflows/e2-function-acl-gate.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  acl-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: disposable-only
+          POSTGRES_DB: shoppingapp_ci
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres -d shoppingapp_ci"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      PGHOST: localhost
+      PGPORT: '5432'
+      PGUSER: postgres
+      PGPASSWORD: disposable-only
+      PGDATABASE: shoppingapp_ci
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bootstrap Auth shim
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/bootstrap_pg.sql
+      - name: Apply 001-016
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql
+      - name: Apply ACL 018
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/018_acl_normalization_REVIEW_ONLY.sql
+      - name: Apply internal function ACL 019 twice (idempotency)
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/019_internal_function_acl_REVIEW_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/019_internal_function_acl_REVIEW_ONLY.sql
+      - name: Verify internal grants and client RPC
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_internal_function_acl.sql
+      - name: Existing RLS A/B and anonymous regression
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_acl_rls.sql
+      - name: Summary
+        if: always()
+        run: |
+          echo '### E2 disposable ACL gate' >> "$GITHUB_STEP_SUMMARY"
+          echo 'This uses PostgreSQL Auth shim, not hosted Supabase JWT/HTTP.' >> "$GITHUB_STEP_SUMMARY"
