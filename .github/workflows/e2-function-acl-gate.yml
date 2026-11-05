@@ -6,6 +6,8 @@ on:
       - 'cloud/drafts/019_internal_function_acl_REVIEW_ONLY.sql'
       - 'tests/sql/test_internal_function_acl.sql'
       - '.github/workflows/e2-function-acl-gate.yml'
+  pull_request:
+    branches: [feature/cloud-schema-draft]
   workflow_dispatch:
 permissions:
   contents: read
