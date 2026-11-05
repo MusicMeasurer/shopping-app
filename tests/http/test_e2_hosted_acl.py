@@ -51,6 +51,14 @@ check(sc in (401,403) or (sc==200 and rc==[]),'anonymous cannot read A list')
 for who,jwt,expected in [('A',a,True),('B',b,False)]:
     status,value=call('/rest/v1/rpc/can_access_list',jwt,'POST',{'p_list':lid})
     check(status==200 and value is expected,who+' RPC list access correct')
+for who,jwt,expected in [('A',a,True),('B',b,False)]:
+    status,value=call('/rest/v1/rpc/is_list_owner',jwt,'POST',{'p_list':lid})
+    check(status==200 and value is expected,who+' ownership RPC correct')
+item_path='/rest/v1/shopping_items?list_id=eq.'+quote(lid)+'&select=id'
+si,items_a=call(item_path,a);sj,items_b=call(item_path,b);sk,items_anon=call(item_path)
+check(si==200 and isinstance(items_a,list),'A can query own list items')
+check(sj==200 and items_b==[],'B cannot read A list items')
+check(sk in (401,403) or (sk==200 and items_anon==[]),'anonymous cannot read list items')
 status,_=call('/rest/v1/rpc/can_access_list',None,'POST',{'p_list':lid})
 check(status in (401,403,404),'anonymous cannot execute list access RPC')
 print('Hosted E2 HTTP read/deny gate complete; no test data created.')
