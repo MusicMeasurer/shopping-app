@@ -33,7 +33,14 @@ def check(condition,label):
 sa,ua=call('/auth/v1/user',a);sb,ub=call('/auth/v1/user',b)
 check(sa==200 and sb==200 and isinstance(ua,dict) and isinstance(ub,dict) and ua.get('id') and ub.get('id') and ua['id']!=ub['id'],'distinct valid Auth A/B JWT')
 status,lists=call('/rest/v1/shopping_lists?select=id,owner_id&deleted_at=is.null&limit=2',a)
-check(status==200 and isinstance(lists,list) and len(lists)==1 and lists[0]['owner_id']==ua['id'],'exactly one A-owned active fixture list')
+status_b,lists_b=call('/rest/v1/shopping_lists?select=id,owner_id&deleted_at=is.null&limit=2',b)
+check(status==200 and status_b==200 and isinstance(lists,list) and isinstance(lists_b,list),'A/B can query their visible list inventory')
+if len(lists)==0 and len(lists_b)==1 and lists_b[0]['owner_id']==ub['id']:
+    a,b=b,a
+    ua,ub=ub,ua
+    lists=lists_b
+    print('INFO: configured B is fixture owner; normalize roles to owner A / outsider B')
+check(len(lists)==1 and lists[0]['owner_id']==ua['id'] and (not lists_b or lists_b[0]['owner_id']!=ub['id']),'exactly one owner fixture and no outsider-owned fixture')
 lid=lists[0]['id']
 path='/rest/v1/shopping_lists?id=eq.'+quote(lid)+'&select=id,owner_id'
 sa,ra=call(path,a);sb,rb=call(path,b);sc,rc=call(path)
