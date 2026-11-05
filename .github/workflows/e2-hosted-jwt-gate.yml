@@ -1,0 +1,30 @@
+name: E2 hosted Supabase JWT A-B read-only gate
+on:
+  workflow_dispatch:
+  pull_request:
+    branches: [feature/cloud-schema-draft]
+    paths:
+      - 'tests/http/test_e2_hosted_acl.py'
+      - '.github/workflows/e2-hosted-jwt-gate.yml'
+permissions:
+  contents: read
+jobs:
+  hosted-auth:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      TEST_SUPABASE_URL: ${{ secrets.TEST_SUPABASE_URL }}
+      TEST_SUPABASE_ANON_KEY: ${{ secrets.TEST_SUPABASE_ANON_KEY }}
+      TEST_OWNER_JWT: ${{ secrets.TEST_OWNER_JWT }}
+      TEST_INVITEE_JWT: ${{ secrets.TEST_INVITEE_JWT }}
+      TEST_OWNER_LIST_ID: ${{ secrets.TEST_OWNER_LIST_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify real hosted A/B/anonymous isolation (read-only)
+        run: python3 tests/http/test_e2_hosted_acl.py
+      - name: Evidence scope
+        if: always()
+        run: |
+          echo '### Hosted Supabase JWT A/B gate' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Read-only test; no database mutations, token printing or migration application.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Requires preexisting isolated A-owned list and valid short-lived JWTs.' >> "$GITHUB_STEP_SUMMARY"
