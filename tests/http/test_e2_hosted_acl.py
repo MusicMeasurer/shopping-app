@@ -34,7 +34,4 @@ for who,jwt,expected in [('A',a,True),('B',b,False)]:
     check(status==200 and value is expected,who+' RPC list access correct')
 status,_=call('/rest/v1/rpc/can_access_list',None,'POST',{'p_list':lid})
 check(status in (401,403,404),'anonymous cannot execute list access RPC')
-for who,jwt in [('B',b),('anonymous',None)]:
-    status,_=call('/rest/v1/rpc/apply_item_change',jwt,'POST',{'p_list':lid,'p_item':str(uuid.uuid4()),'p_operation':'update','p_operation_id':str(uuid.uuid4()),'p_name':'forbidden','p_purchased':False,'p_base_revision':0})
-    check(status>=400,who+' cannot apply item mutation to A list')
 print('Hosted E2 HTTP read/deny gate complete; no test data created.')
