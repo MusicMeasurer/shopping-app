@@ -104,6 +104,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudLists([])
     setCloudBindings({})
     setSelectedRemote('')
+    setCloudPreview(null)
   }, [view.status === 'account' ? view.accountId : null])
 
   async function loadCloudLists() {
@@ -221,7 +222,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudLists.length > 0 && <form onSubmit={event => void bindCloudList(event)}>
         <label htmlFor="local-cloud-list">Локальный список</label>
         <select id="local-cloud-list" value={selectedLocal} disabled={cloudLoading}
-          onChange={event => { setSelectedLocal(event.target.value as ListId); setSelectedRemote('') }}>
+          onChange={event => { setSelectedLocal(event.target.value as ListId); setSelectedRemote(''); setCloudPreview(null) }}>
           {lists.map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
         </select>
         <label htmlFor="remote-cloud-list">Облачный список</label>
