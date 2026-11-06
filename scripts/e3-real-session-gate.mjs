@@ -60,5 +60,10 @@ const { error: denied } = await outsider.client.rpc('apply_item_change', {
 })
 assert.ok(denied, 'User B unexpectedly wrote to A list')
 assert.match(denied.message, /List unavailable/, 'Unexpected rejection reason')
+// The rejected operation must not have created a visible item for its owner.
+const { data: ownerItems, error: ownerItemsError } = await (aOwned ? a : b).client
+  .from('shopping_items').select('id').eq('name', 'forbidden-integration-probe')
+if (ownerItemsError) throw ownerItemsError
+assert.equal(ownerItems.length, 0, 'Rejected RPC unexpectedly persisted an item')
 console.log('PASS: two distinct server-verified users, private list/items, forbidden RPC write')
 // Do not print tokens, passwords, emails or user IDs.
