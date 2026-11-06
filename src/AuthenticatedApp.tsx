@@ -26,6 +26,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudLoading, setCloudLoading] = useState(false)
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
   const [selectedRemote, setSelectedRemote] = useState('')
+  const [cloudPreview, setCloudPreview] = useState<string | null>(null)
   const currentAccount = view.status === 'account' ? view.accountId : null
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
