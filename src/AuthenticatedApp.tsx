@@ -30,15 +30,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
   const automaticFlushRunning = useRef(false)
+  const flushRequested = useRef(false)
   const onQueued = useCallback(() => {
-    if (!client || !currentAccount || automaticFlushRunning.current) return
+    if (!client || !currentAccount) return
+    flushRequested.current = true
+    if (automaticFlushRunning.current) return
     const accountId = currentAccount
     automaticFlushRunning.current = true
     void (async () => {
       try {
         if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
-        const mappings = await storage.readAccountListMappings(accountId)
-        for (const mapping of mappings) {
+        do {
+          flushRequested.current = false
+          const mappings = await storage.readAccountListMappings(accountId)
+          for (const mapping of mappings) {
           if (activeAccount.current !== accountId) return
           if (!lists.some(list => list.id === mapping.localListId)) continue
           await createAccountSync(storage, client, {
@@ -46,11 +51,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             remoteListId: mapping.remoteListId,
             isActive: () => activeAccount.current === accountId,
           }).flush()
-        }
+          }
+        } while (flushRequested.current && activeAccount.current === accountId)
       } catch {
         // Durable queue remains available for explicit retry.
       } finally {
         automaticFlushRunning.current = false
+        if (activeAccount.current !== accountId) flushRequested.current = false
       }
     })()
   }, [client, currentAccount, storage])
