@@ -195,6 +195,28 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
 
+  async function importCloudItems() {
+    if (!client || view.status !== 'account' || cloudLoading) return
+    const accountId = view.accountId
+    const localListId = selectedLocal
+    const remoteListId = cloudBindings[localListId]
+    if (!remoteListId) return
+    setCloudLoading(true)
+    setCloudPreview(null)
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Account changed')
+      const count = await createAccountSync(storage, client, {
+        accountId, localListId, remoteListId,
+        isActive: () => activeAccount.current === accountId,
+      }).importRemoteOnly()
+      setCloudPreview('Импортировано новых покупок: ' + count + '. Обновите список для отображения.')
+    } catch {
+      setCloudPreview('Импорт остановлен: есть конфликт или ошибка проверки. Существующие покупки не перезаписаны.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
   async function signIn(event: FormEvent) {
     event.preventDefault()
     if (!controller || busy) return
