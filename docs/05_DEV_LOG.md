@@ -73,3 +73,15 @@
 ### Evidence policy
 
 Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, and user-supplied hosted SQL output proves only the specific read-only observations. None alone proves production readiness.
+
+
+## 2026-11-06 · E3: verified cloud list binding and account item queue (working branch)
+
+- Branch `feature/e3-cloud-auth`; published GitHub Pages and production data untouched. E3 is **in progress**, not accepted; Siri direct add and automatic end-to-end sync remain incomplete.
+- Existing foundations (do not duplicate): remote snapshot, conservative reconciliation, versioned RPC mutation and idempotent retry, account-scoped durable IndexedDB queue, atomic edit+queue, atomic receipt+version acknowledgement, real Supabase disposable-lab RPC/isolation probes, and local-cloud integration tests. Real-lab probes do not certify the UI workflow or Siri.
+- `e236399`: read-only owned-list discovery. `67f0e2c`: explicit ownership-checked binding helper. `e11c7b3`: UI for manual list selection/binding. E2/E3 CI for `e11c7b3` green.
+- `7986f03`: documentation-only control write after transient tool-call security blocking; `f1fe7e5`: manual flush button for previously queued versioned account changes. E2/E3 CI for `f1fe7e5` green.
+- `db60255`, `9942cdd`, `58348f6`: cloud-aware account item store and UI routing. For a bound list, add/update/delete are persisted with a versioned queued operation; unbound lists remain local-only; unconfirmed existing items fail closed. E2/E3 CI for `58348f6` green.
+- `776441d`: five additional unit tests for the new cloud-aware store. E3 CI run 42210390446: 106 passed, 1 failed because an assertion expected different error text; E2 gate passed. `30d7846`: corrected the assertion; CI result pending at journal update.
+- Distinction: existing queue/retry/integration tests already covered underlying mechanisms; new tests cover UI-facing store integration, not a newly invented sync architecture. Avoid repeating completed work.
+- **Open:** verify latest CI; implement automatic queue flush after user edits with safe account/session lifecycle; server-to-local reconciliation and clear offline/conflict UX; complete Siri add-to-target-list and locked-screen device test. No automatic guest import or list-name mapping. No production deployment without explicit approval.
