@@ -1,6 +1,9 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
+import { lists, type ListId } from './domain/shopping'
+import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
+import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import type { Storage } from './data/storage'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
@@ -17,6 +20,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
+  const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
+  const [cloudLoading, setCloudLoading] = useState(false)
+  const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
+  const [selectedRemote, setSelectedRemote] = useState('')
 
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
@@ -45,6 +53,53 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setController(null)
     }
   }, [client])
+
+  // Account changes invalidate all cloud discovery and selection state.
+  useEffect(() => {
+    setCloudLists([])
+    setCloudBindings({})
+    setSelectedRemote('')
+  }, [view.status === 'account' ? view.accountId : null])
+
+  async function loadCloudLists() {
+    if (!client || view.status !== 'account' || cloudLoading) return
+    const accountId = view.accountId
+    setCloudLoading(true)
+    setError('')
+    try {
+      const [remote, mappings] = await Promise.all([
+        fetchOwnedCloudLists(client, accountId),
+        storage.readAccountListMappings(accountId),
+      ])
+      if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
+      setCloudLists(remote)
+      setCloudBindings(Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])))
+      setSelectedRemote('')
+    } catch {
+      setError('Не удалось проверить облачные списки. Повторите загрузку.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
+  async function bindCloudList(event: FormEvent) {
+    event.preventDefault()
+    if (!client || view.status !== 'account' || !selectedRemote || cloudLoading) return
+    const accountId = view.accountId
+    setCloudLoading(true)
+    setError('')
+    try {
+      await bindVerifiedOwnedList(storage, client, accountId, selectedLocal, selectedRemote,
+        () => view.status === 'account' && view.accountId === accountId)
+      if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
+      setCloudBindings(current => ({ ...current, [selectedLocal]: selectedRemote }))
+      setSelectedRemote('')
+    } catch {
+      setError('Не удалось привязать список. Проверьте аккаунт и выбранный список.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
 
   async function signIn(event: FormEvent) {
     event.preventDefault()
@@ -89,6 +144,29 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         </form>}
       {error && <p role="alert">{error}</p>}
     </aside>}
+    {client && view.status === 'account' && <section aria-label="Облачные списки">
+      <h2>Облачные списки</h2>
+      <p>Привязка не переносит покупки и не включает синхронизацию автоматически.</p>
+      <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
+        {cloudLoading ? 'Проверяем…' : 'Загрузить мои облачные списки'}
+      </button>
+      {cloudLists.length > 0 && <form onSubmit={event => void bindCloudList(event)}>
+        <label htmlFor="local-cloud-list">Локальный список</label>
+        <select id="local-cloud-list" value={selectedLocal} disabled={cloudLoading}
+          onChange={event => { setSelectedLocal(event.target.value as ListId); setSelectedRemote('') }}>
+          {lists.map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
+        </select>
+        <label htmlFor="remote-cloud-list">Облачный список</label>
+        <select id="remote-cloud-list" value={selectedRemote} disabled={cloudLoading || !!cloudBindings[selectedLocal]}
+          onChange={event => setSelectedRemote(event.target.value)}>
+          <option value="">Выберите список</option>
+          {cloudLists.map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
+        </select>
+        <button disabled={cloudLoading || !selectedRemote || !!cloudBindings[selectedLocal]}>Привязать</button>
+      </form>}
+      {lists.map(list => cloudBindings[list.id] &&
+        <p key={list.id}>{list.name}: облачный список привязан (синхронизация ещё не включена).</p>)}
+    </section>}
     <App storage={storage} accountId={view.status === 'account' ? view.accountId : null} />
   </>
 }
