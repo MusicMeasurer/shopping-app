@@ -196,6 +196,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
 
+  async function compareCloudDeletions() {
+    if (!client || view.status !== 'account' || cloudLoading) return
+    const accountId = view.accountId
+    const localListId = selectedLocal
+    const remoteListId = cloudBindings[localListId]
+    if (!remoteListId) return
+    setCloudLoading(true)
+    setCloudPreview(null)
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Account changed')
+      const result = await createAccountSync(storage, client, {
+        accountId, localListId, remoteListId,
+        isActive: () => activeAccount.current === accountId,
+      }).previewDeletions()
+      if (activeAccount.current !== accountId) throw new Error('Account changed')
+      setCloudPreview('Удаления в облаке: подтверждённые версии — ' +
+        result.confirmedDeletions.length + ', конфликты — ' + result.conflicts.length +
+        ', без известной версии — ' + result.unknownVersions.length +
+        '. Ничего не удалено.')
+    } catch {
+      setCloudPreview('Проверка удалений не удалась. Локальные покупки не изменены.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
   async function importCloudItems() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
@@ -285,6 +311,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       </form>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void compareCloudList()}>Сравнить с облаком</button>}
+      {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
+        onClick={() => void compareCloudDeletions()}>Проверить удаления в облаке</button>}
       {cloudPreview && <p role="status">{cloudPreview}</p>}
       {cloudPreview?.startsWith('Только просмотр:') && <button type="button" disabled={cloudLoading}
         onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
