@@ -38,14 +38,38 @@ describe.skipIf(process.env.E3_LAB_URL === undefined)('real cloud-to-local recei
         kind: 'cloud-add', operationId, localListId: 'groceries',
         remoteListId: owned.id, itemId: item.id, item,
       })
-      const sync = createAccountSync(storage, client, {
+      // Simulate losing the local acknowledgement after a successful server RPC.
+      let interruptReceipt = true
+      const receiptStorage = {
+        ...storage,
+        commitAccountReceipt: async (...args: Parameters<typeof storage.commitAccountReceipt>) => {
+          if (interruptReceipt) {
+            interruptReceipt = false
+            throw new Error('Simulated receipt persistence interruption')
+          }
+          return storage.commitAccountReceipt(...args)
+        },
+      }
+      const sync = createAccountSync(receiptStorage, client, {
         accountId, remoteListId: owned.id, localListId: 'groceries',
         isActive: () => true,
       })
       // Cleanup must also run if the RPC succeeds but the local commit fails.
       try {
-        expect(await sync.flush()).toBe(1)
+        await expect(sync.flush()).rejects.toThrow('Simulated receipt persistence interruption')
         remoteCreated = true
+        expect(await storage.readAccountPending(accountId)).toHaveLength(1)
+        const { data: afterFirst, error: firstReadError } = await client.from('shopping_items')
+          .select('id,version').eq('id', item.id)
+        if (firstReadError) throw firstReadError
+        expect(afterFirst).toHaveLength(1)
+        expect(await storage.readAccountItemVersions(accountId)).toEqual([])
+        // The same durable operation ID and payload must replay idempotently.
+        expect(await sync.flush()).toBe(1)
+        const { data: afterRetry, error: retryReadError } = await client.from('shopping_items')
+          .select('id,version').eq('id', item.id)
+        if (retryReadError) throw retryReadError
+        expect(afterRetry).toEqual(afterFirst)
       } catch (error) {
         const { data } = await client.from('shopping_items').select('id').eq('id', item.id)
         remoteCreated = !!data?.length
