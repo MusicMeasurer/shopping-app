@@ -47,14 +47,14 @@ describe('auth controller', () => {
     expect(views.at(-1)).toEqual({ status: 'guest' })
     controller.dispose()
   })
-  it('fails closed when signout returns an error', async () => {
+  it('keeps the workspace locked when signout returns an error', async () => {
     const fake = fakeClient(session)
     fake.client.signOut = async () => ({ error: { message: 'offline' } })
     const views: AuthView[] = []
     const controller = createAuthController(fake.client, view => views.push(view))
     await controller.initialize()
     await expect(controller.signOut()).rejects.toThrow('offline')
-    expect(views.at(-1)).toEqual({ status: 'guest' })
+    expect(views.at(-1)).toEqual({ status: 'checking' })
     controller.dispose()
   })
   it('switches between distinct account identities without retaining the previous account view', async () => {
