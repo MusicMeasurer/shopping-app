@@ -21,7 +21,7 @@ function setup(pending: PendingItemOperation[] = []) {
   const importRemoteOnlyBatch = vi.fn(async () => {})
   const applyReviewedRemoteDeletions = vi.fn(async () => {})
   const order = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
-  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }))
+  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }), not: async () => ({ data: [], error: null }) }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
   const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
