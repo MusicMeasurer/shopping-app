@@ -4,6 +4,7 @@ import { App } from './App'
 import type { Storage } from './data/storage'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
+import { verifiedAccountId } from './data/verified-account'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
 
@@ -36,7 +37,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
-    }, setView, guard)
+    }, setView, guard, async () => verifiedAccountId(client))
     setController(next)
     void next.initialize()
     return () => {
