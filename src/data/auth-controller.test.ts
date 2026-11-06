@@ -1,0 +1,59 @@
+import { describe, expect, it, vi } from 'vitest'
+import { createAuthController, type AuthClient } from './auth-controller'
+import type { SessionCandidate } from './auth-scope'
+import type { AuthView } from './auth-view'
+
+const id = '123e4567-e89b-42d3-a456-426614174000'
+const session: SessionCandidate = { user: { id }, access_token: 'token' }
+
+function fakeClient(initial: SessionCandidate | null = null) {
+  let notify: (event: string, session: SessionCandidate | null) => void = () => {}
+  const unsubscribe = vi.fn()
+  const client: AuthClient = {
+    getSession: vi.fn(async () => ({ data: { session: initial }, error: null })),
+    onAuthStateChange: (callback) => {
+      notify = callback
+      return { data: { subscription: { unsubscribe } } }
+    },
+    signInWithPassword: vi.fn(async () => ({ error: null })),
+    signOut: vi.fn(async () => ({ error: null })),
+  }
+  return { client, notify: (event: string, value: SessionCandidate | null) => notify(event, value), unsubscribe }
+}
+
+describe('auth controller', () => {
+  it('restores a session and hides it on signout', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    await controller.initialize()
+    expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+    await controller.signOut()
+    expect(views.slice(-2)).toEqual([{ status: 'checking' }, { status: 'guest' }])
+    controller.dispose()
+    expect(fake.unsubscribe).toHaveBeenCalledOnce()
+  })
+  it('does not let a stale getSession overwrite a newer auth event', async () => {
+    let resolve!: (result: { data: { session: SessionCandidate | null }; error: null }) => void
+    const fake = fakeClient()
+    fake.client.getSession = () => new Promise(r => { resolve = r })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    const pending = controller.initialize()
+    fake.notify('SIGNED_OUT', null)
+    resolve({ data: { session }, error: null })
+    await pending
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
+  it('fails closed when signout returns an error', async () => {
+    const fake = fakeClient(session)
+    fake.client.signOut = async () => ({ error: { message: 'offline' } })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    await controller.initialize()
+    await expect(controller.signOut()).rejects.toThrow('offline')
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
+})
