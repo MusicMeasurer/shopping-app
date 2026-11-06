@@ -105,3 +105,5 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - Verified preceding checkpoint CI E3 #234 and E2 #143 both successful.
 - `c9c8281`, `2f426ba`, `9728aef`, `c5f4506`: account-scoped, verified-session read-only comparison button wired to existing `createAccountSync.preview()`. Displays remote-only count, conflict count and pending queue count. Clears preview on account/list change. No automatic merge or local writes.
 - CI for latest UI changes pending. Remaining: explicit safe reconciliation/import with version handling, end-to-end cross-device acceptance, Siri direct add and iPhone tests. Production untouched.
+
+- 2026-11-07 follow-up: E3 #242 and E2 #147 passed for read-only comparison UI. `1e71859` adds account-scoped atomic IndexedDB primitive to import only server-only items with confirmed version, rejecting existing items, versions, queued edits, and wrong mappings; `1c098aa` adds two regression tests. This is a guarded persistence primitive, **not yet wired to UI or an automatic merge**. New CI pending. Do not count cross-device reconciliation as accepted.
