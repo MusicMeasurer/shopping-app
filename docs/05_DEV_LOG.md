@@ -91,3 +91,11 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - Follow-up: E2 #135 and E3 #218 passed on `46d236a`. `e93fb1c` adds durable-notification regression test; `04239da` coalesces queue notifications received during an active automatic flush and performs another pass. CI for these commits pending. No background network-resume trigger yet.
 
 - Follow-up 2026-11-06: E3 #224 and E2 #138 passed on `04239da`. `5ec808e` registers an account-scoped browser `online` listener to retry durable cloud queue after connectivity returns; `b5b8429` corrects misleading UI text. `online` signals connectivity only, not guaranteed server reachability; failed operations remain queued and manual retry is available. No background service worker sync, no guest upload, no production release. CI pending.
+
+## 2026-11-06 · End-of-day checkpoint
+
+- Verified latest CI: E3 run #232 and E2 run #142 both succeeded on `9801569`; earlier E3 #230 and E2 #141 also succeeded on `b5b8429`.
+- E0/E1/E2 complete; E3 in progress, not accepted. Account-bound edits queue atomically, auto-flush on edit, coalesce concurrent notifications and retry on browser `online`. Unbound/guest data remain local. Manual retry retained.
+- Attempted read-only reconciliation preview in `AuthenticatedApp.tsx`, but GitHub writes were blocked; **no preview implementation committed**. Existing headless reconciliation logic is read-only and unintegrated in UI.
+- Next: read-only remote/local preview, safe explicit reconciliation with conflict/version handling, actual Siri direct add to chosen list and iPhone acceptance, then release gate. No production deployment approved.
+- Estimate for next E3-gated release: roughly 70% implementation progress (subjective, not a test metric). Core cloud security/storage/queue done; cross-device read path and Siri end-to-end acceptance remain significant. Roadmap does not explicitly promise a release immediately after E3; release requires separate verification and approval.
