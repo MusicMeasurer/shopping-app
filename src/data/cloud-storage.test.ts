@@ -64,6 +64,21 @@ describe('IndexedDB v5 cloud edit migration', () => {
     expect(await storage.readAccountPending('a')).toEqual([])
     await storage.close()
   })
+  it('refuses overlapping pending edits without changing local item or queue', async () => {
+    const storage = createStorage('overlap-' + crypto.randomUUID())
+    const item = createItem('groceries', 'Молоко')
+    await storage.bindAccountList('a', 'groceries', remoteListId)
+    const first = { kind: 'cloud-add' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id, item }
+    await storage.saveAccountEdit('a', first)
+    const second = { kind: 'cloud-update' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id,
+      expectedVersion: 1, item: { ...item, name: 'Молоко 2' } }
+    await expect(storage.saveAccountEdit('a', second)).rejects.toThrow('unconfirmed cloud change')
+    expect(await storage.readAccountPending('a')).toEqual([first])
+    expect(await storage.readAccountItems('a')).toEqual([item])
+    await storage.close()
+  })
   it('persists confirmed server versions per account without regression', async () => {
     const storage = createStorage('versions-' + crypto.randomUUID())
     const itemId = crypto.randomUUID()
