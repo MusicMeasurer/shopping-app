@@ -3,7 +3,8 @@ import type { ListId } from '../domain/shopping'
 import type { Storage } from './storage'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
-import { fetchRemoteItems } from './remote-snapshot'
+import { fetchRemoteItems, fetchRemoteTombstones } from './remote-snapshot'
+import { planVersionedTombstones } from './versioned-tombstone-plan'
 import { planReconciliation } from './reconciliation-plan'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
 import { resolveVersionedMutation } from './versioned-mutation'
@@ -17,7 +18,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -39,6 +40,21 @@ export function createAccountSync(
     if (!mappings.some(mapping => mapping.localListId === localListId && mapping.remoteListId === remoteListId)) {
       throw new Error('Missing verified account list mapping')
     }
+  }
+  async function previewDeletions() {
+    assertActive()
+    await verifyMapping()
+    const [items, versions, pending, tombstones] = await Promise.all([
+      storage.readAccountItems(accountId),
+      storage.readAccountItemVersions(accountId),
+      storage.readAccountPending(accountId),
+      fetchRemoteTombstones(client, remoteListId),
+    ])
+    assertActive()
+    return planVersionedTombstones(
+      items.filter(item => item.listId === localListId), versions, tombstones,
+      pending, remoteListId,
+    )
   }
   async function importRemoteOnly(): Promise<number> {
     assertActive()
@@ -119,5 +135,5 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, importRemoteOnly }
+  return { ...coordinator, importRemoteOnly, previewDeletions }
 }
