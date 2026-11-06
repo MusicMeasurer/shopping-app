@@ -46,6 +46,33 @@ describe('account-scoped sync binding', () => {
     expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
   })
 
+  it('stops import if account becomes inactive during the second server read', async () => {
+    const test = setup()
+    const remote = { id: crypto.randomUUID(), list_id: listId, name: 'Кофе',
+      purchased: false, created_at: new Date().toISOString(), version: 1 }
+    let calls = 0
+    test.order.mockImplementation(async () => {
+      calls++
+      if (calls === 2) test.deactivate()
+      return { data: [remote], error: null }
+    })
+    await expect(test.sync.importRemoteOnly()).rejects.toThrow('Account changed')
+    expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
+  })
+
+  it('does not import if an unconfirmed local edit conflicts with a server item', async () => {
+    const pendingItem = { id: crypto.randomUUID(), listId: 'groceries' as const,
+      name: 'Чай', purchased: true, createdAt: 1 }
+    const test = setup([{ kind: 'cloud-update', operationId: crypto.randomUUID(),
+      itemId: pendingItem.id, localListId: 'groceries', remoteListId: listId,
+      expectedVersion: 1, item: pendingItem }])
+    const remote = { id: pendingItem.id, list_id: listId, name: 'Чай',
+      purchased: false, created_at: new Date().toISOString(), version: 2 }
+    test.order.mockResolvedValue({ data: [remote], error: null })
+    await expect(test.sync.importRemoteOnly()).rejects.toThrow('conflicting items')
+    expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
+  })
+
   it('imports unchanged remote-only items in one batch', async () => {
     const test = setup()
     const remote = { id: crypto.randomUUID(), list_id: listId, name: 'Соль',
