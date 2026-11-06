@@ -1,11 +1,14 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { lists, itemsForList, type ListId } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
 import type { Storage } from './data/storage'
+import { itemStoreForAccount } from './data/account-item-store'
 export function App({ storage }: { storage: Storage }) {
   const [active, setActive] = useState<ListId>('groceries')
   const [name, setName] = useState('')
-  const shopping = useShopping(storage)
+  // Guest remains the default until a verified auth session is available.
+  const itemStore = useMemo(() => itemStoreForAccount(storage, null), [storage])
+  const shopping = useShopping(itemStore)
   const rows = itemsForList(shopping.items, active)
   const remaining = rows.filter(item => !item.purchased).length
   const list = lists.find(list => list.id === active)!
