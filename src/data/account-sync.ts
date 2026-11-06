@@ -1,5 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
-import type { ListId } from '../domain/shopping'
+import type { ListId, Item } from '../domain/shopping'
 import type { Storage } from './storage'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
@@ -18,7 +18,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -56,6 +56,49 @@ export function createAccountSync(
       pending, remoteListId,
     )
   }
+  async function applyConfirmedDeletions(reviewedIds: readonly string[]): Promise<number> {
+    assertActive()
+    if (!reviewedIds.length || new Set(reviewedIds).size !== reviewedIds.length) {
+      throw new Error('Explicit unique deletion selection is required')
+    }
+    await verifyMapping()
+    const [items, versions, pending, initial] = await Promise.all([
+      storage.readAccountItems(accountId), storage.readAccountItemVersions(accountId),
+      storage.readAccountPending(accountId), fetchRemoteTombstones(client, remoteListId),
+    ])
+    assertActive()
+    const local = items.filter(item => item.listId === localListId)
+    const plan = planVersionedTombstones(local, versions, initial, pending, remoteListId)
+    if (reviewedIds.some(id => !plan.confirmedDeletions.includes(id))) {
+      throw new Error('Deletion selection contains an unresolved conflict')
+    }
+    const latest = await fetchRemoteTombstones(client, remoteListId)
+    assertActive()
+    const signature = (rows: typeof initial) => JSON.stringify(rows.map(row =>
+      [row.id, row.listId, row.version, row.deletedAt]).sort((a, b) =>
+      String(a[0]).localeCompare(String(b[0])))
+    if (signature(initial) !== signature(latest)) {
+      throw new Error('Remote deletions changed during confirmation')
+    }
+    const byId = new Map(local.map(item => [item.id, item]))
+    const known = new Map(versions.map(row => [row.itemId, row]))
+    const tombstones = new Map(latest.map(row => [row.id, row]))
+    const entries: { item: Item; expectedLocalVersion: number; serverDeletedVersion: number }[] =
+      reviewedIds.map(id => {
+        const item = byId.get(id)
+        const version = known.get(id)
+        const tombstone = tombstones.get(id)
+        if (!item || !version || !tombstone || version.remoteListId !== remoteListId ||
+            tombstone.version <= version.version) {
+          throw new Error('Deletion selection no longer has safe version evidence')
+        }
+        return { item, expectedLocalVersion: version.version, serverDeletedVersion: tombstone.version }
+      })
+    assertActive()
+    await storage.applyReviewedRemoteDeletions(accountId, remoteListId, entries)
+    return entries.length
+  }
+
   async function importRemoteOnly(): Promise<number> {
     assertActive()
     await verifyMapping()
@@ -135,5 +178,5 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, importRemoteOnly, previewDeletions }
+  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions }
 }
