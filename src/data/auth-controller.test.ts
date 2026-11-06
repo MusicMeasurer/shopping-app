@@ -83,6 +83,22 @@ describe('auth controller', () => {
     fake.notify('SIGNED_IN', session)
     expect(views).toHaveLength(count)
   })
+  it('does not reopen account data when auth events arrive during a pending signout', async () => {
+    const fake = fakeClient(session)
+    let finish!: (value: { error: null }) => void
+    fake.client.signOut = () => new Promise(resolve => { finish = resolve })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    await controller.initialize()
+    const pending = controller.signOut()
+    fake.notify('TOKEN_REFRESHED', session)
+    fake.notify('SIGNED_IN', session)
+    expect(views.at(-1)).toEqual({ status: 'checking' })
+    finish({ error: null })
+    await pending
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
   it('does not publish a session returned after disposal', async () => {
     let resolve!: (result: { data: { session: SessionCandidate | null }; error: null }) => void
     const fake = fakeClient()
