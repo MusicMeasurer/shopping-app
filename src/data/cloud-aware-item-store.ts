@@ -5,7 +5,7 @@ import type { Storage } from './storage'
  * Account edits are atomic with their queued cloud operation when the list
  * has an explicit binding. Unbound lists stay local-only.
  */
-export function cloudAwareItemStore(storage: Storage, accountId: string) {
+export function cloudAwareItemStore(storage: Storage, accountId: string, onQueued?: () => void) {
   return {
     read: () => storage.readAccountItems(accountId),
     async save(item: Item): Promise<void> {
@@ -31,6 +31,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string) {
         localListId: item.listId, remoteListId: binding.remoteListId,
         itemId: item.id, item,
       })
+      onQueued?.()
     },
     async remove(itemId: string): Promise<void> {
       const items = await storage.readAccountItems(accountId)
@@ -50,6 +51,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string) {
         localListId: item.listId, remoteListId: binding.remoteListId,
         itemId, expectedVersion: known.version,
       })
+      onQueued?.()
     },
   }
 }
