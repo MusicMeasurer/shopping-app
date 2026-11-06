@@ -1,4 +1,5 @@
 // Destructive integration probe: disposable Supabase lab ONLY.
+// Companion IndexedDB-to-RPC integration is exercised by the e3-lab workflow.
 // Creates a uniquely named item and soft-deletes it via the authenticated RPC.
 // Secrets are provided only by the GitHub Actions e3-lab environment.
 import assert from 'node:assert/strict'
