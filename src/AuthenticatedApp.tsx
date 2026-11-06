@@ -259,6 +259,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <button disabled={cloudLoading || !selectedRemote || !!cloudBindings[selectedLocal]}>Привязать</button>
       </form>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
+        onClick={() => void compareCloudList()}>Сравнить с облаком</button>}
+      {cloudPreview && <p role="status">{cloudPreview}</p>}
+      {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
