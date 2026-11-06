@@ -17,7 +17,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyItem'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -57,15 +57,14 @@ export function createAccountSync(
     const plan = planReconciliation(localItems, remoteItems, pending)
     if (plan.conflicts.length) throw new Error('Resolve conflicting items before import')
     const remoteById = new Map(remote.map(item => [item.id, item]))
-    let imported = 0
-    for (const item of plan.remoteOnly) {
-      assertActive()
+    const entries = plan.remoteOnly.map(item => {
       const source = remoteById.get(item.id)
       if (!source) throw new Error('Missing remote item version')
-      await storage.importRemoteOnlyItem(accountId, remoteListId, item, source.version)
-      imported++
-    }
-    return imported
+      return { item, version: source.version }
+    })
+    assertActive()
+    await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
+    return entries.length
   }
   const coordinator = createSyncCoordinator({
     accountId,
