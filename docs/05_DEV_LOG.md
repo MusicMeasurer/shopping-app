@@ -125,3 +125,5 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - 2026-11-07: E3 #308 and E2 #180 green. Added `applyConfirmedDeletions(reviewedIds)` orchestration (`03d91c3`): requires explicit IDs, classifies with known versions, re-fetches and compares tombstones, then uses atomic local guarded deletion. Two fail-closed tests (`1ab577c`). This API is not wired to the UI; user confirmation and item-level review remain necessary. CI pending; no production changes.
 
 - 2026-11-07: E3 #314 failed during test transform due to a missing parenthesis in tombstone signature; E2 #183 passed. Corrected expression (`959d800`) and supplied tombstone `.not()` mock (`e0d4e2a`). Await CI before enabling reviewed deletions in UI. Production unchanged.
+
+- 2026-11-07: E3 #320 and E2 #186 green. Deletion preview now includes local item names (`f41e625`); UI displays exact candidate names and requires a second explicit confirmation (`9d11302`) before calling guarded coordinator. Fixed equal-version tombstone eligibility (`6859e46`) and added regression assertion (`1eba552`). New CI must pass before any acceptance. No production deployment.
