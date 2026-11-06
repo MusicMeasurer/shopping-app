@@ -122,6 +122,7 @@ export function createStorage(name = 'shopping-app') {
       const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
       if (!mapping || mapping.remoteListId !== operation.remoteListId) {
         tx.abort()
+        await tx.done.catch(() => {})
         throw new Error('Missing verified list mapping')
       }
       const operations = tx.objectStore('accountOperations')
@@ -129,6 +130,7 @@ export function createStorage(name = 'shopping-app') {
       if (existing) {
         if (JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
           tx.abort()
+          await tx.done.catch(() => {})
           throw new Error('Operation ID collision with different payload')
         }
         await tx.done
