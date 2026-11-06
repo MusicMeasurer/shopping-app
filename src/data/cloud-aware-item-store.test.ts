@@ -63,6 +63,31 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
+  it('rolls back the whole remote batch when a later item conflicts', async () => {
+    const storage = await setup()
+    const first = createItem('groceries', 'Гречка')
+    const second = createItem('groceries', 'Соль')
+    await storage.saveAccountItem('account-a', second)
+    await expect(storage.importRemoteOnlyBatch('account-a', listId, [
+      { item: first, version: 1 }, { item: second, version: 2 },
+    ])).rejects.toThrow('conflicts with local state')
+    expect(await storage.readAccountItems('account-a')).toEqual([second])
+    expect(await storage.readAccountItemVersions('account-a')).toEqual([])
+    await storage.close()
+  })
+
+  it('imports a whole nonconflicting batch with confirmed versions', async () => {
+    const storage = await setup()
+    const first = createItem('groceries', 'Мука')
+    const second = createItem('groceries', 'Сахар')
+    await storage.importRemoteOnlyBatch('account-a', listId, [
+      { item: first, version: 3 }, { item: second, version: 4 },
+    ])
+    expect(await storage.readAccountItems('account-a')).toHaveLength(2)
+    expect((await storage.readAccountItemVersions('account-a')).map(row => row.version).sort()).toEqual([3, 4])
+    await storage.close()
+  })
+
   it('keeps unbound account lists local only', async () => {
     const storage = await setup()
     const item = createItem('household', 'Мыло')
