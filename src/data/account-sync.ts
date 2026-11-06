@@ -63,6 +63,7 @@ export function createAccountSync(
       }
       return rows.filter(operation => {
         if (operation.kind === 'upsert') return operation.item.listId === localListId
+        if (operation.kind === 'delete') throw new Error('Pending deletion requires a durable list mapping')
         return operation.localListId === localListId && operation.remoteListId === remoteListId
       })
     },
