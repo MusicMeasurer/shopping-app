@@ -11,8 +11,8 @@ import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
  * stores. No guest data is ever read or uploaded. The remote list mapping
  * and version-aware mutation resolver must be supplied explicitly.
  *
- * Do not enable this automatically on login: the current local operation
- * schema does not contain expected remote versions for update/delete.
+ * Do not enable automatically on login: legacy operations have no remote
+ * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
   storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending'>,
@@ -48,6 +48,10 @@ export function createAccountSync(
       // the current schema. Reject mixed/unresolvable queues instead.
       for (const operation of rows) {
         if (operation.kind === 'upsert' && operation.item.listId !== localListId) {
+          throw new Error('Account queue contains operations for another list')
+        }
+        if (operation.kind.startsWith('cloud-') &&
+            (operation.remoteListId !== remoteListId || operation.localListId !== localListId)) {
           throw new Error('Account queue contains operations for another list')
         }
         if (operation.kind === 'delete') {
