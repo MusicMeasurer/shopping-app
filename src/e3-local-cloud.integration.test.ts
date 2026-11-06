@@ -88,6 +88,35 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
       expect(rows).toHaveLength(1)
       expect(versions[0].version).toBe(rows![0].version)
       expect(await sync.flush()).toBe(0)
+      // A second device changes the item first. Our queued edit still carries
+      // the previous server version and must fail without being acknowledged.
+      const originalVersion = rows![0].version as number
+      const external = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
+        p_item: item.id, p_name: item.name, p_purchased: true,
+        p_expected_version: originalVersion,
+      })
+      if (external.error) throw external.error
+      expect(external.data.item_version).toBe(originalVersion + 1)
+      const conflictOperationId = crypto.randomUUID()
+      await storage.saveAccountEdit(accountId, {
+        kind: 'cloud-update', operationId: conflictOperationId,
+        localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
+        expectedVersion: originalVersion, item: { ...item, name: item.name + '_local' },
+      })
+      await expect(sync.flush()).rejects.toThrow()
+      const stillPending = await storage.readAccountPending(accountId)
+      expect(stillPending).toHaveLength(1)
+      expect(stillPending[0].operationId).toBe(conflictOperationId)
+      const versionsAfterConflict = await storage.readAccountItemVersions(accountId)
+      expect(versionsAfterConflict[0].version).toBe(originalVersion)
+      const { data: serverAfterConflict, error: conflictReadError } = await client.from('shopping_items')
+        .select('name,purchased,version').eq('id', item.id)
+      if (conflictReadError) throw conflictReadError
+      expect(serverAfterConflict).toHaveLength(1)
+      expect(serverAfterConflict![0]).toEqual({
+        name: item.name, purchased: true, version: originalVersion + 1,
+      })
     } finally {
       if (remoteCreated) {
         const { data: rows, error } = await client.from('shopping_items')
