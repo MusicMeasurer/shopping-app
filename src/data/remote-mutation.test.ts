@@ -26,7 +26,7 @@ describe('remote mutation adapter', () => {
     await applyRemoteMutation(fake.client, {
       kind: 'update', operationId, listId, itemId, expectedVersion: 2, purchased: true,
     })
-    expect(fake.rpc.mock.calls[0][1]).toMatchObject({ p_action: 'update', p_expected_version: 2, p_purchased: true })
+    expect(fake.rpc).toHaveBeenCalledWith('apply_item_change', expect.objectContaining(({ p_action: 'update', p_expected_version: 2, p_purchased: true }))
   })
   it('never issues an unversioned delete', async () => {
     const fake = fakeClient()
