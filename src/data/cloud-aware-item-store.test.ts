@@ -38,6 +38,31 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
+  it('imports a remote-only item with its confirmed version and rejects overwrites', async () => {
+    const storage = await setup()
+    const item = createItem('groceries', 'Рис')
+    await storage.importRemoteOnlyItem('account-a', listId, item, 3)
+    expect(await storage.readAccountItems('account-a')).toEqual([item])
+    expect(await storage.readAccountItemVersions('account-a')).toEqual([
+      expect.objectContaining({ itemId: item.id, version: 3, remoteListId: listId }),
+    ])
+    await expect(storage.importRemoteOnlyItem('account-a', listId, { ...item, name: 'Другой рис' }, 4))
+      .rejects.toThrow('conflicts with local state')
+    expect((await storage.readAccountItems('account-a'))[0].name).toBe('Рис')
+    await storage.close()
+  })
+
+  it('rejects remote import while the same item has an unsent local operation', async () => {
+    const storage = await setup()
+    const item = createItem('groceries', 'Чай')
+    await cloudAwareItemStore(storage, 'account-a').save(item)
+    await expect(storage.importRemoteOnlyItem('account-a', listId, item, 1))
+      .rejects.toThrow('conflicts with local state')
+    expect(await storage.readAccountItemVersions('account-a')).toEqual([])
+    expect(await storage.readAccountPending('account-a')).toHaveLength(1)
+    await storage.close()
+  })
+
   it('keeps unbound account lists local only', async () => {
     const storage = await setup()
     const item = createItem('household', 'Мыло')
