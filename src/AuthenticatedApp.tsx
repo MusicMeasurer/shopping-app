@@ -27,6 +27,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
   const [selectedRemote, setSelectedRemote] = useState('')
   const [cloudPreview, setCloudPreview] = useState<string | null>(null)
+  const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const currentAccount = view.status === 'account' ? view.accountId : null
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
@@ -209,7 +210,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         accountId, localListId, remoteListId,
         isActive: () => activeAccount.current === accountId,
       }).importRemoteOnly()
-      setCloudPreview('Импортировано новых покупок: ' + count + '. Обновите список для отображения.')
+      if (activeAccount.current !== accountId) throw new Error('Account changed')
+      setWorkspaceRevision(value => value + 1)
+      setCloudPreview('Импортировано новых покупок: ' + count + '.')
     } catch {
       setCloudPreview('Импорт остановлен: есть конфликт или ошибка проверки. Существующие покупки не перезаписаны.')
     } finally {
@@ -283,11 +286,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void compareCloudList()}>Сравнить с облаком</button>}
       {cloudPreview && <p role="status">{cloudPreview}</p>}
+      {cloudPreview?.startsWith('Только просмотр:') && <button type="button" disabled={cloudLoading}
+        onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
-    <App storage={storage} accountId={currentAccount} onQueued={onQueued} />
+    <App key={workspaceRevision} storage={storage} accountId={currentAccount} onQueued={onQueued} />
   </>
 }
