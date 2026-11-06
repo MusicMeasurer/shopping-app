@@ -198,6 +198,30 @@ export function createStorage(name = 'shopping-app') {
       await tx.objectStore('accountOperations').delete(key)
       await tx.done
     },
+    /** Import a server-only item and its confirmed version atomically; never overwrite local work. */
+    async importRemoteOnlyItem(accountId: string, remoteListId: string, item: Item, version: number): Promise<void> {
+      if (!Number.isSafeInteger(version) || version < 0 ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId)) {
+        throw new Error('Invalid remote item version or list')
+      }
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, item.listId))
+      const key = accountKey(accountId, item.id)
+      const existing = await tx.objectStore('accountItems').get(key)
+      const knownVersion = await tx.objectStore('accountItemVersions').get(key)
+      const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+      if (!mapping || mapping.remoteListId !== remoteListId || existing || knownVersion ||
+          queued.some(row => row.operation.kind === 'delete' ? row.operation.itemId === item.id :
+            row.operation.kind === 'upsert' ? row.operation.item.id === item.id : row.operation.itemId === item.id)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Remote import conflicts with local state')
+      }
+      await tx.objectStore('accountItems').add({ key, accountId, item })
+      await tx.objectStore('accountItemVersions').add({ key, accountId, itemId: item.id, remoteListId, version })
+      await tx.done
+    },
     /** Persist only server-confirmed versions; never infer a version from local edits. */
     async recordAccountItemVersion(accountId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
