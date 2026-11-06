@@ -48,6 +48,38 @@ describe('headless sync coordinator', () => {
     expect(test.send).toHaveBeenCalledTimes(1)
     expect(test.acknowledge).toHaveBeenCalledWith(operationId)
   })
+  it('retries the exact same operation after a receipt persistence failure', async () => {
+    const test = setup()
+    let confirmed = false
+    const commitReceipt = vi.fn(async () => {
+      if (!confirmed) {
+        confirmed = true
+        throw new Error('IndexedDB interrupted')
+      }
+      await test.acknowledge(operationId)
+    })
+    test.dependencies.commitReceipt = commitReceipt
+    const coordinator = createSyncCoordinator(test.dependencies, () => 'groceries')
+    await expect(coordinator.flush()).rejects.toThrow('IndexedDB interrupted')
+    expect(test.pending).toHaveLength(1)
+    expect(test.acknowledge).not.toHaveBeenCalled()
+    expect(await coordinator.flush()).toBe(1)
+    expect(test.pending).toEqual([])
+    expect(test.send).toHaveBeenCalledTimes(2)
+    expect(test.send.mock.calls[0]).toEqual(test.send.mock.calls[1])
+    expect(commitReceipt).toHaveBeenCalledTimes(2)
+  })
+  it('keeps the queue intact on version conflict even with atomic receipt persistence', async () => {
+    const test = setup()
+    const commitReceipt = vi.fn(async () => {})
+    test.dependencies.commitReceipt = commitReceipt
+    test.send.mockRejectedValueOnce(new Error('Version conflict'))
+    const coordinator = createSyncCoordinator(test.dependencies, () => 'groceries')
+    await expect(coordinator.flush()).rejects.toThrow('Version conflict')
+    expect(test.pending).toHaveLength(1)
+    expect(commitReceipt).not.toHaveBeenCalled()
+    expect(test.acknowledge).not.toHaveBeenCalled()
+  })
   it('does not send when the account has changed', async () => {
     const test = setup()
     test.deactivate()
