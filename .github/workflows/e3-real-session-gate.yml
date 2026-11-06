@@ -5,7 +5,7 @@ on:
     paths:
       - 'scripts/e3-real-session-gate.mjs'
       - 'scripts/e3-rpc-write-probe.mjs'
-      - 'scripts/e3-local-cloud.integration.test.ts'
+      - 'src/e3-local-cloud.integration.test.ts'
       - 'src/data/**'
       - '.github/workflows/e3-real-session-gate.yml'
   workflow_dispatch:
@@ -35,4 +35,4 @@ jobs:
       - name: Verify real RPC writes in disposable lab
         run: node scripts/e3-rpc-write-probe.mjs
       - name: Verify local queue to real RPC and IndexedDB receipt
-        run: npx vitest run scripts/e3-local-cloud.integration.test.ts
+        run: npx vitest run src/e3-local-cloud.integration.test.ts
