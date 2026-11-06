@@ -148,6 +148,19 @@ export function createStorage(name = 'shopping-app') {
         await tx.done
         return
       }
+      // Until sequential edits can be rebased from confirmed receipts, a
+      // second pending mutation for the same item would reuse a stale version.
+      // Reject it atomically rather than silently overwrite or lose an edit.
+      const queued = await operations.index('byAccount').getAll(accountId)
+      if (queued.some(row => {
+        const pending = row.operation
+        return pending.kind !== 'delete' &&
+          (pending.kind === 'upsert' ? pending.item.id : pending.itemId) === operation.itemId
+      })) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Item has an unconfirmed cloud change')
+      }
       const itemKey = accountKey(accountId, operation.itemId)
       const items = tx.objectStore('accountItems')
       if (operation.kind === 'cloud-delete') {
