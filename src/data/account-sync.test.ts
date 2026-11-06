@@ -61,7 +61,7 @@ describe('account-scoped sync binding', () => {
   })
 
   it('does not import if an unconfirmed local edit conflicts with a server item', async () => {
-    const pendingItem = { id: crypto.randomUUID(), listId: 'groceries' as const,
+    const pendingItem = { id: itemId, listId: 'groceries' as const,
       name: 'Чай', purchased: true, createdAt: 1 }
     const test = setup([{ kind: 'cloud-update', operationId: crypto.randomUUID(),
       itemId: pendingItem.id, localListId: 'groceries', remoteListId: listId,
