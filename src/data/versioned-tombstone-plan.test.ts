@@ -23,6 +23,7 @@ describe('version-aware deletion review', () => {
   })
   it('rejects version regressions and cross-list versions', () => {
     expect(plan([{ ...known, version: 4 }]).conflicts).toEqual([item.id])
+    expect(plan([{ ...known, version: 3 }]).conflicts).toEqual([item.id])
     expect(plan([{ ...known, remoteListId: 'another' }]).conflicts).toEqual([item.id])
   })
   it('rejects a tombstone from a different list', () => {
