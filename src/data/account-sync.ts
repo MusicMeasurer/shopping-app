@@ -5,6 +5,7 @@ import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
 import { fetchRemoteItems } from './remote-snapshot'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
+import { resolveVersionedMutation } from './versioned-mutation'
 
 /**
  * Bind the headless coordinator to the existing account-scoped IndexedDB
@@ -15,20 +16,28 @@ import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
     remoteListId: string
     localListId: ListId
     isActive: () => boolean
-    resolveMutation: (operation: PendingItemOperation) => RemoteMutation
+    resolveMutation?: (operation: PendingItemOperation) => RemoteMutation
   },
 ) {
-  const { accountId, remoteListId, localListId, isActive, resolveMutation } = options
+  const { accountId, remoteListId, localListId, isActive, resolveMutation = resolveVersionedMutation } = options
   if (!accountId.trim() || !remoteListId.trim()) throw new Error('Account and remote list are required')
   const assertActive = () => {
     if (!isActive()) throw new Error('Account changed during synchronization')
+  }
+  const verifyMapping = async () => {
+    assertActive()
+    const mappings = await storage.readAccountListMappings(accountId)
+    assertActive()
+    if (!mappings.some(mapping => mapping.localListId === localListId && mapping.remoteListId === remoteListId)) {
+      throw new Error('Missing verified account list mapping')
+    }
   }
   return createSyncCoordinator({
     accountId,
@@ -36,12 +45,14 @@ export function createAccountSync(
     isActive,
     readLocal: async () => {
       assertActive()
+      await verifyMapping()
       const rows = await storage.readAccountItems(accountId)
       assertActive()
       return rows.filter(item => item.listId === localListId)
     },
     readPending: async () => {
       assertActive()
+      await verifyMapping()
       const rows = await storage.readAccountPending(accountId)
       assertActive()
       // Do not silently skip pending deletions: they have no listId in
