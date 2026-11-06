@@ -4,6 +4,7 @@ on:
     branches: [feature/e3-cloud-auth]
     paths:
       - 'scripts/e3-real-session-gate.mjs'
+      - 'scripts/e3-rpc-write-probe.mjs'
       - '.github/workflows/e3-real-session-gate.yml'
   workflow_dispatch:
 permissions:
@@ -29,3 +30,5 @@ jobs:
       - run: npm ci
       - name: Verify real-session isolation
         run: node scripts/e3-real-session-gate.mjs
+      - name: Verify real RPC writes in disposable lab
+        run: node scripts/e3-rpc-write-probe.mjs
