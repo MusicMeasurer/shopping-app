@@ -16,7 +16,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -73,6 +73,10 @@ export function createAccountSync(
     },
     fetch: () => fetchRemoteItems(client, remoteListId),
     send: mutation => applyRemoteMutation(client, mutation),
+    commitReceipt: async (mutation, receipt) => {
+      assertActive()
+      await storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
+    },
     resolveMutation,
   }, list => {
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
