@@ -31,7 +31,7 @@ export function planVersionedTombstones(
     if (!item && !pendingIds.has(tombstone.id)) continue
     const known = versionsById.get(tombstone.id)
     if (pendingIds.has(tombstone.id) || (known && known.remoteListId !== remoteListId) ||
-        (known && known.version > tombstone.version)) {
+        (known && known.version >= tombstone.version)) {
       conflicts.push(tombstone.id)
     } else if (!known) {
       unknownVersions.push(tombstone.id)
