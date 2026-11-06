@@ -4,6 +4,7 @@ import type { SessionCandidate } from './auth-scope'
 import type { AuthView } from './auth-view'
 
 const id = '123e4567-e89b-42d3-a456-426614174000'
+const secondId = '223e4567-e89b-42d3-a456-426614174001'
 const session: SessionCandidate = { user: { id }, access_token: 'token' }
 
 function fakeClient(initial: SessionCandidate | null = null) {
@@ -55,5 +56,43 @@ describe('auth controller', () => {
     await expect(controller.signOut()).rejects.toThrow('offline')
     expect(views.at(-1)).toEqual({ status: 'guest' })
     controller.dispose()
+  })
+  it('switches between distinct account identities without retaining the previous account view', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    await controller.initialize()
+    fake.notify('SIGNED_OUT', null)
+    fake.notify('SIGNED_IN', { user: { id: secondId }, access_token: 'second-token' })
+    expect(views).toEqual([
+      { status: 'account', accountId: id },
+      { status: 'guest' },
+      { status: 'account', accountId: secondId },
+    ])
+    controller.dispose()
+  })
+  it('rejects expired sessions on refresh and ignores callbacks after disposal', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    await controller.initialize()
+    fake.notify('TOKEN_REFRESHED', { ...session, expires_at: 1 })
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+    const count = views.length
+    fake.notify('SIGNED_IN', session)
+    expect(views).toHaveLength(count)
+  })
+  it('does not publish a session returned after disposal', async () => {
+    let resolve!: (result: { data: { session: SessionCandidate | null }; error: null }) => void
+    const fake = fakeClient()
+    fake.client.getSession = () => new Promise(r => { resolve = r })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view))
+    const pending = controller.initialize()
+    controller.dispose()
+    resolve({ data: { session }, error: null })
+    await pending
+    expect(views).toEqual([])
   })
 })
