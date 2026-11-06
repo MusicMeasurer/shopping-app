@@ -1,7 +1,8 @@
 import { openDB, type DBSchema } from 'idb'
 import type { Item } from '../domain/shopping'
-import type { PendingItemOperation } from './pending-operations'
+import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
+interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string }
 interface ScopedOperation {
   key: string
   accountId: string
@@ -13,13 +14,14 @@ interface ShoppingDB extends DBSchema {
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
+  accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
 }
 function accountKey(accountId: string, operationId: string): string {
   if (!accountId.trim() || !operationId.trim()) throw new Error('Account and operation IDs are required')
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 4, {
+  const database = openDB<ShoppingDB>(name, 5, {
     upgrade(db, oldVersion) {
       if (oldVersion < 1) db.createObjectStore('items', { keyPath: 'id' })
       if (oldVersion < 2) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -29,6 +31,10 @@ export function createStorage(name = 'shopping-app') {
       }
       if (oldVersion < 4) {
         const store = db.createObjectStore('accountItems', { keyPath: 'key' })
+        store.createIndex('byAccount', 'accountId')
+      }
+      if (oldVersion < 5) {
+        const store = db.createObjectStore('accountListMappings', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
     },
@@ -88,6 +94,55 @@ export function createStorage(name = 'shopping-app') {
     },
     async acknowledgeAccountPending(accountId: string, operationId: string): Promise<void> {
       await (await database).delete('accountOperations', accountKey(accountId, operationId))
+    },
+    async readAccountListMappings(accountId: string): Promise<ScopedListMapping[]> {
+      accountKey(accountId, 'check')
+      return (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+    },
+    async bindAccountList(accountId: string, localListId: string, remoteListId: string): Promise<void> {
+      if (!localListId.trim() || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(remoteListId)) {
+        throw new Error('Invalid list mapping')
+      }
+      const key = accountKey(accountId, localListId)
+      const db = await database
+      const tx = db.transaction('accountListMappings', 'readwrite')
+      const existing = await tx.store.get(key)
+      if (existing && existing.remoteListId !== remoteListId) {
+        await tx.done
+        throw new Error('List mapping cannot be silently replaced')
+      }
+      if (!existing) await tx.store.add({ key, accountId, localListId, remoteListId })
+      await tx.done
+    },
+    /** Persist an account edit and its cloud operation in one IndexedDB transaction. */
+    async saveAccountEdit(accountId: string, operation: CloudPendingOperation): Promise<void> {
+      const key = accountKey(accountId, operation.operationId)
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
+      if (!mapping || mapping.remoteListId !== operation.remoteListId) {
+        tx.abort()
+        throw new Error('Missing verified list mapping')
+      }
+      const operations = tx.objectStore('accountOperations')
+      const existing = await operations.get(key)
+      if (existing) {
+        if (JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
+          tx.abort()
+          throw new Error('Operation ID collision with different payload')
+        }
+        await tx.done
+        return
+      }
+      const itemKey = accountKey(accountId, operation.itemId)
+      const items = tx.objectStore('accountItems')
+      if (operation.kind === 'cloud-delete') {
+        await items.delete(itemKey)
+      } else {
+        await items.put({ key: itemKey, accountId, item: operation.item })
+      }
+      await operations.add({ key, accountId, operation })
+      await tx.done
     },
     async close() { (await database).close() },
   }
