@@ -63,6 +63,16 @@ export function createAccountSync(
       return { item, version: source.version }
     })
     assertActive()
+    // Detect server edits that occurred while the first snapshot was being reviewed.
+    // This is an optimistic check, not a server-side transaction or a lock.
+    const latest = await fetchRemoteItems(client, remoteListId)
+    assertActive()
+    const signature = (rows: typeof remote) => JSON.stringify(rows.map(item => [
+      item.id, item.listId, item.name, item.purchased, item.createdAt, item.version,
+    ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
+    if (signature(remote) !== signature(latest)) {
+      throw new Error('Remote list changed during import; retry comparison')
+    }
     await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
     return entries.length
   }
