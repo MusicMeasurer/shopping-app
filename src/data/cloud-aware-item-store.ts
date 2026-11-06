@@ -20,6 +20,8 @@ export function cloudAwareItemStore(storage: Storage, accountId: string) {
       if (known && known.remoteListId !== binding.remoteListId) {
         throw new Error('Item version belongs to a different cloud list')
       }
+      const existing = (await storage.readAccountItems(accountId)).some(row => row.id === item.id)
+      if (existing && !known) throw new Error('Existing item has no confirmed cloud version')
       await storage.saveAccountEdit(accountId, known ? {
         kind: 'cloud-update', operationId: crypto.randomUUID(),
         localListId: item.listId, remoteListId: binding.remoteListId,
