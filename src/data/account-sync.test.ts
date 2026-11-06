@@ -33,9 +33,30 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, order, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
+  it('rejects a changing server snapshot without writing imported items', async () => {
+    const test = setup()
+    const remote = { id: crypto.randomUUID(), list_id: listId, name: 'Соль',
+      purchased: false, created_at: new Date().toISOString(), version: 1 }
+    test.order.mockResolvedValueOnce({ data: [remote], error: null })
+      .mockResolvedValueOnce({ data: [{ ...remote, version: 2 }], error: null })
+    await expect(test.sync.importRemoteOnly()).rejects.toThrow('Remote list changed')
+    expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
+  })
+
+  it('imports unchanged remote-only items in one batch', async () => {
+    const test = setup()
+    const remote = { id: crypto.randomUUID(), list_id: listId, name: 'Соль',
+      purchased: false, created_at: new Date().toISOString(), version: 1 }
+    test.order.mockResolvedValue({ data: [remote], error: null })
+    await expect(test.sync.importRemoteOnly()).resolves.toBe(1)
+    expect(test.importRemoteOnlyBatch).toHaveBeenCalledTimes(1)
+    expect(test.importRemoteOnlyBatch).toHaveBeenCalledWith(accountId, listId,
+      [expect.objectContaining({ item: expect.objectContaining({ id: remote.id }), version: 1 })])
+  })
+
   it('reads only account items and excludes other local lists', async () => {
     const test = setup()
     const preview = await test.sync.preview()
