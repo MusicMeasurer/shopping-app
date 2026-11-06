@@ -4,6 +4,7 @@ import { App } from './App'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
+import { createAccountSync } from './data/account-sync'
 import type { Storage } from './data/storage'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
@@ -101,6 +102,29 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
 
+  async function flushCloudQueue() {
+    if (!client || view.status !== 'account' || cloudLoading) return
+    const accountId = view.accountId
+    const remoteListId = cloudBindings[selectedLocal]
+    if (!remoteListId) return
+    setCloudLoading(true)
+    setError('')
+    try {
+      if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
+      const sync = createAccountSync(storage, client, {
+        accountId, remoteListId, localListId: selectedLocal,
+        isActive: () => view.status === 'account' && view.accountId === accountId,
+      })
+      const count = await sync.flush()
+      if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
+      setError(count === 0 ? 'Нет подготовленных изменений.' : 'Отправлено изменений: ' + count)
+    } catch {
+      setError('Отправка не завершена. Неподтверждённые изменения остаются в очереди.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
   async function signIn(event: FormEvent) {
     event.preventDefault()
     if (!controller || busy) return
@@ -164,6 +188,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         </select>
         <button disabled={cloudLoading || !selectedRemote || !!cloudBindings[selectedLocal]}>Привязать</button>
       </form>}
+      {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
+        onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (синхронизация ещё не включена).</p>)}
     </section>}
