@@ -1,6 +1,6 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
-/** Read-only discovery. Never bind a local list by its display name. */
+/** Read-only discovery. Never bind a local list by its display name or position. */
 export interface OwnedCloudList { id: string; name: string }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
