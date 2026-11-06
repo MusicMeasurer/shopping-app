@@ -4,6 +4,7 @@ import type { Storage } from './storage'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
 import { fetchRemoteItems } from './remote-snapshot'
+import { planReconciliation } from './reconciliation-plan'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
 import { resolveVersionedMutation } from './versioned-mutation'
 
@@ -16,7 +17,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyItem'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -39,7 +40,34 @@ export function createAccountSync(
       throw new Error('Missing verified account list mapping')
     }
   }
-  return createSyncCoordinator({
+  async function importRemoteOnly(): Promise<number> {
+    assertActive()
+    await verifyMapping()
+    const [local, pending, remote] = await Promise.all([
+      storage.readAccountItems(accountId),
+      storage.readAccountPending(accountId),
+      fetchRemoteItems(client, remoteListId),
+    ])
+    assertActive()
+    const localItems = local.filter(item => item.listId === localListId)
+    const remoteItems = remote.map(item => ({
+      id: item.id, listId: localListId, name: item.name,
+      purchased: item.purchased, createdAt: Date.parse(item.createdAt),
+    }))
+    const plan = planReconciliation(localItems, remoteItems, pending)
+    if (plan.conflicts.length) throw new Error('Resolve conflicting items before import')
+    const remoteById = new Map(remote.map(item => [item.id, item]))
+    let imported = 0
+    for (const item of plan.remoteOnly) {
+      assertActive()
+      const source = remoteById.get(item.id)
+      if (!source) throw new Error('Missing remote item version')
+      await storage.importRemoteOnlyItem(accountId, remoteListId, item, source.version)
+      imported++
+    }
+    return imported
+  }
+  const coordinator = createSyncCoordinator({
     accountId,
     listId: remoteListId,
     isActive,
@@ -82,4 +110,5 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
+  return { ...coordinator, importRemoteOnly }
 }
