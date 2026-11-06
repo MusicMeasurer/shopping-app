@@ -1,0 +1,69 @@
+import 'fake-indexeddb/auto'
+import { describe, expect, it } from 'vitest'
+import { openDB } from 'idb'
+import { createStorage } from './storage'
+import { createItem } from '../domain/shopping'
+
+const remoteListId = '123e4567-e89b-42d3-a456-426614174000'
+describe('IndexedDB v5 cloud edit migration', () => {
+  it('upgrades v4 without losing account items or legacy operations', async () => {
+    const name = 'v4-' + crypto.randomUUID()
+    const item = createItem('groceries', 'Хлеб')
+    const db = await openDB(name, 4, {
+      upgrade(db) {
+        db.createObjectStore('items', { keyPath: 'id' })
+        db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+        const ops = db.createObjectStore('accountOperations', { keyPath: 'key' })
+        ops.createIndex('byAccount', 'accountId')
+        const items = db.createObjectStore('accountItems', { keyPath: 'key' })
+        items.createIndex('byAccount', 'accountId')
+      },
+    })
+    const key = JSON.stringify(['a', item.id])
+    await db.put('accountItems', { key, accountId: 'a', item })
+    await db.put('accountOperations', {
+      key: JSON.stringify(['a', 'legacy']), accountId: 'a',
+      operation: { operationId: 'legacy', kind: 'upsert', item },
+    })
+    db.close()
+    const upgraded = createStorage(name)
+    expect(await upgraded.readAccountItems('a')).toEqual([item])
+    expect(await upgraded.readAccountPending('a')).toHaveLength(1)
+    expect(await upgraded.readAccountListMappings('a')).toEqual([])
+    await upgraded.close()
+  })
+  it('persists item and queued operation atomically, scoped to the account', async () => {
+    const name = 'atomic-' + crypto.randomUUID()
+    const storage = createStorage(name)
+    const item = createItem('groceries', 'Молоко')
+    const operation = {
+      kind: 'cloud-add' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id, item,
+    }
+    await expect(storage.saveAccountEdit('a', operation)).rejects.toThrow('Missing verified list mapping')
+    expect(await storage.readAccountItems('a')).toEqual([])
+    expect(await storage.readAccountPending('a')).toEqual([])
+    await storage.bindAccountList('a', 'groceries', remoteListId)
+    await storage.saveAccountEdit('a', operation)
+    await storage.saveAccountEdit('a', operation)
+    expect(await storage.readAccountItems('a')).toEqual([item])
+    expect(await storage.readAccountPending('a')).toEqual([operation])
+    expect(await storage.readAccountItems('b')).toEqual([])
+    await expect(storage.bindAccountList('a', 'groceries', crypto.randomUUID())).rejects.toThrow('silently replaced')
+    await storage.close()
+  })
+  it('atomically deletes the account item and queues a versioned tombstone', async () => {
+    const storage = createStorage('delete-' + crypto.randomUUID())
+    const item = createItem('groceries', 'Хлеб')
+    await storage.bindAccountList('a', 'groceries', remoteListId)
+    await storage.saveAccountItem('a', item)
+    const operation = {
+      kind: 'cloud-delete' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id, expectedVersion: 2,
+    }
+    await storage.saveAccountEdit('a', operation)
+    expect(await storage.readAccountItems('a')).toEqual([])
+    expect(await storage.readAccountPending('a')).toEqual([operation])
+    await storage.close()
+  })
+})
