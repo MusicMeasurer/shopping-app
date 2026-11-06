@@ -170,6 +170,31 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
 
+  async function compareCloudList() {
+    if (!client || view.status !== 'account' || cloudLoading) return
+    const accountId = view.accountId
+    const localListId = selectedLocal
+    const remoteListId = cloudBindings[localListId]
+    if (!remoteListId) return
+    setCloudLoading(true)
+    setCloudPreview(null)
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Account changed')
+      const result = await createAccountSync(storage, client, {
+        accountId, localListId, remoteListId,
+        isActive: () => activeAccount.current === accountId,
+      }).preview()
+      if (activeAccount.current !== accountId) throw new Error('Account changed')
+      setCloudPreview('Только просмотр: новых в облаке — ' + result.remoteOnly.length +
+        ', расхождений — ' + result.conflicts.length +
+        ', ожидают отправки — ' + result.pendingCount + '. Локальные покупки не изменены.')
+    } catch {
+      setCloudPreview('Сравнение не удалось. Локальные покупки не изменены.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
   async function signIn(event: FormEvent) {
     event.preventDefault()
     if (!controller || busy) return
