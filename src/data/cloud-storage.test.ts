@@ -76,6 +76,22 @@ describe('IndexedDB v5 cloud edit migration', () => {
     expect((await storage.readAccountItemVersions('b')).map(row => row.version)).toEqual([1])
     await storage.close()
   })
+  it('atomically stores confirmed receipt and removes only matching queued operation', async () => {
+    const storage = createStorage('receipt-' + crypto.randomUUID())
+    const item = createItem('groceries', 'Сыр')
+    const operation = { kind: 'cloud-add' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id, item }
+    await storage.bindAccountList('a', 'groceries', remoteListId)
+    await storage.saveAccountEdit('a', operation)
+    await expect(storage.commitAccountReceipt('a', operation.operationId, remoteListId, crypto.randomUUID(), 1))
+      .rejects.toThrow('does not match')
+    expect(await storage.readAccountPending('a')).toEqual([operation])
+    expect(await storage.readAccountItemVersions('a')).toEqual([])
+    await storage.commitAccountReceipt('a', operation.operationId, remoteListId, item.id, 1)
+    expect(await storage.readAccountPending('a')).toEqual([])
+    expect((await storage.readAccountItemVersions('a')).map(row => row.version)).toEqual([1])
+    await storage.close()
+  })
   it('atomically deletes the account item and queues a versioned tombstone', async () => {
     const storage = createStorage('delete-' + crypto.randomUUID())
     const item = createItem('groceries', 'Хлеб')
