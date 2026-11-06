@@ -16,7 +16,7 @@ it('isolates pending operations across accounts and keeps guest changes unassign
   const reopened = createStorage(name)
   expect(await reopened.readPending()).toEqual([operation])
   expect(await reopened.readAccountPending('user-a')).toEqual([operation])
-  expect((await reopened.readAccountPending('user-b'))[0].item).toMatchObject({ name: 'Хлеб' })
+  expect(await reopened.readAccountPending('user-b')).toEqual([{ ...operation, item: { ...item, name: 'Хлеб' } }])
   await reopened.acknowledgeAccountPending('user-a', 'same-id')
   expect(await reopened.readAccountPending('user-a')).toEqual([])
   expect(await reopened.readAccountPending('user-b')).toHaveLength(1)
