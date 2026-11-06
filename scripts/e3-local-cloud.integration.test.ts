@@ -7,7 +7,7 @@ import { createStorage } from '../src/data/storage'
 import { createAccountSync } from '../src/data/account-sync'
 import { createItem } from '../src/domain/shopping'
 
-describe('real cloud-to-local receipt integration (disposable lab)', () => {
+describe.skipIf(process.env.E3_LAB_URL === undefined)('real cloud-to-local receipt integration (disposable lab)', () => {
   it('sends a queued add, persists its server version, and acknowledges atomically', async () => {
     const url = process.env.E3_LAB_URL
     const key = process.env.E3_LAB_PUBLISHABLE_KEY
