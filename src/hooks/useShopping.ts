@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItem, type Item, type ListId } from '../domain/shopping'
-import type { Storage } from '../data/storage'
-export function useShopping(storage: Storage) {
+import type { ItemStore } from '../data/account-item-store'
+export function useShopping(storage: ItemStore) {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
