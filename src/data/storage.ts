@@ -158,6 +158,33 @@ export function createStorage(name = 'shopping-app') {
       await operations.add({ key, accountId, operation })
       await tx.done
     },
+    /** Atomically record an acknowledged RPC receipt and remove its exact queued operation. */
+    async commitAccountReceipt(accountId: string, operationId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(itemId) ||
+          !Number.isSafeInteger(version) || version < 0) throw new Error('Invalid server receipt')
+      const key = accountKey(accountId, operationId)
+      const db = await database
+      const tx = db.transaction(['accountOperations', 'accountItemVersions'], 'readwrite')
+      const pending = await tx.objectStore('accountOperations').get(key)
+      if (!pending || pending.operation.kind === 'upsert' || pending.operation.kind === 'delete' ||
+          pending.operation.itemId !== itemId || pending.operation.remoteListId !== remoteListId) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Receipt does not match queued cloud operation')
+      }
+      const versions = tx.objectStore('accountItemVersions')
+      const versionKey = accountKey(accountId, itemId)
+      const previous = await versions.get(versionKey)
+      if (previous && (previous.remoteListId !== remoteListId || version < previous.version)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Server version regression or list mismatch')
+      }
+      await versions.put({ key: versionKey, accountId, remoteListId, itemId, version })
+      await tx.objectStore('accountOperations').delete(key)
+      await tx.done
+    },
     /** Persist only server-confirmed versions; never infer a version from local edits. */
     async recordAccountItemVersion(accountId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
