@@ -39,7 +39,7 @@ describe('cloud-aware account item store', () => {
     const store = cloudAwareItemStore(storage, 'account-a')
     const item = createItem('groceries', 'Хлеб')
     await store.save(item)
-    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('unconfirmed cloud version')
+    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('no confirmed cloud version')
     expect(await store.read()).toEqual([item])
     expect(await storage.readAccountPending('account-a')).toHaveLength(1)
     await storage.close()
