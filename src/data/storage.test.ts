@@ -50,3 +50,55 @@ it('persists queued operations across restart and acknowledges one at a time', a
   expect(await second.readPending()).toEqual([remove])
   await second.close()
 })
+
+it('applies a reviewed server deletion only with unchanged item and confirmed version', async () => {
+  const storage = createStorage('delete-review-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Молоко')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account))[0].version).toBe(3)
+  await storage.close()
+})
+
+it('rolls back all reviewed deletions if a later item changed locally', async () => {
+  const storage = createStorage('delete-rollback-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const first = createItem('groceries', 'Соль')
+  const second = createItem('groceries', 'Перец')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  for (const item of [first, second]) {
+    await storage.saveAccountItem(account, item)
+    await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  }
+  await storage.saveAccountItem(account, { ...second, purchased: true })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item: first, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+    { item: second, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toHaveLength(2)
+  await storage.close()
+})
+
+it('rejects reviewed deletion when the item has a pending edit', async () => {
+  const storage = createStorage('delete-pending-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сахар')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 1)
+  await storage.enqueueAccountPending(account, { operationId: crypto.randomUUID(), kind: 'upsert', item })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 1, serverDeletedVersion: 2 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  await storage.close()
+})
