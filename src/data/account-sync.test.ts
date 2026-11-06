@@ -16,10 +16,11 @@ function setup(pending: PendingItemOperation[] = []) {
   ])
   const readAccountPending = vi.fn(async () => pending)
   const acknowledgeAccountPending = vi.fn(async () => {})
+  const commitAccountReceipt = vi.fn(async () => {})
   const order = vi.fn(async () => ({ data: [], error: null }))
   const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
-  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings'>
+  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
   let active = true
   const sync = createAccountSync(storage, client, {
@@ -31,7 +32,7 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
   it('reads only account items and excludes other local lists', async () => {
@@ -53,8 +54,8 @@ describe('account-scoped sync binding', () => {
     ])
     await test.sync.flush()
     expect(test.rpc).toHaveBeenCalledTimes(1)
-    expect(test.acknowledgeAccountPending).toHaveBeenCalledExactlyOnceWith(accountId, operationId)
-    expect(test.acknowledgeAccountPending).not.toHaveBeenCalledWith(accountId, otherOperationId)
+    expect(test.commitAccountReceipt).toHaveBeenCalledExactlyOnceWith(accountId, operationId, listId, itemId, 1)
+    expect(test.acknowledgeAccountPending).not.toHaveBeenCalled()
   })
   it('rejects unscoped pending deletes until durable list mapping exists', async () => {
     const test = setup([{ kind: 'delete', operationId, itemId }])
