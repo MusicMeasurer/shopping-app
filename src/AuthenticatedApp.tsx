@@ -3,6 +3,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
 import type { Storage } from './data/storage'
 import { createAuthController } from './data/auth-controller'
+import { createSignOutGuard } from './data/signout-guard'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
 
@@ -25,6 +26,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       return
     }
     setView({ status: 'checking' })
+    const guard = createSignOutGuard(window.localStorage)
+    if (guard.isPending()) setError('Предыдущий выход не завершён. Повторите выход из аккаунта.')
     const next = createAuthController({
       getSession: async () => {
         const result = await client.auth.getSession()
@@ -33,7 +36,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
-    }, setView)
+    }, setView, guard)
     setController(next)
     void next.initialize()
     return () => {
