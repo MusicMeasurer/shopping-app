@@ -1,3 +1,4 @@
+import type { SignOutGuard } from './signout-guard'
 import type { SessionCandidate } from './auth-scope'
 import { transitionAuthView, type AuthView } from './auth-view'
 
@@ -14,7 +15,7 @@ export interface AuthClient {
  * Adapter around Supabase Auth. No user ID may be supplied by the UI.
  * An auth event is only a local UI signal; Supabase RLS remains authoritative.
  */
-export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void) {
+export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard) {
   let active = true
   let generation = 0
   let signingOut = false
@@ -26,7 +27,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   }
   const subscription = client.onAuthStateChange((event, session) => {
     generation++
-    if (signingOut) return
+    if (signingOut || guard?.isPending()) return
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
       emit(transitionAuthView(view, { type: 'SIGNED_OUT' }))
     } else {
@@ -35,6 +36,10 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   }).data.subscription
 
   async function initialize() {
+    if (guard?.isPending()) {
+      emit({ status: 'checking' })
+      return
+    }
     const startedAt = generation
     try {
       const { data, error } = await client.getSession()
@@ -58,8 +63,10 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       generation++
       emit({ status: 'checking' })
       try {
+        guard?.markPending()
         const { error } = await client.signOut()
         if (error) throw new Error(error.message)
+        guard?.clear()
         emit({ status: 'guest' })
       } catch (error) {
         // Keep the workspace locked: the SDK may still hold a valid session.
