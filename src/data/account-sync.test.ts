@@ -19,10 +19,11 @@ function setup(pending: PendingItemOperation[] = []) {
   const acknowledgeAccountPending = vi.fn(async () => {})
   const commitAccountReceipt = vi.fn(async () => {})
   const importRemoteOnlyBatch = vi.fn(async () => {})
+  const applyReviewedRemoteDeletions = vi.fn(async () => {})
   const order = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
   const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
-  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions'>
+  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
   let active = true
   const sync = createAccountSync(storage, client, {
@@ -34,7 +35,7 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, order, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, readAccountItemVersions, order, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
   it('rejects a changing server snapshot without writing imported items', async () => {
@@ -83,6 +84,21 @@ describe('account-scoped sync binding', () => {
     expect(test.importRemoteOnlyBatch).toHaveBeenCalledTimes(1)
     expect(test.importRemoteOnlyBatch).toHaveBeenCalledWith(accountId, listId,
       [expect.objectContaining({ item: expect.objectContaining({ id: remote.id }), version: 1 })])
+  })
+
+  it('requires explicit deletion selection and never applies empty selection', async () => {
+    const test = setup()
+    await expect(test.sync.applyConfirmedDeletions([])).rejects.toThrow('Explicit')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
+  })
+
+  it('refuses a deletion without a confirmed local version', async () => {
+    const test = setup()
+    const deleted = { id: itemId, list_id: listId, version: 3,
+      deleted_at: '2026-11-07T00:00:00Z' }
+    test.order.mockResolvedValue({ data: [deleted], error: null })
+    await expect(test.sync.applyConfirmedDeletions([itemId])).rejects.toThrow('unresolved conflict')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
   })
 
   it('reads only account items and excludes other local lists', async () => {
