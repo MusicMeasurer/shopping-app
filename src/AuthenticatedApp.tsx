@@ -27,6 +27,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
   const [selectedRemote, setSelectedRemote] = useState('')
   const [cloudPreview, setCloudPreview] = useState<string | null>(null)
+  const [deletionReview, setDeletionReview] = useState<{ accountId: string; localListId: ListId; remoteListId: string; items: { id: string; name: string }[] } | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const currentAccount = view.status === 'account' ? view.accountId : null
   const activeAccount = useRef(currentAccount)
@@ -106,6 +107,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudBindings({})
     setSelectedRemote('')
     setCloudPreview(null)
+    setDeletionReview(null)
   }, [view.status === 'account' ? view.accountId : null])
 
   async function loadCloudLists() {
@@ -204,6 +206,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (!remoteListId) return
     setCloudLoading(true)
     setCloudPreview(null)
+    setDeletionReview(null)
     try {
       if (await verifiedAccountId(client) !== accountId) throw new Error('Account changed')
       const result = await createAccountSync(storage, client, {
@@ -211,12 +214,40 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         isActive: () => activeAccount.current === accountId,
       }).previewDeletions()
       if (activeAccount.current !== accountId) throw new Error('Account changed')
+      setDeletionReview({ accountId, localListId, remoteListId, items: result.reviewItems })
       setCloudPreview('Удаления в облаке: подтверждённые версии — ' +
         result.confirmedDeletions.length + ', конфликты — ' + result.conflicts.length +
         ', без известной версии — ' + result.unknownVersions.length +
         '. Ничего не удалено.')
     } catch {
       setCloudPreview('Проверка удалений не удалась. Локальные покупки не изменены.')
+    } finally {
+      setCloudLoading(false)
+    }
+  }
+
+  async function confirmCloudDeletions() {
+    const review = deletionReview
+    if (!client || !review || view.status !== 'account' || cloudLoading ||
+        review.accountId !== view.accountId || review.localListId !== selectedLocal ||
+        review.remoteListId !== cloudBindings[selectedLocal] || !review.items.length) return
+    const names = review.items.map(item => item.name).join(', ')
+    if (!window.confirm('Удалить с этого устройства ' + review.items.length +
+      ' товаров, уже удалённых в облаке? ' + names)) return
+    setCloudLoading(true)
+    setDeletionReview(null)
+    setCloudPreview(null)
+    try {
+      if (await verifiedAccountId(client) !== review.accountId) throw new Error('Account changed')
+      const count = await createAccountSync(storage, client, {
+        accountId: review.accountId, localListId: review.localListId, remoteListId: review.remoteListId,
+        isActive: () => activeAccount.current === review.accountId,
+      }).applyConfirmedDeletions(review.items.map(item => item.id))
+      if (activeAccount.current !== review.accountId) throw new Error('Account changed')
+      setWorkspaceRevision(value => value + 1)
+      setCloudPreview('Подтверждённых удалений применено: ' + count + '.')
+    } catch {
+      setCloudPreview('Удаления не применены: состояние изменилось или проверка не пройдена. Повторите сравнение.')
     } finally {
       setCloudLoading(false)
     }
@@ -298,7 +329,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudLists.length > 0 && <form onSubmit={event => void bindCloudList(event)}>
         <label htmlFor="local-cloud-list">Локальный список</label>
         <select id="local-cloud-list" value={selectedLocal} disabled={cloudLoading}
-          onChange={event => { setSelectedLocal(event.target.value as ListId); setSelectedRemote(''); setCloudPreview(null) }}>
+          onChange={event => { setSelectedLocal(event.target.value as ListId); setSelectedRemote(''); setCloudPreview(null); setDeletionReview(null) }}>
           {lists.map(list => <option key={list.id} value={list.id}>{list.name}</option>)}
         </select>
         <label htmlFor="remote-cloud-list">Облачный список</label>
@@ -314,6 +345,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void compareCloudDeletions()}>Проверить удаления в облаке</button>}
       {cloudPreview && <p role="status">{cloudPreview}</p>}
+      {deletionReview && deletionReview.accountId === currentAccount && deletionReview.localListId === selectedLocal && deletionReview.remoteListId === cloudBindings[selectedLocal] && deletionReview.items.length > 0 && <div>
+        <p>Найдены удалённые в облаке товары. Проверьте названия перед применением:</p>
+        <ul>{deletionReview.items.map(item => <li key={item.id}>{item.name}</li>)}</ul>
+        <button type="button" disabled={cloudLoading} onClick={() => void confirmCloudDeletions()}>Подтвердить удаление с устройства</button>
+        <button type="button" disabled={cloudLoading} onClick={() => setDeletionReview(null)}>Отмена</button>
+      </div>}
       {cloudPreview?.startsWith('Только просмотр:') && <button type="button" disabled={cloudLoading}
         onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
