@@ -35,18 +35,22 @@ assert.notEqual(a.id, b.id, 'Test accounts must be distinct')
 
 const { data: aLists, error: aError } = await a.client.from('shopping_lists').select('id,owner_id')
 if (aError) throw aError
-const owned = aLists.find(list => list.owner_id === a.id)
-assert.ok(owned, 'User A must own a fixture list')
-
-const { data: bLists, error: bError } = await b.client.from('shopping_lists').select('id')
+const { data: bLists, error: bError } = await b.client.from('shopping_lists').select('id,owner_id')
 if (bError) throw bError
-assert.ok(!bLists.some(list => list.id === owned.id), 'User B can read A list')
+// Either supplied test account may own the fixture; do not require an arbitrary A/B order.
+const aOwned = aLists.find(list => list.owner_id === a.id)
+const bOwned = bLists.find(list => list.owner_id === b.id)
+assert.ok(aOwned || bOwned, 'One test account must own a fixture list')
+const owned = aOwned || bOwned
+const outsider = aOwned ? b : a
+const outsiderLists = aOwned ? bLists : aLists
+assert.ok(!outsiderLists.some(list => list.id === owned.id), 'Other user can read private list')
 
-const { data: bItems, error: itemError } = await b.client.from('shopping_items').select('id').eq('list_id', owned.id)
+const { data: bItems, error: itemError } = await outsider.client.from('shopping_items').select('id').eq('list_id', owned.id)
 if (itemError) throw itemError
 assert.equal(bItems.length, 0, 'User B can read A items')
 
-const { error: denied } = await b.client.rpc('apply_item_change', {
+const { error: denied } = await outsider.client.rpc('apply_item_change', {
   p_operation: crypto.randomUUID(),
   p_list: owned.id,
   p_action: 'add',
