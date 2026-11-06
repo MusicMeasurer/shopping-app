@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
 import type { Storage } from './data/storage'
@@ -6,15 +6,26 @@ import { createAuthController } from './data/auth-controller'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
 
+type Controller = ReturnType<typeof createAuthController>
+
 export function AuthenticatedApp({ storage, client }: { storage: Storage; client: SupabaseClient | null }) {
   const [view, setView] = useState<AuthView>(client ? { status: 'checking' } : { status: 'guest' })
+  const [controller, setController] = useState<Controller | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const controller = useMemo(() => {
-    if (!client) return null
-    return createAuthController({
+
+  // Subscriptions are effects, not render-time side effects. React StrictMode
+  // may mount, dispose and mount again during development.
+  useEffect(() => {
+    if (!client) {
+      setView({ status: 'guest' })
+      setController(null)
+      return
+    }
+    setView({ status: 'checking' })
+    const next = createAuthController({
       getSession: async () => {
         const result = await client.auth.getSession()
         return { data: { session: result.data.session as SessionCandidate | null }, error: result.error }
@@ -23,12 +34,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
     }, setView)
+    setController(next)
+    void next.initialize()
+    return () => {
+      next.dispose()
+      setController(null)
+    }
   }, [client])
-  useEffect(() => {
-    if (!controller) return
-    void controller.initialize()
-    return () => controller.dispose()
-  }, [controller])
+
   async function signIn(event: FormEvent) {
     event.preventDefault()
     if (!controller || busy) return
@@ -64,7 +77,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
           <label htmlFor="auth-password">Пароль</label>
           <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
-          <button disabled={busy}>Войти</button>
+          <button disabled={busy || !controller}>Войти</button>
           <p>Без входа покупки сохраняются только на этом устройстве.</p>
         </form>}
       {error && <p role="alert">{error}</p>}
