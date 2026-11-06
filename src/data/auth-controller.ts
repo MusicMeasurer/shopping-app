@@ -58,8 +58,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
         if (error) throw new Error(error.message)
         emit({ status: 'guest' })
       } catch (error) {
-        // Fail closed: do not expose previous account data after an uncertain sign-out.
-        emit({ status: 'guest' })
+        // Keep the workspace locked: the SDK may still hold a valid session.
+        // Do not claim the user is a guest until sign-out succeeds.
+        emit({ status: 'checking' })
         throw error
       }
     },
