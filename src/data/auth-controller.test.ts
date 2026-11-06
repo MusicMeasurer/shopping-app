@@ -99,6 +99,42 @@ describe('auth controller', () => {
     expect(views.at(-1)).toEqual({ status: 'guest' })
     controller.dispose()
   })
+  it('keeps account hidden until server verification succeeds', async () => {
+    const fake = fakeClient(session)
+    let resolve!: (id: string | null) => void
+    const verify = vi.fn(() => new Promise<string | null>(r => { resolve = r }))
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+    const pending = controller.initialize()
+    await Promise.resolve()
+    expect(views.at(-1)).toEqual({ status: 'checking' })
+    resolve(id)
+    await pending
+    expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+    controller.dispose()
+  })
+  it('ignores a server verification result arriving after signout', async () => {
+    const fake = fakeClient(session)
+    let resolve!: (id: string | null) => void
+    const verify = () => new Promise<string | null>(r => { resolve = r })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+    const pending = controller.initialize()
+    await Promise.resolve()
+    await controller.signOut()
+    resolve(id)
+    await pending
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
+  it('rejects server verification of a different account', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), undefined, async () => secondId)
+    await controller.initialize()
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
   it('does not publish a session returned after disposal', async () => {
     let resolve!: (result: { data: { session: SessionCandidate | null }; error: null }) => void
     const fake = fakeClient()
