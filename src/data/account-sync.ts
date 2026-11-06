@@ -76,7 +76,7 @@ export function createAccountSync(
     assertActive()
     const signature = (rows: typeof initial) => JSON.stringify(rows.map(row =>
       [row.id, row.listId, row.version, row.deletedAt]).sort((a, b) =>
-      String(a[0]).localeCompare(String(b[0])))
+      String(a[0]).localeCompare(String(b[0]))))
     if (signature(initial) !== signature(latest)) {
       throw new Error('Remote deletions changed during confirmation')
     }
