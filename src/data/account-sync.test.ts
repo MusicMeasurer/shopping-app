@@ -21,7 +21,8 @@ function setup(pending: PendingItemOperation[] = []) {
   const importRemoteOnlyBatch = vi.fn(async () => {})
   const applyReviewedRemoteDeletions = vi.fn(async () => {})
   const order = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
-  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }), not: async () => ({ data: [], error: null }) }) }) }))
+  const tombstoneRead = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
+  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }), not: tombstoneRead }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
   const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
@@ -35,7 +36,7 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, readAccountItemVersions, order, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, readAccountItemVersions, tombstoneRead, order, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
   it('rejects a changing server snapshot without writing imported items', async () => {
@@ -84,6 +85,52 @@ describe('account-scoped sync binding', () => {
     expect(test.importRemoteOnlyBatch).toHaveBeenCalledTimes(1)
     expect(test.importRemoteOnlyBatch).toHaveBeenCalledWith(accountId, listId,
       [expect.objectContaining({ item: expect.objectContaining({ id: remote.id }), version: 1 })])
+  })
+
+  it('rechecks unchanged tombstones and applies only explicitly reviewed items', async () => {
+    const test = setup()
+    const tombstone = { id: itemId, list_id: listId, version: 3,
+      deleted_at: '2026-11-07T00:00:00Z' }
+    test.readAccountItemVersions.mockResolvedValue([{
+      key: 'version', accountId, itemId, remoteListId: listId, version: 2,
+    }])
+    test.tombstoneRead.mockResolvedValue({ data: [tombstone], error: null })
+    await expect(test.sync.applyConfirmedDeletions([itemId])).resolves.toBe(1)
+    expect(test.tombstoneRead).toHaveBeenCalledTimes(2)
+    expect(test.applyReviewedRemoteDeletions).toHaveBeenCalledWith(accountId, listId, [{
+      item: expect.objectContaining({ id: itemId, name: 'Молоко' }),
+      expectedLocalVersion: 2, serverDeletedVersion: 3,
+    }])
+  })
+
+  it('rejects a deletion when the second server snapshot changes', async () => {
+    const test = setup()
+    test.readAccountItemVersions.mockResolvedValue([{
+      key: 'version', accountId, itemId, remoteListId: listId, version: 2,
+    }])
+    const tombstone = { id: itemId, list_id: listId, version: 3,
+      deleted_at: '2026-11-07T00:00:00Z' }
+    test.tombstoneRead.mockResolvedValueOnce({ data: [tombstone], error: null })
+      .mockResolvedValueOnce({ data: [{ ...tombstone, version: 4 }], error: null })
+    await expect(test.sync.applyConfirmedDeletions([itemId])).rejects.toThrow('changed during confirmation')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
+  })
+
+  it('preserves local items if account changes during tombstone recheck', async () => {
+    const test = setup()
+    test.readAccountItemVersions.mockResolvedValue([{
+      key: 'version', accountId, itemId, remoteListId: listId, version: 2,
+    }])
+    const tombstone = { id: itemId, list_id: listId, version: 3,
+      deleted_at: '2026-11-07T00:00:00Z' }
+    let reads = 0
+    test.tombstoneRead.mockImplementation(async () => {
+      reads += 1
+      if (reads === 2) test.deactivate()
+      return { data: [tombstone], error: null }
+    })
+    await expect(test.sync.applyConfirmedDeletions([itemId])).rejects.toThrow('Account changed')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
   })
 
   it('requires explicit deletion selection and never applies empty selection', async () => {
