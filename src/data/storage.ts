@@ -262,6 +262,54 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** Explicitly reviewed server deletions, committed atomically only if local evidence is unchanged. */
+    async applyReviewedRemoteDeletions(accountId: string, remoteListId: string,
+      entries: { item: Item; expectedLocalVersion: number; serverDeletedVersion: number }[]): Promise<void> {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId)) {
+        throw new Error('Invalid remote list ID')
+      }
+      if (!entries.length) return
+      const ids = new Set(entries.map(row => row.item.id))
+      if (ids.size !== entries.length || entries.some(row =>
+        !Number.isSafeInteger(row.expectedLocalVersion) || row.expectedLocalVersion < 0 ||
+        !Number.isSafeInteger(row.serverDeletedVersion) || row.serverDeletedVersion <= row.expectedLocalVersion)) {
+        throw new Error('Invalid reviewed deletion batch')
+      }
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      try {
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, entries[0].item.listId))
+        const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+        if (!mapping || mapping.remoteListId !== remoteListId ||
+            entries.some(row => row.item.listId !== mapping.localListId) ||
+            queued.some(row => ids.has(row.operation.kind === 'upsert' ?
+              row.operation.item.id : row.operation.itemId))) {
+          throw new Error('Reviewed deletion conflicts with local state')
+        }
+        for (const row of entries) {
+          const key = accountKey(accountId, row.item.id)
+          const stored = await tx.objectStore('accountItems').get(key)
+          const version = await tx.objectStore('accountItemVersions').get(key)
+          if (!stored || JSON.stringify(stored.item) !== JSON.stringify(row.item) ||
+              !version || version.remoteListId !== remoteListId ||
+              version.version !== row.expectedLocalVersion) {
+            throw new Error('Reviewed deletion conflicts with local state')
+          }
+        }
+        for (const row of entries) {
+          const key = accountKey(accountId, row.item.id)
+          await tx.objectStore('accountItems').delete(key)
+          await tx.objectStore('accountItemVersions').put({
+            key, accountId, itemId: row.item.id, remoteListId, version: row.serverDeletedVersion,
+          })
+        }
+        await tx.done
+      } catch (error) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
     /** Persist only server-confirmed versions; never infer a version from local edits. */
     async recordAccountItemVersion(accountId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
