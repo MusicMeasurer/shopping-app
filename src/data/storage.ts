@@ -222,6 +222,46 @@ export function createStorage(name = 'shopping-app') {
       await tx.objectStore('accountItemVersions').add({ key, accountId, itemId: item.id, remoteListId, version })
       await tx.done
     },
+    /** All-or-nothing import of a reviewed remote-only batch. */
+    async importRemoteOnlyBatch(accountId: string, remoteListId: string,
+      entries: { item: Item; version: number }[]): Promise<void> {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId)) {
+        throw new Error('Invalid remote list ID')
+      }
+      if (!entries.length) return
+      const ids = new Set(entries.map(entry => entry.item.id))
+      if (ids.size !== entries.length || entries.some(entry =>
+        !Number.isSafeInteger(entry.version) || entry.version < 0)) throw new Error('Invalid import batch')
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      try {
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, entries[0].item.listId))
+        const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+        if (!mapping || mapping.remoteListId !== remoteListId ||
+            entries.some(entry => entry.item.listId !== mapping.localListId) ||
+            queued.some(row => {
+              const op = row.operation
+              const id = op.kind === 'upsert' ? op.item.id : op.kind === 'delete' ? op.itemId : op.itemId
+              return ids.has(id)
+            })) throw new Error('Remote import conflicts with local state')
+        for (const entry of entries) {
+          const key = accountKey(accountId, entry.item.id)
+          if (await tx.objectStore('accountItems').get(key) ||
+              await tx.objectStore('accountItemVersions').get(key)) {
+            throw new Error('Remote import conflicts with local state')
+          }
+          await tx.objectStore('accountItems').add({ key, accountId, item: entry.item })
+          await tx.objectStore('accountItemVersions').add({
+            key, accountId, itemId: entry.item.id, remoteListId, version: entry.version,
+          })
+        }
+        await tx.done
+      } catch (error) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
     /** Persist only server-confirmed versions; never infer a version from local edits. */
     async recordAccountItemVersion(accountId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
       if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
