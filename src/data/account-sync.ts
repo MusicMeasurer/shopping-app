@@ -50,7 +50,7 @@ export function createAccountSync(
         if (operation.kind === 'upsert' && operation.item.listId !== localListId) {
           throw new Error('Account queue contains operations for another list')
         }
-        if (operation.kind.startsWith('cloud-') &&
+        if ((operation.kind === 'cloud-add' || operation.kind === 'cloud-update' || operation.kind === 'cloud-delete') &&
             (operation.remoteListId !== remoteListId || operation.localListId !== localListId)) {
           throw new Error('Account queue contains operations for another list')
         }
