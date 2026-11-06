@@ -1,14 +1,14 @@
 /**
- * Never trust a user id supplied by a form, URL or unverified local preference.
- * Only a validated auth session may select an account's local data scope.
+ * This is only a local session-shape and expiry guard, NOT cryptographic verification.
+ * Cloud access must always rely on Supabase Auth and server-enforced RLS.
  */
-export interface VerifiedIdentity {
+export interface SessionCandidate {
   user: { id: string }
   access_token: string
   expires_at?: number
 }
 
-export function accountIdFromVerifiedSession(session: VerifiedIdentity | null): string | null {
+export function accountIdFromSessionCandidate(session: SessionCandidate | null): string | null {
   if (!session) return null
   const id = session.user?.id
   if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
