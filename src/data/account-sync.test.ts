@@ -15,7 +15,7 @@ function setup(pending: PendingItemOperation[] = []) {
     { id: 'house', listId: 'household' as const, name: 'Мыло', purchased: false, createdAt: 2 },
   ])
   const readAccountPending = vi.fn(async () => pending)
-  const readAccountItemVersions = vi.fn(async () => [])
+  const readAccountItemVersions = vi.fn(async (): Promise<Awaited<ReturnType<Storage['readAccountItemVersions']>>> => [])
   const acknowledgeAccountPending = vi.fn(async () => {})
   const commitAccountReceipt = vi.fn(async () => {})
   const importRemoteOnlyBatch = vi.fn(async () => {})
