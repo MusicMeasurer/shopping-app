@@ -17,6 +17,7 @@ export interface AuthClient {
 export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void) {
   let active = true
   let generation = 0
+  let signingOut = false
   let view: AuthView = { status: 'checking' }
   const emit = (next: AuthView) => {
     if (!active) return
@@ -25,6 +26,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   }
   const subscription = client.onAuthStateChange((event, session) => {
     generation++
+    if (signingOut) return
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
       emit(transitionAuthView(view, { type: 'SIGNED_OUT' }))
     } else {
@@ -52,6 +54,8 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     },
     async signOut() {
       // Hide account data before the remote sign-out request.
+      signingOut = true
+      generation++
       emit({ status: 'checking' })
       try {
         const { error } = await client.signOut()
@@ -62,6 +66,8 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
         // Do not claim the user is a guest until sign-out succeeds.
         emit({ status: 'checking' })
         throw error
+      } finally {
+        signingOut = false
       }
     },
     dispose() {
