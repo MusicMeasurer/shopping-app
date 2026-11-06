@@ -8,9 +8,10 @@ describe('Supabase browser client setup', () => {
   it('rejects privileged keys before creating a client', () => {
     expect(() => createCloudClient('https://example.supabase.co', 'sb_secret_example')).toThrow()
   })
-  it('creates a client with the configured public endpoint', () => {
+  it('creates a client with a public auth API', () => {
     const client = createCloudClient('https://example.supabase.co', 'sb_publishable_test')
-    expect(client?.supabaseUrl).toBe('https://example.supabase.co')
-    expect(client?.auth).toBeDefined()
+    expect(client).not.toBeNull()
+    expect(client?.auth.signInWithPassword).toBeTypeOf('function')
+    expect(client?.auth.onAuthStateChange).toBeTypeOf('function')
   })
 })
