@@ -1,9 +1,16 @@
 import type { Item } from '../domain/shopping'
 
+/** Versioned cloud operations remain distinct from legacy local-only records. */
+export type CloudPendingOperation =
+  | { operationId: string; kind: 'cloud-add'; localListId: Item['listId']; remoteListId: string; itemId: string; item: Item }
+  | { operationId: string; kind: 'cloud-update'; localListId: Item['listId']; remoteListId: string; itemId: string; expectedVersion: number; item: Item }
+  | { operationId: string; kind: 'cloud-delete'; localListId: Item['listId']; remoteListId: string; itemId: string; expectedVersion: number }
+
 /** Stable operation IDs allow retries without creating duplicate remote changes. */
 export type PendingItemOperation =
   | { operationId: string; kind: 'upsert'; item: Item }
   | { operationId: string; kind: 'delete'; itemId: string }
+  | CloudPendingOperation
 
 export function enqueueOperation(
   queue: readonly PendingItemOperation[],
