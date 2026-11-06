@@ -64,6 +64,18 @@ describe('IndexedDB v5 cloud edit migration', () => {
     expect(await storage.readAccountPending('a')).toEqual([])
     await storage.close()
   })
+  it('persists confirmed server versions per account without regression', async () => {
+    const storage = createStorage('versions-' + crypto.randomUUID())
+    const itemId = crypto.randomUUID()
+    await storage.recordAccountItemVersion('a', remoteListId, itemId, 3)
+    await storage.recordAccountItemVersion('a', remoteListId, itemId, 3)
+    await storage.recordAccountItemVersion('b', remoteListId, itemId, 1)
+    await expect(storage.recordAccountItemVersion('a', remoteListId, itemId, 2)).rejects.toThrow('regression')
+    await expect(storage.recordAccountItemVersion('a', crypto.randomUUID(), itemId, 4)).rejects.toThrow('mismatch')
+    expect((await storage.readAccountItemVersions('a')).map(row => row.version)).toEqual([3])
+    expect((await storage.readAccountItemVersions('b')).map(row => row.version)).toEqual([1])
+    await storage.close()
+  })
   it('atomically deletes the account item and queues a versioned tombstone', async () => {
     const storage = createStorage('delete-' + crypto.randomUUID())
     const item = createItem('groceries', 'Хлеб')
