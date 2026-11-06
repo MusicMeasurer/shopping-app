@@ -62,6 +62,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })()
   }, [client, currentAccount, storage])
 
+  // Retry durable account edits when connectivity returns; never sync guest data.
+  useEffect(() => {
+    if (!currentAccount || !client) return
+    const retry = () => onQueued()
+    window.addEventListener('online', retry)
+    return () => window.removeEventListener('online', retry)
+  }, [client, currentAccount, onQueued])
+
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
   useEffect(() => {
