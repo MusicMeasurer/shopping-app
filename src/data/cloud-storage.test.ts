@@ -52,6 +52,18 @@ describe('IndexedDB v5 cloud edit migration', () => {
     await expect(storage.bindAccountList('a', 'groceries', crypto.randomUUID())).rejects.toThrow('silently replaced')
     await storage.close()
   })
+  it('rejects mismatched item identity and invalid version without writing', async () => {
+    const storage = createStorage('invalid-' + crypto.randomUUID())
+    const item = createItem('groceries', 'Соль')
+    await storage.bindAccountList('a', 'groceries', remoteListId)
+    const base = { kind: 'cloud-update' as const, operationId: crypto.randomUUID(),
+      localListId: 'groceries' as const, remoteListId, itemId: item.id, item, expectedVersion: 1 }
+    await expect(storage.saveAccountEdit('a', { ...base, itemId: crypto.randomUUID() })).rejects.toThrow('Invalid account edit operation')
+    await expect(storage.saveAccountEdit('a', { ...base, expectedVersion: -1 })).rejects.toThrow('Invalid account edit operation')
+    expect(await storage.readAccountItems('a')).toEqual([])
+    expect(await storage.readAccountPending('a')).toEqual([])
+    await storage.close()
+  })
   it('atomically deletes the account item and queues a versioned tombstone', async () => {
     const storage = createStorage('delete-' + crypto.randomUUID())
     const item = createItem('groceries', 'Хлеб')
