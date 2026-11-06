@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
 import { lists, type ListId } from './domain/shopping'
@@ -26,6 +26,34 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudLoading, setCloudLoading] = useState(false)
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
   const [selectedRemote, setSelectedRemote] = useState('')
+  const currentAccount = view.status === 'account' ? view.accountId : null
+  const activeAccount = useRef(currentAccount)
+  activeAccount.current = currentAccount
+  const automaticFlushRunning = useRef(false)
+  const onQueued = useCallback(() => {
+    if (!client || !currentAccount || automaticFlushRunning.current) return
+    const accountId = currentAccount
+    automaticFlushRunning.current = true
+    void (async () => {
+      try {
+        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
+        const mappings = await storage.readAccountListMappings(accountId)
+        for (const mapping of mappings) {
+          if (activeAccount.current !== accountId) return
+          if (!lists.some(list => list.id === mapping.localListId)) continue
+          await createAccountSync(storage, client, {
+            accountId, localListId: mapping.localListId as ListId,
+            remoteListId: mapping.remoteListId,
+            isActive: () => activeAccount.current === accountId,
+          }).flush()
+        }
+      } catch {
+        // Durable queue remains available for explicit retry.
+      } finally {
+        automaticFlushRunning.current = false
+      }
+    })()
+  }, [client, currentAccount, storage])
 
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
@@ -193,6 +221,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (синхронизация ещё не включена).</p>)}
     </section>}
-    <App storage={storage} accountId={view.status === 'account' ? view.accountId : null} />
+    <App storage={storage} accountId={currentAccount} onQueued={onQueued} />
   </>
 }
