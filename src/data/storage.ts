@@ -8,6 +8,7 @@ interface ScopedOperation {
   accountId: string
   operation: PendingItemOperation
 }
+interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
 interface ShoppingDB extends DBSchema {
   items: { key: string; value: Item }
@@ -15,13 +16,14 @@ interface ShoppingDB extends DBSchema {
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
+  accountItemVersions: { key: string; value: ScopedVersion; indexes: { byAccount: string } }
 }
 function accountKey(accountId: string, operationId: string): string {
   if (!accountId.trim() || !operationId.trim()) throw new Error('Account and operation IDs are required')
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 5, {
+  const database = openDB<ShoppingDB>(name, 6, {
     upgrade(db, oldVersion) {
       if (oldVersion < 1) db.createObjectStore('items', { keyPath: 'id' })
       if (oldVersion < 2) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -35,6 +37,10 @@ export function createStorage(name = 'shopping-app') {
       }
       if (oldVersion < 5) {
         const store = db.createObjectStore('accountListMappings', { keyPath: 'key' })
+        store.createIndex('byAccount', 'accountId')
+      }
+      if (oldVersion < 6) {
+        const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
     },
@@ -151,6 +157,27 @@ export function createStorage(name = 'shopping-app') {
       }
       await operations.add({ key, accountId, operation })
       await tx.done
+    },
+    /** Persist only server-confirmed versions; never infer a version from local edits. */
+    async recordAccountItemVersion(accountId: string, remoteListId: string, itemId: string, version: number): Promise<void> {
+      if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(remoteListId) ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(itemId) ||
+          !Number.isSafeInteger(version) || version < 0) throw new Error('Invalid server item version')
+      const key = accountKey(accountId, itemId)
+      const db = await database
+      const tx = db.transaction('accountItemVersions', 'readwrite')
+      const existing = await tx.store.get(key)
+      if (existing && (existing.remoteListId !== remoteListId || version < existing.version)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Server version regression or list mismatch')
+      }
+      await tx.store.put({ key, accountId, remoteListId, itemId, version })
+      await tx.done
+    },
+    async readAccountItemVersions(accountId: string): Promise<ScopedVersion[]> {
+      accountKey(accountId, 'check')
+      return (await database).getAllFromIndex('accountItemVersions', 'byAccount', accountId)
     },
     async close() { (await database).close() },
   }
