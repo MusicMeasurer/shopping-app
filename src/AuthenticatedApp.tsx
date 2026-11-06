@@ -68,7 +68,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
-  if (view.status === 'checking') return <main><p role="status">Проверяем аккаунт…</p></main>
+  if (view.status === 'checking') return <main>
+    <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : 'Проверяем аккаунт…'}</p>
+    {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
+  </main>
   return <>
     {client && <aside aria-label="Аккаунт">
       {view.status === 'account' ? <div><span>Вы вошли в аккаунт</span> <button disabled={busy} onClick={() => void signOut()}>Выйти</button></div> :
