@@ -25,6 +25,19 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
+  it('notifies only after the cloud edit is durably queued', async () => {
+    const storage = await setup()
+    let notifications = 0
+    const store = cloudAwareItemStore(storage, 'account-a', () => { notifications += 1 })
+    const item = createItem('groceries', 'Кофе')
+    await store.save(item)
+    expect(notifications).toBe(1)
+    expect(await storage.readAccountPending('account-a')).toHaveLength(1)
+    await expect(store.save({ ...item, purchased: true })).rejects.toThrow()
+    expect(notifications).toBe(1)
+    await storage.close()
+  })
+
   it('keeps unbound account lists local only', async () => {
     const storage = await setup()
     const item = createItem('household', 'Мыло')
