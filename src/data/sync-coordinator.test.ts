@@ -24,7 +24,7 @@ function setup() {
     readLocal, readPending, acknowledge, fetch, send,
     resolveMutation: operation => ({
       kind: 'add', operationId: operation.operationId, listId,
-      itemId: operation.kind === 'delete' ? operation.itemId : operation.item.id,
+      itemId: operation.kind === 'delete' || operation.kind === 'cloud-delete' ? operation.itemId : operation.item.id,
       name: 'Молоко', purchased: false,
     }),
   }
