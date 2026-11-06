@@ -116,6 +116,12 @@ export function createStorage(name = 'shopping-app') {
     },
     /** Persist an account edit and its cloud operation in one IndexedDB transaction. */
     async saveAccountEdit(accountId: string, operation: CloudPendingOperation): Promise<void> {
+      if (!operation.itemId.trim() || !operation.localListId.trim() ||
+          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operation.remoteListId) ||
+          (operation.kind !== 'cloud-add' && (!Number.isSafeInteger(operation.expectedVersion) || operation.expectedVersion < 0)) ||
+          (operation.kind !== 'cloud-delete' && (operation.item.id !== operation.itemId || operation.item.listId !== operation.localListId))) {
+        throw new Error('Invalid account edit operation')
+      }
       const key = accountKey(accountId, operation.operationId)
       const db = await database
       const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
