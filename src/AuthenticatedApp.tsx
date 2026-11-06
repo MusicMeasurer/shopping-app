@@ -213,7 +213,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </aside>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
-      <p>Привязка не переносит покупки и не включает синхронизацию автоматически.</p>
+      <p>Привязка не переносит существующие покупки. Новые изменения в привязанном списке отправляются автоматически при доступной сети.</p>
       <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
         {cloudLoading ? 'Проверяем…' : 'Загрузить мои облачные списки'}
       </button>
@@ -234,7 +234,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
       {lists.map(list => cloudBindings[list.id] &&
-        <p key={list.id}>{list.name}: облачный список привязан (синхронизация ещё не включена).</p>)}
+        <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
     <App storage={storage} accountId={currentAccount} onQueued={onQueued} />
   </>
