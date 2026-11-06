@@ -129,3 +129,5 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - 2026-11-07: E3 #320 and E2 #186 green. Deletion preview now includes local item names (`f41e625`); UI displays exact candidate names and requires a second explicit confirmation (`9d11302`) before calling guarded coordinator. Fixed equal-version tombstone eligibility (`6859e46`) and added regression assertion (`1eba552`). New CI must pass before any acceptance. No production deployment.
 
 - 2026-11-07: E3 #330 and E2 #191 green. Added three coordinator regression tests (`6223565`) for stable deletion confirmation, changed server tombstone between reads, and account invalidation during recheck. These are simulated two-device/race tests, not physical iPhone tests. Await CI and disposable-lab validation. Production unchanged.
+
+- 2026-11-07: E3 #334: 133 unit tests passed, TypeScript build failed because mocked `readAccountItemVersions` inferred `never[]`; E2 #193 passed. Corrected test mock return type (`daa9b6e`). Await fresh CI. No lab tests or production changes performed.
