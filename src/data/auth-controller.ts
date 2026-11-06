@@ -1,5 +1,5 @@
 import type { SignOutGuard } from './signout-guard'
-import type { SessionCandidate } from './auth-scope'
+import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 import { transitionAuthView, type AuthView } from './auth-view'
 
 export interface AuthClient {
@@ -15,7 +15,7 @@ export interface AuthClient {
  * Adapter around Supabase Auth. No user ID may be supplied by the UI.
  * An auth event is only a local UI signal; Supabase RLS remains authoritative.
  */
-export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard) {
+export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard, verifyIdentity?: (session: SessionCandidate) => Promise<string | null>) {
   let active = true
   let generation = 0
   let signingOut = false
@@ -25,13 +25,32 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     view = next
     onChange(next)
   }
+  async function resolveSession(session: SessionCandidate | null, startedAt: number) {
+    if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+    if (!session || !verifyIdentity) {
+      emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
+      return
+    }
+    emit({ status: 'checking' })
+    try {
+      const verifiedId = await verifyIdentity(session)
+      if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+      if (verifiedId && verifiedId === accountIdFromSessionCandidate(session)) {
+        emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
+      } else {
+        emit({ status: 'guest' })
+      }
+    } catch {
+      if (active && !signingOut && !guard?.isPending() && generation === startedAt) emit({ status: 'guest' })
+    }
+  }
   const subscription = client.onAuthStateChange((event, session) => {
     generation++
     if (signingOut || guard?.isPending()) return
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
       emit(transitionAuthView(view, { type: 'SIGNED_OUT' }))
     } else {
-      emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
+      void resolveSession(session, generation)
     }
   }).data.subscription
 
@@ -45,7 +64,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       const { data, error } = await client.getSession()
       if (!active || generation !== startedAt) return
       if (error) throw new Error(error.message)
-      emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session: data.session }))
+      await resolveSession(data.session, startedAt)
     } catch {
       if (generation === startedAt) emit({ status: 'guest' })
     }
