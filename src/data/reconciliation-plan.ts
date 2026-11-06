@@ -27,7 +27,7 @@ export function planReconciliation(
   for (const operation of pending) {
     const id = operation.kind === 'delete' || operation.kind === 'cloud-delete' ? operation.itemId : operation.item.id
     touched.add(id)
-    if (operation.kind === 'delete') deleted.add(id)
+    if (operation.kind === 'delete' || operation.kind === 'cloud-delete') deleted.add(id)
     else deleted.delete(id)
   }
   const visible = new Map(localById)
