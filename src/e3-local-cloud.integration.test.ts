@@ -7,12 +7,14 @@ import { createStorage } from './data/storage'
 import { createAccountSync } from './data/account-sync'
 import { createItem } from './domain/shopping'
 
-describe.skipIf(process.env.E3_LAB_URL === undefined)('real cloud-to-local receipt integration (disposable lab)', () => {
+const labEnv = (globalThis as typeof globalThis & { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
+
+describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt integration (disposable lab)', () => {
   it('sends a queued add, persists its server version, and acknowledges atomically', async () => {
-    const url = process.env.E3_LAB_URL
-    const key = process.env.E3_LAB_PUBLISHABLE_KEY
-    const email = process.env.E3_USER_A_EMAIL
-    const password = process.env.E3_USER_A_PASSWORD
+    const url = labEnv.E3_LAB_URL
+    const key = labEnv.E3_LAB_PUBLISHABLE_KEY
+    const email = labEnv.E3_USER_A_EMAIL
+    const password = labEnv.E3_USER_A_PASSWORD
     if (!url || !key || !email || !password) throw new Error('E3 lab credentials required')
     expect(new URL(url).hostname).toBe('gmrqeubhotjpmtwokfeq.supabase.co')
     expect(key).toMatch(/^sb_publishable_/)
