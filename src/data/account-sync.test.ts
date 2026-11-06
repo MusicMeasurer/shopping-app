@@ -9,6 +9,7 @@ const listId = '123e4567-e89b-42d3-a456-426614174000'
 const itemId = '223e4567-e89b-42d3-a456-426614174001'
 const operationId = '323e4567-e89b-42d3-a456-426614174002'
 function setup(pending: PendingItemOperation[] = []) {
+  const readAccountListMappings = vi.fn(async () => [{ key: 'a', accountId, localListId: 'groceries', remoteListId: listId }])
   const readAccountItems = vi.fn(async () => [
     { id: itemId, listId: 'groceries' as const, name: 'Молоко', purchased: false, createdAt: 1 },
     { id: 'house', listId: 'household' as const, name: 'Мыло', purchased: false, createdAt: 2 },
@@ -18,7 +19,7 @@ function setup(pending: PendingItemOperation[] = []) {
   const order = vi.fn(async () => ({ data: [], error: null }))
   const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
-  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending'>
+  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
   let active = true
   const sync = createAccountSync(storage, client, {
@@ -30,7 +31,7 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, acknowledgeAccountPending, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
   it('reads only account items and excludes other local lists', async () => {
@@ -52,6 +53,13 @@ describe('account-scoped sync binding', () => {
   it('rejects unscoped pending deletes until durable list mapping exists', async () => {
     const test = setup([{ kind: 'delete', operationId, itemId }])
     await expect(test.sync.flush()).rejects.toThrow('durable list mapping')
+    expect(test.rpc).not.toHaveBeenCalled()
+  })
+  it('rejects absent durable list mapping before reading account items', async () => {
+    const test = setup()
+    test.readAccountListMappings.mockResolvedValueOnce([])
+    await expect(test.sync.preview()).rejects.toThrow('Missing verified account list mapping')
+    expect(test.readAccountItems).not.toHaveBeenCalled()
     expect(test.rpc).not.toHaveBeenCalled()
   })
   it('does not access storage after account invalidation', async () => {
