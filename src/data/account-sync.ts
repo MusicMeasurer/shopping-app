@@ -55,21 +55,16 @@ export function createAccountSync(
       await verifyMapping()
       const rows = await storage.readAccountPending(accountId)
       assertActive()
-      // Do not silently skip pending deletions: they have no listId in
-      // the current schema. Reject mixed/unresolvable queues instead.
-      for (const operation of rows) {
-        if (operation.kind === 'upsert' && operation.item.listId !== localListId) {
-          throw new Error('Account queue contains operations for another list')
-        }
-        if ((operation.kind === 'cloud-add' || operation.kind === 'cloud-update' || operation.kind === 'cloud-delete') &&
-            (operation.remoteListId !== remoteListId || operation.localListId !== localListId)) {
-          throw new Error('Account queue contains operations for another list')
-        }
-        if (operation.kind === 'delete') {
-          throw new Error('Pending deletion requires a durable list mapping')
-        }
+      // Versioned operations carry durable list identity and can safely
+      // be processed one list at a time. Legacy deletes have no list
+      // identity; fail closed rather than guess which list owns them.
+      if (rows.some(operation => operation.kind === 'delete')) {
+        throw new Error('Pending deletion requires a durable list mapping')
       }
-      return rows
+      return rows.filter(operation => {
+        if (operation.kind === 'upsert') return operation.item.listId === localListId
+        return operation.localListId === localListId && operation.remoteListId === remoteListId
+      })
     },
     acknowledge: async operationId => {
       assertActive()
