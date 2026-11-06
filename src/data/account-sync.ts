@@ -51,10 +51,17 @@ export function createAccountSync(
       fetchRemoteTombstones(client, remoteListId),
     ])
     assertActive()
-    return planVersionedTombstones(
-      items.filter(item => item.listId === localListId), versions, tombstones,
-      pending, remoteListId,
-    )
+    const local = items.filter(item => item.listId === localListId)
+    const plan = planVersionedTombstones(local, versions, tombstones, pending, remoteListId)
+    const byId = new Map(local.map(item => [item.id, item]))
+    return {
+      ...plan,
+      reviewItems: plan.confirmedDeletions.map(id => {
+        const item = byId.get(id)
+        if (!item) throw new Error('Deletion preview item missing')
+        return { id: item.id, name: item.name }
+      }),
+    }
   }
   async function applyConfirmedDeletions(reviewedIds: readonly string[]): Promise<number> {
     assertActive()
