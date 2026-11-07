@@ -28,7 +28,18 @@ describe('Siri credential client contract', () => {
     await expect(enrollSiriCredential({ rpc } as never, listId)).rejects.toThrow()
   })
 
-  it('lists metadata without returning any secret', async () => {\n    const rpc = vi.fn().mockResolvedValue({ data: [{ credential_id: credentialId, expires_at: '2026-12-01T00:00:00Z', revoked_at: null }], error: null })\n    await expect(listSiriCredentials({ rpc } as never, listId)).resolves.toEqual([{ credentialId, expiresAt: '2026-12-01T00:00:00Z', revokedAt: null }])\n    expect(rpc).toHaveBeenCalledWith('list_siri_shortcuts', { p_list: listId })\n  })\n\n  it('rejects malformed metadata without accepting secrets', async () => {\n    const rpc = vi.fn().mockResolvedValue({ data: [{ credential_id: credentialId, expires_at: 'not-a-date', revoked_at: null }], error: null })\n    await expect(listSiriCredentials({ rpc } as never, listId)).rejects.toThrow()\n  })\n\n  it('revokes only by explicit credential identifier', async () => {
+  it('lists metadata without returning any secret', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ credential_id: credentialId, expires_at: '2026-12-01T00:00:00Z', revoked_at: null }], error: null })
+    await expect(listSiriCredentials({ rpc } as never, listId)).resolves.toEqual([{ credentialId, expiresAt: '2026-12-01T00:00:00Z', revokedAt: null }])
+    expect(rpc).toHaveBeenCalledWith('list_siri_shortcuts', { p_list: listId })
+  })
+
+  it('rejects malformed metadata without accepting secrets', async () => {
+    const rpc = vi.fn().mockResolvedValue({ data: [{ credential_id: credentialId, expires_at: 'not-a-date', revoked_at: null }], error: null })
+    await expect(listSiriCredentials({ rpc } as never, listId)).rejects.toThrow()
+  })
+
+  it('revokes only by explicit credential identifier', async () => {
     const rpc = vi.fn().mockResolvedValue({ data: true, error: null })
     await expect(revokeSiriCredential({ rpc } as never, credentialId)).resolves.toBe(true)
     expect(rpc).toHaveBeenCalledWith('revoke_siri_shortcut', { p_credential: credentialId })
