@@ -64,7 +64,7 @@ export function SiriSetup({ client, accountId, listId, listName }: {
         () => setMessage('Ключ скопирован. Удалите его из буфера обмена после настройки.'),
         () => setMessage('Не удалось скопировать ключ. Проверьте разрешение браузера.'),
       )}>Скопировать ключ</button>
-      <button type="button" disabled={busy} onClick={() => { setEnrollment(current => current ? { ...current, token: null } : null); setMessage('Ключ скрыт. Его можно отозвать ниже, пока эта страница открыта.') }}>Скрыть ключ</button></>
+      <button type="button" disabled={busy} onClick={() => { setEnrollment(current => current ? { ...current, token: null } : null); setMessage('Ключ скрыт. Его можно отозвать ниже, пока эта страница открыта.') }}>Скрыть ключ</button></>}
 
     </div>}
     <h4>Выданные ключи</h4>
