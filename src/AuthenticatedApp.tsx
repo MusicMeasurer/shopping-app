@@ -363,7 +363,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
-      {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={lists.find(list => list.id === selectedLocal)!.name} />}
+      {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} cloudUrl={import.meta.env.VITE_SUPABASE_URL} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={lists.find(list => list.id === selectedLocal)!.name} />}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
