@@ -135,3 +135,5 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - 2026-11-07: E3 #338 and E2 #195 green. Added disposable Supabase lab integration scenario (`bdf939f`) for server add → local import → server tombstone → read-only review → explicit local deletion → version persistence. Lab is strictly gated by E3_LAB_URL and a fixed disposable project hostname; ordinary unit CI skips it without credentials. Await build and separate lab execution; no production changes.
 
 - 2026-11-07: E3 #342 and E2 #197 green. Added offline-edit-vs-server-tombstone coordinator regression (`5546cf2`): pending local edits classify as conflicts and block confirmed deletion. Disposable real-cloud integration scenario exists but has not been executed with lab credentials; do not claim end-to-end validation. Production unchanged.
+
+- 2026-11-07: E3 #346 and E2 #199 green. Added IndexedDB regression tests (`9a35509`) for repeated reviewed tombstone confirmation and stale expected version after a newer recorded server version. Await CI. No production deployment.
