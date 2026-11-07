@@ -85,4 +85,42 @@ describe('Siri cloud item to durable shopping list', () => {
     await storage.close()
   })
 
+  it('refuses import when the cloud list is not bound to this account', async () => {
+    const storage = createStorage('siri-unbound-' + crypto.randomUUID())
+    const accountId = 'account-siri'
+    const remoteListId = crypto.randomUUID()
+    const order = vi.fn()
+    const client = { from: () => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }) } as unknown as SupabaseClient
+    const sync = createAccountSync(storage, client, {
+      accountId, remoteListId, localListId: 'groceries', isActive: () => true,
+    })
+    await expect(sync.importRemoteOnly()).rejects.toThrow('Missing verified account list mapping')
+    expect(order).not.toHaveBeenCalled()
+    expect(await storage.readAccountItems(accountId)).toEqual([])
+    await storage.close()
+  })
+
+  it('does not import after the active account changes while reading the cloud', async () => {
+    const storage = createStorage('siri-account-switch-' + crypto.randomUUID())
+    const accountId = 'account-siri'
+    const remoteListId = crypto.randomUUID()
+    await storage.bindAccountList(accountId, 'groceries', remoteListId)
+    let active = true
+    const remote = {
+      id: crypto.randomUUID(), list_id: remoteListId, name: 'Товар Siri',
+      purchased: false, created_at: new Date().toISOString(), version: 1,
+    }
+    const order = vi.fn(async () => {
+      active = false
+      return { data: [remote], error: null }
+    })
+    const client = { from: () => ({ select: () => ({ eq: () => ({ is: () => ({ order }) }) }) }) } as unknown as SupabaseClient
+    const sync = createAccountSync(storage, client, {
+      accountId, remoteListId, localListId: 'groceries', isActive: () => active,
+    })
+    await expect(sync.importRemoteOnly()).rejects.toThrow('Account changed')
+    expect(await storage.readAccountItems(accountId)).toEqual([])
+    await storage.close()
+  })
+
 })
