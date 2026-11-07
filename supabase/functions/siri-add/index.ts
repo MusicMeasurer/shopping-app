@@ -1,7 +1,7 @@
 // E3 draft: not deployed. Requires reviewed 020_siri_add_REVIEW_ONLY.sql.
 // Deploy with JWT verification disabled ONLY for this endpoint; it authenticates
 // a separately scoped Shortcut token, never a Supabase user session.
-import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2.119.0'
 
 const json = (body: unknown, status: number) => new Response(JSON.stringify(body), {
   status, headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
