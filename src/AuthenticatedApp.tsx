@@ -30,6 +30,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudPreview, setCloudPreview] = useState<string | null>(null)
   const [deletionReview, setDeletionReview] = useState<{ accountId: string; localListId: ListId; remoteListId: string; items: { id: string; name: string }[] } | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
+  const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const currentAccount = view.status === 'account' ? view.accountId : null
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
@@ -162,7 +163,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [client, currentAccount, storage])
+  }, [client, currentAccount, storage, cloudMappingRevision])
 
   async function loadCloudLists() {
     if (!client || view.status !== 'account' || cloudLoading) return
@@ -177,6 +178,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
       setCloudLists(remote)
       setCloudBindings(Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])))
+      setCloudMappingRevision(value => value + 1)
       setSelectedRemote('')
     } catch {
       setError('Не удалось проверить облачные списки. Повторите загрузку.')
@@ -196,6 +198,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         () => view.status === 'account' && view.accountId === accountId)
       if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
       setCloudBindings(current => ({ ...current, [selectedLocal]: selectedRemote }))
+      setCloudMappingRevision(value => value + 1)
       setSelectedRemote('')
     } catch {
       setError('Не удалось привязать список. Проверьте аккаунт и выбранный список.')
