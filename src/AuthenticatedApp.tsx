@@ -65,6 +65,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })()
   }, [client, currentAccount, storage])
 
+  // A browser restart can leave durable operations queued without a new edit.
+  // Resume only after the account becomes active; onQueued verifies the server
+  // identity before accessing account-scoped mappings and pending operations.
+  useEffect(() => {
+    if (currentAccount && client) onQueued()
+  }, [currentAccount, client, onQueued])
+
   // Retry durable account edits when connectivity returns; never sync guest data.
   useEffect(() => {
     if (!currentAccount || !client) return
