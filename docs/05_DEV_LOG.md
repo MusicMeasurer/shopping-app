@@ -242,3 +242,13 @@
 - Коммит `4b9ca6012e339cb0cf68a0d6d722fb15e5487329`: четыре GitHub Actions success — SQL static guardrails, disposable PostgreSQL lab, internal function ACL gate, hosted JWT A/B HTTP gate. Hosted run: https://github.com/MusicMeasurer/shopping-app/actions/runs/42029761288 .
 - PR #3 https://github.com/MusicMeasurer/shopping-app/pull/3 оформлен с результатами аудита, переведён в Ready for review и **по явному разрешению пользователя** squash-merged в `feature/cloud-schema-draft`, merge SHA `e56a2108be19c84ee7c14dae3d4d31f4b2f949b6`.
 - **Решение:** E2 закрыт в согласованном объёме безопасности и архитектуры; следующий этап E3 (облачная основа + Siri). Не проверены end-to-end записи через RPC, приглашения E8, конфликтная синхронизация и Siri. `main` приложения и production Supabase не развёртывались; Data API lab оставлен включённым.
+
+
+## 2026-11-07 · Единая документация и E3 checkpoint
+
+- По явному решению пользователя пять основных документов хранятся и обновляются только в `main/docs/` как `.md`; PDF — производные копии для проекта ChatGPT. Рабочие ветки и временные дополнения не являются источниками истины.
+- E3 CI #370 и E2 CI #211 успешно прошли на `89835568310ba552b629b0238be5544d34d302dd`; автоматическая часть матрицы 1–18 закрыта на уровне CI.
+- Реальный hosted disposable Supabase E3 integration #5 успешно завершился (21 сек., ветка `feature/e3-cloud-auth`): очередь, повтор после потери подтверждения, конфликт версий, серверный tombstone и подтверждённое локальное удаление. Матрица 19–20 закрыта на уровне лаборатории, не физического iPhone.
+- Исправление `items_read` в disposable lab `gmrqeubhotjpmtwokfeq` с `deleted_at IS NULL` на `USING (can_access_list(list_id))` применено по разрешению пользователя, прочитано обратно, затем интеграция прошла. SQL для контролируемого будущего переноса: `E3_TOMBSTONE_RLS_PATCH.sql` в рабочей ветке. Production не затронут.
+- Открыты E3 21–22: iPhone offline/restart/online и Siri direct add при блокировке. Предупреждения security advisors по privileged functions требуют анализа перед выпуском. Никаких новых необязательных тестовых сценариев до E3 acceptance.
+- Согласованная каноническая документация в `main` обновлена с сохранением прежних требований и этапов; PDF создаются как снимки этой редакции.
