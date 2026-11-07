@@ -139,16 +139,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         for (const mapping of mappings) {
           if (disposed || activeAccount.current !== accountId) return
           if (!lists.some(list => list.id === mapping.localListId)) continue
-          imported += await createAccountSync(storage, client, {
-            accountId,
-            localListId: mapping.localListId as ListId,
-            remoteListId: mapping.remoteListId,
-            isActive: () => !disposed && activeAccount.current === accountId,
-          }).importRemoteOnly()
+          try {
+            imported += await createAccountSync(storage, client, {
+              accountId,
+              localListId: mapping.localListId as ListId,
+              remoteListId: mapping.remoteListId,
+              isActive: () => !disposed && activeAccount.current === accountId,
+            }).importRemoteOnly()
+          } catch {
+            // Keep processing other bound lists, but never import conflicting
+            // items from this list or hide the error from the account owner.
+            if (disposed || activeAccount.current !== accountId) return
+            failed = true
+          }
         }
       } catch {
-        // A failed list must not hide items already imported from other lists.
-        // Conflicting local items are never overwritten by the importer.
+        // Identity, mapping, or network errors outside a single list.
         failed = true
       } finally {
         if (!disposed && activeAccount.current === accountId) {
