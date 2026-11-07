@@ -55,6 +55,17 @@ $$;
 revoke all on function public.revoke_siri_shortcut(uuid) from public,anon;
 grant execute on function public.revoke_siri_shortcut(uuid) to authenticated;
 
+create table if not exists public.siri_shortcut_operations (
+ credential_id uuid not null references public.siri_shortcut_credentials(id) on delete cascade,
+ operation_id uuid not null,
+ created_at timestamptz not null default now(),
+ primary key(credential_id,operation_id)
+);
+create index if not exists siri_shortcut_operations_rate_idx
+ on public.siri_shortcut_operations(credential_id,created_at);
+alter table public.siri_shortcut_operations enable row level security;
+revoke all on public.siri_shortcut_operations from public,anon,authenticated;
+
 -- Called ONLY by trusted backend with service-role privileges.
 -- The operation UUID doubles as stable item UUID for idempotent retries.
 -- Lock the credential row to serialize rate-limit and revoke races.
@@ -117,16 +128,6 @@ begin
 end;
 $$;
 
-create table if not exists public.siri_shortcut_operations (
- credential_id uuid not null references public.siri_shortcut_credentials(id) on delete cascade,
- operation_id uuid not null,
- created_at timestamptz not null default now(),
- primary key(credential_id,operation_id)
-);
-create index if not exists siri_shortcut_operations_rate_idx
- on public.siri_shortcut_operations(credential_id,created_at);
-alter table public.siri_shortcut_operations enable row level security;
-revoke all on public.siri_shortcut_operations from public,anon,authenticated;
 revoke all on function public.siri_add_item(text,uuid,uuid,text) from public,anon,authenticated;
 grant execute on function public.siri_add_item(text,uuid,uuid,text) to service_role;
 
