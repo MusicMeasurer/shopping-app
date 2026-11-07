@@ -114,6 +114,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // Account changes invalidate all cloud discovery and selection state.
   useEffect(() => {
     setCloudLists([])
+    setCloudRefreshStatus('')
     setCloudBindings({})
     setSelectedRemote('')
     setCloudPreview(null)
