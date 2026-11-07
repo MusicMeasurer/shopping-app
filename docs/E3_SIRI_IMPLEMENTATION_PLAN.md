@@ -28,3 +28,9 @@ Status: implementation in progress; NOT deployed, NOT accepted.
 ## Current progress
 - Strict request validation and tests are in `src/data/siri-add-request.ts` and `src/data/siri-add-request.test.ts`.
 - Draft server endpoint and review-only enrollment/revocation SQL are now committed. No deployment, live credential issuance, or production change has been made. The SQL and endpoint still require disposable-lab integration and security verification.
+
+## Lab verification note (2026-11-07)
+- Confirmed `shoppingapp-migration-lab` has `shopping_lists` and `item_operations`; Siri credential table is absent.
+- Attempt to submit review-only Siri SQL to the lab was blocked by tool security. No schema changes were applied. Do not infer SQL correctness from this attempt.
+- Security Advisor reports existing authenticated-callable SECURITY DEFINER warnings; these require targeted review before production and are not caused by Siri deployment.
+- Pending: SQL integration tests, edge endpoint tests, credential enrollment UI, and real-device Shortcut verification.
