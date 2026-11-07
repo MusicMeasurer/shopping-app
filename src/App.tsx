@@ -4,16 +4,16 @@ import { useShopping } from './hooks/useShopping'
 import type { Storage } from './data/storage'
 import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
-export function App({ storage, accountId = null, onQueued }: { storage: Storage; accountId?: string | null; onQueued?: () => void }) {
-  return <ShoppingWorkspace key={accountId ?? 'guest'} storage={storage} accountId={accountId} onQueued={onQueued} />
+export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number }) {
+  return <ShoppingWorkspace key={accountId ?? 'guest'} storage={storage} accountId={accountId} onQueued={onQueued} refreshRevision={refreshRevision} />
 }
 
-function ShoppingWorkspace({ storage, accountId, onQueued }: { storage: Storage; accountId: string | null; onQueued?: () => void }) {
+function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; onQueued?: () => void; refreshRevision: number }) {
   const [active, setActive] = useState<ListId>('groceries')
   const [name, setName] = useState('')
   // Guest remains the default until a verified auth session is available.
   const itemStore = useMemo(() => accountId === null ? itemStoreForAccount(storage, null) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, onQueued])
-  const shopping = useShopping(itemStore)
+  const shopping = useShopping(itemStore, refreshRevision)
   const rows = itemsForList(shopping.items, active)
   const remaining = rows.filter(item => !item.purchased).length
   const list = lists.find(list => list.id === active)!
