@@ -102,3 +102,36 @@ it('rejects reviewed deletion when the item has a pending edit', async () => {
   expect(await storage.readAccountItems(account)).toEqual([item])
   await storage.close()
 })
+
+it('refuses a repeated deletion after its local item was already removed', async () => {
+  const storage = createStorage('delete-repeat-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Яйца')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  const reviewed = [{ item, expectedLocalVersion: 2, serverDeletedVersion: 3 }]
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed))
+    .rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(3)
+  await storage.close()
+})
+
+it('rejects a stale reviewed deletion when a newer server version was recorded', async () => {
+  const storage = createStorage('delete-stale-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сыр')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 4)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(4)
+  await storage.close()
+})
