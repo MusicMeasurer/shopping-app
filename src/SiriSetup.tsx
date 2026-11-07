@@ -9,7 +9,7 @@ export function SiriSetup({ client, accountId, listId, listName }: {
   listId: string
   listName: string
 }) {
-  const [enrollment, setEnrollment] = useState<{ credentialId: string; token: string } | null>(null)
+  const [enrollment, setEnrollment] = useState<{ credentialId: string; token: string | null } | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
   useEffect(() => {
@@ -50,14 +50,14 @@ export function SiriSetup({ client, accountId, listId, listName }: {
     {!enrollment ? <button type="button" disabled={busy} onClick={() => void enroll()}>
       {busy ? 'Подключаем…' : 'Создать ключ для Siri'}
     </button> : <div>
-      <p>Скопируйте ключ в защищённое поле заголовка Authorization вашей команды Apple Shortcuts. Не отправляйте его другим людям.</p>
-      <label htmlFor="siri-key-once">Ключ (показывается только сейчас)</label>
+      <p>Скопируйте ключ в заголовок Authorization вашей команды Apple Shortcuts. Не отправляйте его другим людям.</p>
+      {enrollment.token && <><label htmlFor="siri-key-once">Ключ (показывается только сейчас)</label>
       <input id="siri-key-once" readOnly type="password" value={enrollment.token} autoComplete="off" />
-      <button type="button" disabled={busy} onClick={() => void navigator.clipboard.writeText(enrollment.token).then(
+      <button type="button" disabled={busy} onClick={() => void navigator.clipboard.writeText(enrollment.token!).then(
         () => setMessage('Ключ скопирован. Удалите его из буфера обмена после настройки.'),
         () => setMessage('Не удалось скопировать ключ. Проверьте разрешение браузера.'),
       )}>Скопировать ключ</button>
-      <button type="button" disabled={busy} onClick={() => { setEnrollment(null); setMessage('Ключ скрыт. Если он не сохранён в Shortcuts, создайте новый и отзовите прежний через настройки аккаунта.') }}>Скрыть ключ</button>
+      <button type="button" disabled={busy} onClick={() => { setEnrollment(current => current ? { ...current, token: null } : null); setMessage('Ключ скрыт. Его можно отозвать ниже, пока эта страница открыта.') }}>Скрыть ключ</button></>
       <button type="button" disabled={busy} onClick={() => void revoke()}>Отозвать ключ</button>
     </div>}
     {message && <p role="status">{message}</p>}
