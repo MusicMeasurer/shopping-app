@@ -87,6 +87,35 @@ describe('headless sync coordinator', () => {
     await expect(coordinator.flush()).rejects.toThrow('Account changed')
     expect(test.send).not.toHaveBeenCalled()
   })
+  it('does not acknowledge an in-flight server receipt after sign-out', async () => {
+    const test = setup()
+    let finishSend!: (receipt: { operationId: string; listRevision: number; itemVersion: number }) => void
+    let notifyStarted!: () => void
+    const started = new Promise<void>(resolve => { notifyStarted = resolve })
+    test.send.mockImplementationOnce(() => new Promise(resolve => {
+      finishSend = resolve
+      notifyStarted()
+    }))
+    const coordinator = createSyncCoordinator(test.dependencies, () => 'groceries')
+    const flushing = coordinator.flush()
+    await started
+    test.deactivate()
+    finishSend({ operationId, listRevision: 1, itemVersion: 1 })
+    expect(await flushing).toBe(0)
+    expect(test.pending).toHaveLength(1)
+    expect(test.acknowledge).not.toHaveBeenCalled()
+    expect(test.send).toHaveBeenCalledTimes(1)
+  })
+  it('preserves the durable queue on a network interruption', async () => {
+    const test = setup()
+    test.send.mockRejectedValueOnce(new Error('Network unavailable'))
+    const coordinator = createSyncCoordinator(test.dependencies, () => 'groceries')
+    await expect(coordinator.flush()).rejects.toThrow('Network unavailable')
+    expect(test.pending).toHaveLength(1)
+    expect(test.acknowledge).not.toHaveBeenCalled()
+    expect(await coordinator.flush()).toBe(1)
+    expect(test.pending).toEqual([])
+  })
   it('does not acknowledge failed server operations', async () => {
     const test = setup()
     test.send.mockRejectedValueOnce(new Error('Version conflict'))
