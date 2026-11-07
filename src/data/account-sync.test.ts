@@ -210,4 +210,49 @@ describe('account-scoped sync binding', () => {
     await expect(test.sync.preview()).rejects.toThrow('Account changed')
     expect(test.readAccountItems).not.toHaveBeenCalled()
   })
+  it('rejects duplicate deletion selections before reading cloud or local data', async () => {
+    const test = setup()
+    await expect(test.sync.applyConfirmedDeletions([itemId, itemId]))
+      .rejects.toThrow('Explicit unique deletion selection')
+    expect(test.tombstoneRead).not.toHaveBeenCalled()
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
+  })
+  it('rejects a deletion when the server snapshot disappears on recheck', async () => {
+    const test = setup()
+    test.readAccountItemVersions.mockResolvedValue([{
+      key: 'version', accountId, itemId, remoteListId: listId, version: 2,
+    }])
+    test.tombstoneRead.mockResolvedValueOnce({ data: [{
+      id: itemId, list_id: listId, version: 3, deleted_at: '2026-11-07T00:00:00Z',
+    }], error: null }).mockResolvedValueOnce({ data: [], error: null })
+    await expect(test.sync.applyConfirmedDeletions([itemId]))
+      .rejects.toThrow('changed during confirmation')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
+  })
+  it('never imports remote-only items when a verified binding disappears', async () => {
+    const test = setup()
+    test.readAccountListMappings.mockResolvedValueOnce([])
+    await expect(test.sync.importRemoteOnly()).rejects.toThrow('Missing verified account list mapping')
+    expect(test.order).not.toHaveBeenCalled()
+    expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
+  })
+  it('rejects malformed remote item versions before writing any import', async () => {
+    const test = setup()
+    test.order.mockResolvedValue({ data: [{
+      id: crypto.randomUUID(), list_id: listId, name: 'Крупа',
+      purchased: false, created_at: '2026-11-07T00:00:00Z', version: -1,
+    }], error: null })
+    await expect(test.sync.importRemoteOnly()).rejects.toThrow('Invalid remote item')
+    expect(test.importRemoteOnlyBatch).not.toHaveBeenCalled()
+  })
+  it('does not send queued edits if the durable list mapping is missing', async () => {
+    const test = setup([{
+      kind: 'cloud-add', operationId, localListId: 'groceries', remoteListId: listId,
+      itemId, item: { id: itemId, listId: 'groceries', name: 'Молоко', purchased: false, createdAt: 1 },
+    }])
+    test.readAccountListMappings.mockResolvedValueOnce([])
+    await expect(test.sync.flush()).rejects.toThrow('Missing verified account list mapping')
+    expect(test.rpc).not.toHaveBeenCalled()
+  })
+
 })
