@@ -20,6 +20,22 @@ jobs:
       - run: npm test
       - run: npm run build
 
+  mobile-browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium webkit
+      - run: npm run build
+      - run: npx playwright test tests/siri-browser-smoke.spec.ts
+
   siri-http-lab:
     runs-on: ubuntu-latest
     timeout-minutes: 5
