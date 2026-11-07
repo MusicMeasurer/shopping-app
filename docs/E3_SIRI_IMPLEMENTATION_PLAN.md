@@ -27,4 +27,4 @@ Status: implementation in progress; NOT deployed, NOT accepted.
 
 ## Current progress
 - Strict request validation and tests are in `src/data/siri-add-request.ts` and `src/data/siri-add-request.test.ts`.
-- No server endpoint, enrollment, or production change has yet been made.
+- Draft server endpoint and review-only enrollment/revocation SQL are now committed. No deployment, live credential issuance, or production change has been made. The SQL and endpoint still require disposable-lab integration and security verification.
