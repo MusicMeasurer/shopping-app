@@ -17,7 +17,7 @@ describe('Siri add-item request', () => {
     expect(() => parseSiriAddRequest({ ...valid, operationId: 'same' })).toThrow()
   })
   it('rejects malformed and extra input', () => {
-    for (const payload of [null, [], { ...valid, name: ' ' }, { ...valid, name: 'a'.repeat(201) }, { ...valid, name: 'a\nb' }, { ...valid, userId: 'spoof' }]) {
+    for (const payload of [null, [], { ...valid, name: ' ' }, { ...valid, name: 'a'.repeat(121) }, { ...valid, name: 'a\nb' }, { ...valid, userId: 'spoof' }]) {
       expect(() => parseSiriAddRequest(payload)).toThrow()
     }
   })
