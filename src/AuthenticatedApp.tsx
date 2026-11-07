@@ -421,6 +421,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
-    <App key={workspaceRevision} storage={storage} accountId={currentAccount} onQueued={onQueued} />
+    <App storage={storage} accountId={currentAccount} onQueued={onQueued} refreshRevision={workspaceRevision} />
   </>
 }
