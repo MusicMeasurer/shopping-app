@@ -55,5 +55,6 @@ test('real account A: existing Siri HTTP item appears in the bound mobile shoppi
   // This browser test reads it without creating any new server-side items.
   await expect(page.getByRole('checkbox', { name: 'E3 HTTP verified fixture' })).toBeVisible({ timeout: 20000 })
   await page.reload()
+  await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 20000 })
   await expect(page.getByRole('checkbox', { name: 'E3 HTTP verified fixture' })).toBeVisible({ timeout: 20000 })
 })
