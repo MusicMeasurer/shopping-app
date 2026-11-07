@@ -99,7 +99,7 @@ jobs:
           if (!data.session) {
             throw new Error('Lab signup requires email confirmation; no authenticated browser session available. Use lab Auth settings or server-side admin createUser; never edit auth.users directly.')
           }
-          appendFileSync(process.env.GITHUB_ENV, 'E3_LAB_EMAIL=' + email + '\\nE3_LAB_PASSWORD=' + password + '\\n')
+          appendFileSync(process.env.GITHUB_ENV, ['E3_LAB_EMAIL=' + email, 'E3_LAB_PASSWORD=' + password, ''].join(String.fromCharCode(10)))
           console.log('Lab signup returned an authenticated session. Credentials remain runner-only.')
           NODE
       - run: npm run build
