@@ -46,3 +46,22 @@ Shortcuts may not be able to persist an exchange-returned credential into a reus
 **Remaining feasibility gates:** whether the Shortcut can conditionally read an absent credential file, redeem pairing code, save returned token and then use it on later runs; whether Siri voice and lock-screen permissions permit the flow; whether iCloud import carries only neutral actions; how credential renewal works without manually rebuilding the Shortcut. These must be tested before calling the experience one-button.
 
 **Implementation boundary:** draft/prototype only in isolated E3 lab. No production writes, no changes to existing working manual Siri Shortcut, no real secret entered into test Shortcuts until security review.
+
+## 2026-11-08 product decision: non-expiring revocable Siri credentials (supersedes finite-lifetime proposal)
+
+User selected **non-expiring**, per-list, add-only Siri credentials with explicit revocation, rate limiting and quotas. Current lab has 90-day expiry; **decision is not implemented**. Existing draft references to expiry/rotation above are historical proposals, not the selected target.
+
+### Account and recovery UX
+- Siri cloud integration requires a signed-in account at enrollment and an authorized cloud list. Local-only lists are **not** supported by this cloud endpoint; never silently expose a local list or imply it is synchronized.
+- A Shortcut request authenticates with its own scoped credential, not an active app login session. Requiring login on every voice add would defeat hands-free use and is not selected.
+- UI must use plain-language **«Устройства и Siri»** and **«Отключить добавление через Siri»**, not require users to know about tokens. Suspicious items: prominent **«Это добавил не я»** recovery flow: revoke all Siri credentials for affected list/account, preserve legitimate items, explain which device connections will stop, offer safe reconnection. Add transparent recent Siri-add activity metadata (time, device label if reliable, no secrets), and notify about anomalous bursts if feasible.
+- Changing/resetting account password **does not automatically revoke separate Siri credentials** in current architecture. Proposal: offer **«Выйти на всех устройствах и отключить Siri»** during suspected compromise; consider optional automatic revoke on password reset only if a reliable server-side event exists. Do not claim it is already implemented or rely on client-only detection. Password changes alone are not a sufficient response to compromised Siri credential.
+- Maintain scoped read-only responses: do not expose list contents or internal list revision in Shortcut response; use generic success/denial. Rate limit per credential, per list, per account, and globally; cap list growth to prevent abuse and billing spikes. Detect bulk anomalies.
+- Credentials are revocable even if non-expiring. They do not gain new privileges when the app adds read/delete/checkout actions. No purchase execution via Siri credential.
+
+### Tests before release
+- Only signed-in list owner can enroll; local-only user gets clear explanation, no silent account creation.
+- Revoke-all immediately blocks all Siri credentials but leaves account and list accessible; unauthorized attempts cannot revoke others.
+- Password change alone does not falsely indicate Siri access is removed; account-security recovery explicitly includes Siri revoke.
+- Abusive writes blocked by quotas; response cannot disclose list contents or revisions; existing items cannot be modified/deleted by Siri token.
+- Verify implementation of user-friendly recovery UI and activity visibility in disposable lab. Production untouched.
