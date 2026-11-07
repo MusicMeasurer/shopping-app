@@ -182,3 +182,16 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - `siri_add_item` checks hashed token, nonrevocation, expiry and exact list ID, then writes an item; uses explicit operation UUID for idempotent retry. **Already has a per-token cap of 60 new operations per rolling hour**; do not claim rate limiting is entirely absent. It currently returns `operation_id`, `list_revision`, `item_version` in receipt; public response minimization remains outstanding. Rate limit is per-token only, not per-list/account/global.
 - Edge Function currently auto-generates `operationId` when missing, which permits duplicate adds after retry without stable ID. Credential may be replayed from any device that has its bearer token; no device attestation. No pairing-code flow exists yet.
 - Next safe changes: review DDL and migrations for non-expiring credential semantics; plan pairing endpoint and user-facing recovery; write lab-only tests for cross-account, revoke-all, spam limits, receipt minimization and retry. Do not modify production.
+
+## 2026-11-08 · Siri implementation batch 1 (disposable lab only)
+
+**Applied** migration `siri_indefinite_credentials_revoke_all_minimal_receipt` to Supabase lab `gmrqeubhotjpmtwokfeq` (NOT production). Changes:
+- `siri_shortcut_credentials.expires_at` now nullable; `enroll_siri_shortcut` issues non-expiring tokens (`expires_at = NULL`) and no longer returns `expires_in_days`. Existing 90-day credentials retain their existing expiry.
+- `siri_add_item` accepts NULL expiry while rejecting revoked/expired tokens; preserves per-token 60/hour cap, owner/list checks and item operation idempotency. Success/retry response reduced to `operation_id` only; internally saved operation receipt still includes revision/version for synchronization.
+- Added authenticated-only `revoke_all_siri_shortcuts()` RPC that revokes all currently active Siri credentials for the signed-in owner; no account/list deletion. `EXECUTE` revoked from `PUBLIC` and `anon`, granted to `authenticated`.
+
+**Automated DB tests executed:** transaction-subblock rollback test checked A enrollment creates NULL-expiry credential, B cannot enroll for A's list, and A's revoke-all marks credential revoked. All assertions passed; intentionally rolled back all test writes. Postcheck active indefinite credentials = 0. No production changes. Note: this is a database-level test, **not yet** an end-to-end Edge Function/iPhone test.
+
+**Security advisor:** read-only scan run. It reports existing `rls_enabled_no_policy` informational findings for six internal tables and `authenticated_security_definer_function_executable` warnings for intentional RPCs, including Siri. Each must be reviewed for correct privilege and auth checks before release; no blanket dismissal. Remediation: https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable .
+
+**Outstanding:** one-time pairing flow, client recovery UI, recent Siri activity, account/list/global quotas, retry stable operation ID in Shortcut, end-to-end tests and review of existing RPC grants. Existing PWA still displays 90-day messaging and must be updated before user-facing test. Do not claim feature complete.
