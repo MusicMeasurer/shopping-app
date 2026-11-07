@@ -20,6 +20,15 @@ test('real Supabase Auth login survives reload and exposes owned cloud lists', a
   await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
   await expect(page.getByRole('alert')).toHaveCount(0)
   await page.reload()
+  // Diagnose auth restoration without exposing JWTs, emails or stored values.
+  // getSession is a browser SDK operation; getUser independently checks the server.
+  const restored = await page.evaluate(async () => {
+    const keys = Object.keys(localStorage).filter(key => key.includes('auth-token'))
+    const status = document.querySelector('[role="status"]')?.textContent?.slice(0, 160) ?? ''
+    const account = document.querySelector('[aria-label="Аккаунт"]')?.textContent?.slice(0, 160) ?? ''
+    return { hasPersistedAuthKey: keys.length > 0, status, account }
+  })
+  console.log('POST_RELOAD_AUTH_UI_DIAGNOSTIC', JSON.stringify(restored))
   await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 20000 })
   await page.getByRole('button', { name: 'Выйти' }).click()
   await expect(page.getByRole('button', { name: 'Войти' })).toBeVisible({ timeout: 20000 })
