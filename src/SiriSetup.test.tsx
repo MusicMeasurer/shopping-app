@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
+import { createElement } from 'react'
 import { SiriSetup } from './SiriSetup'
 
 describe('Siri setup static UI', () => {
   it('shows cloud-specific endpoint and list identifier without any token', () => {
-    const html = renderToStaticMarkup(SiriSetup({
+    const html = renderToStaticMarkup(createElement(SiriSetup, {
       client: { supabaseUrl: 'https://example.supabase.co' } as never,
       accountId: 'account',
       listId: '550e8400-e29b-41d4-a716-446655440001',
