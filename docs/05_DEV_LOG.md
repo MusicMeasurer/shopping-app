@@ -157,3 +157,12 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - **Security:** Do not share the existing manual Shortcut; it contains a live personal scoped bearer token. Build a separate secret-free template and verify its import/pairing behavior before publishing any iCloud link. No keys were revealed in shared screenshots.
 - **Next:** design and test a secret-free template + safe one-time account pairing in disposable lab, with cross-account isolation, revocation, expiry and replay checks. The user should not have to configure HTTP/JSON/token fields. Real iPhone publication of the safe template requires user participation. Production unchanged.
 - Companion design: `design/siri-one-tap-onboarding.md` (commits `5a2f8a8`, `5aa8973`).
+
+## 2026-11-08 · Physical iPhone Shortcuts persistence experiment
+
+- User created separate **«Тест хранения»** Shortcut using only harmless literal `TEST-12345`, no credentials. Native Russian actions: **«Текст»**, **«Сохранить»** (file) and **«Получить файл из папки»**.
+- In **«Сохранить»**: disabled **«Спросить о месте сохранения»**, selected `Shortcuts` folder, entered path `test-storage.txt`, enabled **«Перезаписать, если файл существует»**. First execution showed `TEST-12345` with no folder prompt.
+- In **«Получить файл из папки»**: explicitly selected `Shortcuts` folder rather than auto-bound **«Сохраненный файл»**, set path `test-storage.txt`. Read returned `TEST-12345`.
+- User then **deleted both the «Текст» and «Сохранить» actions** and ran the remaining read-only action again. Screenshot shows `TEST-12345`. **Confirmed: native Shortcuts can read a file persisted across separate executions without manual selection.**
+- **Not confirmed:** safe storage of bearer secrets, device-only isolation, iCloud backup/sync behavior, keychain protection, pairing-code exchange, import of a neutral template, and voice invocation. A normal file in the Shortcuts folder is not a secure credential vault; do not put live tokens there without threat review. No production changes.
+- Next: evaluate safer credential architecture and whether file-based storage is acceptable for narrowly scoped, short-lived revocable credentials; investigate app-side authorization alternatives. User's test file may be deleted later as part of test cleanup.
