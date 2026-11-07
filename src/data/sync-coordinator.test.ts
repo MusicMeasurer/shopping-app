@@ -116,6 +116,26 @@ describe('headless sync coordinator', () => {
     expect(await coordinator.flush()).toBe(1)
     expect(test.pending).toEqual([])
   })
+  it('rejects concurrent flush attempts without duplicating a pending mutation', async () => {
+    const test = setup()
+    let releaseSend!: (receipt: { operationId: string; listRevision: number; itemVersion: number }) => void
+    let signalStarted!: () => void
+    const started = new Promise<void>(resolve => { signalStarted = resolve })
+    test.send.mockImplementationOnce(() => new Promise(resolve => {
+      releaseSend = resolve
+      signalStarted()
+    }))
+    const coordinator = createSyncCoordinator(test.dependencies, () => 'groceries')
+    const first = coordinator.flush()
+    await started
+    await expect(coordinator.flush()).rejects.toThrow('Synchronization already running')
+    expect(test.send).toHaveBeenCalledTimes(1)
+    expect(test.pending).toHaveLength(1)
+    releaseSend({ operationId, listRevision: 1, itemVersion: 1 })
+    expect(await first).toBe(1)
+    expect(test.pending).toEqual([])
+    expect(test.send).toHaveBeenCalledTimes(1)
+  })
   it('does not acknowledge failed server operations', async () => {
     const test = setup()
     test.send.mockRejectedValueOnce(new Error('Version conflict'))
