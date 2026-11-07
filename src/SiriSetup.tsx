@@ -3,17 +3,18 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { enrollSiriCredential, listSiriCredentials, revokeSiriCredential } from './data/siri-credential'
 
 /** An explicit, account-scoped one-time enrollment. No secret is persisted. */
-export function SiriSetup({ client, accountId, listId, listName }: {
+export function SiriSetup({ client, accountId, listId, listName, cloudUrl }: {
   client: SupabaseClient
   accountId: string
   listId: string
   listName: string
+  cloudUrl: string
 }) {
   const [enrollment, setEnrollment] = useState<{ credentialId: string; token: string | null } | null>(null)
   const [credentials, setCredentials] = useState<{ credentialId: string; expiresAt: string; revokedAt: string | null }[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const endpoint = client.supabaseUrl.replace(/\/$/, '') + '/functions/v1/siri-add'
+  const endpoint = cloudUrl.replace(/\/$/, '') + '/functions/v1/siri-add'
   useEffect(() => {
     setEnrollment(null)
     setMessage('')
