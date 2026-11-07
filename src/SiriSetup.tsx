@@ -13,7 +13,7 @@ export function SiriSetup({ client, accountId, listId, listName }: {
   const [credentials, setCredentials] = useState<{ credentialId: string; expiresAt: string; revokedAt: string | null }[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
-  const endpoint = client.supabaseUrl.replace(/\\/$/, '') + '/functions/v1/siri-add'
+  const endpoint = client.supabaseUrl.replace(/\/$/, '') + '/functions/v1/siri-add'
   useEffect(() => {
     setEnrollment(null)
     setMessage('')
