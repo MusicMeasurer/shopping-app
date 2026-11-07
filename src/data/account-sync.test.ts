@@ -133,6 +133,28 @@ describe('account-scoped sync binding', () => {
     expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
   })
 
+  it('preserves an offline local edit when the server has deleted that item', async () => {
+    const edited = { id: itemId, listId: 'groceries' as const,
+      name: 'Молоко без лактозы', purchased: false, createdAt: 1 }
+    const test = setup([{
+      kind: 'cloud-update', operationId, localListId: 'groceries',
+      remoteListId: listId, itemId, expectedVersion: 2, item: edited,
+    }])
+    test.readAccountItemVersions.mockResolvedValue([{
+      key: 'version', accountId, itemId, remoteListId: listId, version: 2,
+    }])
+    test.tombstoneRead.mockResolvedValue({ data: [{
+      id: itemId, list_id: listId, version: 3, deleted_at: '2026-11-07T00:00:00Z',
+    }], error: null })
+    const review = await test.sync.previewDeletions()
+    expect(review.reviewItems).toEqual([])
+    expect(review.conflicts).toContain(itemId)
+    await expect(test.sync.applyConfirmedDeletions([itemId]))
+      .rejects.toThrow('unresolved conflict')
+    expect(test.applyReviewedRemoteDeletions).not.toHaveBeenCalled()
+    expect(test.readAccountPending).toHaveBeenCalled()
+  })
+
   it('requires explicit deletion selection and never applies empty selection', async () => {
     const test = setup()
     await expect(test.sync.applyConfirmedDeletions([])).rejects.toThrow('Explicit')
