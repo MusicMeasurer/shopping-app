@@ -73,3 +73,78 @@
 ### Evidence policy
 
 Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, and user-supplied hosted SQL output proves only the specific read-only observations. None alone proves production readiness.
+
+
+## 2026-11-06 · E3: verified cloud list binding and account item queue (working branch)
+
+- Branch `feature/e3-cloud-auth`; published GitHub Pages and production data untouched. E3 is **in progress**, not accepted; Siri direct add and automatic end-to-end sync remain incomplete.
+- Existing foundations (do not duplicate): remote snapshot, conservative reconciliation, versioned RPC mutation and idempotent retry, account-scoped durable IndexedDB queue, atomic edit+queue, atomic receipt+version acknowledgement, real Supabase disposable-lab RPC/isolation probes, and local-cloud integration tests. Real-lab probes do not certify the UI workflow or Siri.
+- `e236399`: read-only owned-list discovery. `67f0e2c`: explicit ownership-checked binding helper. `e11c7b3`: UI for manual list selection/binding. E2/E3 CI for `e11c7b3` green.
+- `7986f03`: documentation-only control write after transient tool-call security blocking; `f1fe7e5`: manual flush button for previously queued versioned account changes. E2/E3 CI for `f1fe7e5` green.
+- `db60255`, `9942cdd`, `58348f6`: cloud-aware account item store and UI routing. For a bound list, add/update/delete are persisted with a versioned queued operation; unbound lists remain local-only; unconfirmed existing items fail closed. E2/E3 CI for `58348f6` green.
+- `776441d`: five additional unit tests for the new cloud-aware store. E3 CI run 42210390446: 106 passed, 1 failed because an assertion expected different error text; E2 gate passed. `30d7846`: corrected the assertion; CI result pending at journal update.
+- Distinction: existing queue/retry/integration tests already covered underlying mechanisms; new tests cover UI-facing store integration, not a newly invented sync architecture. Avoid repeating completed work.
+- **Open:** verify latest CI; implement automatic queue flush after user edits with safe account/session lifecycle; server-to-local reconciliation and clear offline/conflict UX; complete Siri add-to-target-list and locked-screen device test. No automatic guest import or list-name mapping. No production deployment without explicit approval.
+
+- Follow-up 2026-11-06: corrected test assertion `30d7846` passed E2 #131 and E3 #210. `4d91667`, `9aee648`, `46d236a` wire best-effort automatic flush after a bound account edit has been durably queued. The flush verifies current account and keeps unconfirmed operations on failure; manual retry remains. New CI pending. Limitations: no background/offline retry scheduler, concurrent edit notifications while a flush is running may await another trigger, no remote-to-local import, no Siri acceptance. Do not mark E3 complete.
+
+- Follow-up: E2 #135 and E3 #218 passed on `46d236a`. `e93fb1c` adds durable-notification regression test; `04239da` coalesces queue notifications received during an active automatic flush and performs another pass. CI for these commits pending. No background network-resume trigger yet.
+
+- Follow-up 2026-11-06: E3 #224 and E2 #138 passed on `04239da`. `5ec808e` registers an account-scoped browser `online` listener to retry durable cloud queue after connectivity returns; `b5b8429` corrects misleading UI text. `online` signals connectivity only, not guaranteed server reachability; failed operations remain queued and manual retry is available. No background service worker sync, no guest upload, no production release. CI pending.
+
+## 2026-11-06 · End-of-day checkpoint
+
+- Verified latest CI: E3 run #232 and E2 run #142 both succeeded on `9801569`; earlier E3 #230 and E2 #141 also succeeded on `b5b8429`.
+- E0/E1/E2 complete; E3 in progress, not accepted. Account-bound edits queue atomically, auto-flush on edit, coalesce concurrent notifications and retry on browser `online`. Unbound/guest data remain local. Manual retry retained.
+- Attempted read-only reconciliation preview in `AuthenticatedApp.tsx`, but GitHub writes were blocked; **no preview implementation committed**. Existing headless reconciliation logic is read-only and unintegrated in UI.
+- Next: read-only remote/local preview, safe explicit reconciliation with conflict/version handling, actual Siri direct add to chosen list and iPhone acceptance, then release gate. No production deployment approved.
+- Estimate for next E3-gated release: roughly 70% implementation progress (subjective, not a test metric). Core cloud security/storage/queue done; cross-device read path and Siri end-to-end acceptance remain significant. Roadmap does not explicitly promise a release immediately after E3; release requires separate verification and approval.
+
+## 2026-11-07 · E3 read-only cloud comparison UI
+
+- Verified preceding checkpoint CI E3 #234 and E2 #143 both successful.
+- `c9c8281`, `2f426ba`, `9728aef`, `c5f4506`: account-scoped, verified-session read-only comparison button wired to existing `createAccountSync.preview()`. Displays remote-only count, conflict count and pending queue count. Clears preview on account/list change. No automatic merge or local writes.
+- CI for latest UI changes pending. Remaining: explicit safe reconciliation/import with version handling, end-to-end cross-device acceptance, Siri direct add and iPhone tests. Production untouched.
+
+- 2026-11-07 follow-up: E3 #242 and E2 #147 passed for read-only comparison UI. `1e71859` adds account-scoped atomic IndexedDB primitive to import only server-only items with confirmed version, rejecting existing items, versions, queued edits, and wrong mappings; `1c098aa` adds two regression tests. This is a guarded persistence primitive, **not yet wired to UI or an automatic merge**. New CI pending. Do not count cross-device reconciliation as accepted.
+
+- 2026-11-07: E3 #248 and E2 #150 green for guarded import primitive. `9a47df4` adds account-sync explicit remote-only import with fresh remote snapshot, conservative conflict gate, version-preserving atomic local writes; `1091e56` and `a64f37e` wire confirmation button and workspace refresh. Import is opt-in; no overwrite or automatic merge. **Limitations:** partial import possible if later item fails; server may change between fetch and local commit; cross-device acceptance and CI for UI integration pending. No production release.
+
+- 2026-11-07 verification: E3 #256 failed TypeScript build (account-sync mock omitted newly required import dependency), while 110 unit tests and E2 #154 passed. Fixed test mock (`fbdc5a5`); replaced per-item import loop with atomic IndexedDB batch (`add5ba0`, `06f1591`, `6b1ac71`), with success/rollback regressions (`b78c8c1`). CI pending. Batch eliminates local partial import on IndexedDB conflict; server snapshot can still change after fetch and before commit, and cross-device acceptance remains pending.
+
+- 2026-11-07: E3 #268 and E2 #160 passed on atomic import tests. `ae35794` re-fetches and compares complete remote item snapshots (including versions) before local batch commit; `ff04e7b`/`6e1bd2b` add changed/stable snapshot tests. Optimistic double-read reduces stale imports but cannot eliminate server changes between final read and IndexedDB commit; no server transaction or live multi-device acceptance yet. CI pending, production untouched.
+
+- 2026-11-07: E3 #276 and E2 #164 passed on snapshot double-read guard. `d4d16e1`/`b74b5fd` add account-invalidation-mid-import and pending-local-conflict regression tests. CI pending. These are tests of existing fail-closed behavior; no production deployment. Remaining: server-side revision handshake/tombstones and actual cross-device iPhone acceptance, Siri direct add.
+
+- 2026-11-07: E3 #282 and E2 #167 green. Added read-only tombstone fetch/validation (`676ea3b`) and conservative local/pending deletion-review planner (`ecdd95b`) with four tests (`c333bda`). No automatic local deletion, no UI integration yet. Need test with RLS and actual server schema, version-aware deletion reconciliation, and CI. Production untouched.
+
+- 2026-11-07: E3 #290 and E2 #171 green. Added version-aware read-only tombstone classification (`e151a33`) with five tests (`816bda1`), account-scoped preview (`b3a5df6`) and UI button (`dc75d64`). Deletions are never applied automatically; known versions are evidence for review, not proof of unchanged local data. CI for new changes pending, no production release.
+
+- 2026-11-07: E3 #302 and E2 #177 green. Added `applyReviewedRemoteDeletions` transactional IndexedDB primitive (`38224ab`) and three regression tests (`2c8bad1`). Checks mapping, exact item snapshot, expected confirmed version and pending queue; all-or-nothing. Not exposed in UI or called by sync yet: needs fresh server tombstone revalidation, explicit user review/confirmation and CI before enabling. No production changes.
+
+- 2026-11-07: E3 #308 and E2 #180 green. Added `applyConfirmedDeletions(reviewedIds)` orchestration (`03d91c3`): requires explicit IDs, classifies with known versions, re-fetches and compares tombstones, then uses atomic local guarded deletion. Two fail-closed tests (`1ab577c`). This API is not wired to the UI; user confirmation and item-level review remain necessary. CI pending; no production changes.
+
+- 2026-11-07: E3 #314 failed during test transform due to a missing parenthesis in tombstone signature; E2 #183 passed. Corrected expression (`959d800`) and supplied tombstone `.not()` mock (`e0d4e2a`). Await CI before enabling reviewed deletions in UI. Production unchanged.
+
+- 2026-11-07: E3 #320 and E2 #186 green. Deletion preview now includes local item names (`f41e625`); UI displays exact candidate names and requires a second explicit confirmation (`9d11302`) before calling guarded coordinator. Fixed equal-version tombstone eligibility (`6859e46`) and added regression assertion (`1eba552`). New CI must pass before any acceptance. No production deployment.
+
+- 2026-11-07: E3 #330 and E2 #191 green. Added three coordinator regression tests (`6223565`) for stable deletion confirmation, changed server tombstone between reads, and account invalidation during recheck. These are simulated two-device/race tests, not physical iPhone tests. Await CI and disposable-lab validation. Production unchanged.
+
+- 2026-11-07: E3 #334: 133 unit tests passed, TypeScript build failed because mocked `readAccountItemVersions` inferred `never[]`; E2 #193 passed. Corrected test mock return type (`daa9b6e`). Await fresh CI. No lab tests or production changes performed.
+
+- 2026-11-07: E3 #338 and E2 #195 green. Added disposable Supabase lab integration scenario (`bdf939f`) for server add → local import → server tombstone → read-only review → explicit local deletion → version persistence. Lab is strictly gated by E3_LAB_URL and a fixed disposable project hostname; ordinary unit CI skips it without credentials. Await build and separate lab execution; no production changes.
+
+- 2026-11-07: E3 #342 and E2 #197 green. Added offline-edit-vs-server-tombstone coordinator regression (`5546cf2`): pending local edits classify as conflicts and block confirmed deletion. Disposable real-cloud integration scenario exists but has not been executed with lab credentials; do not claim end-to-end validation. Production unchanged.
+
+- 2026-11-07: E3 #346 and E2 #199 green. Added IndexedDB regression tests (`9a35509`) for repeated reviewed tombstone confirmation and stale expected version after a newer recorded server version. Await CI. No production deployment.
+
+
+## 2026-11-07 · E3 consolidated acceptance checkpoint
+
+- Agreed a **fixed 22-case E3 acceptance matrix** in `docs/E3_FINAL_TEST_MATRIX.md`. After this package, new hypothetical scenarios go to post-E3 backlog; exceptions are real defects, security violations and mandatory acceptance blockers.
+- Automated suite: **E3 #370 and E2 #211 passed** on commit `89835568310ba552b629b0238be5544d34d302dd`. These validate the automated portion (matrix 1–18), not physical iPhone or Siri.
+- Hosted Supabase integration: **manual E3 disposable cloud integration #5 SUCCESS** on `feature/e3-cloud-auth`, commit `7d39d596625bde679ea46a59572a108be57e6e85`, 21 seconds. Covers queued add, idempotent retry, version conflict and explicit tombstone review/deletion (matrix 19–20). Previous attempts exposed a trailing slash in the E3_LAB_URL secret and a genuine lab RLS issue.
+- Confirmed root cause of tombstone failure: lab policy `items_read` excluded `deleted_at IS NOT NULL`. With explicit user authorization, modified **only disposable lab** `gmrqeubhotjpmtwokfeq` to `TO authenticated USING (can_access_list(list_id))`; verified policy via read-only query, rerun passed. Reviewed SQL patch stored in `docs/E3_TOMBSTONE_RLS_PATCH.sql`; **not deployed to production**.
+- Security advisors in disposable lab reported existing privileged-function warnings; review required before release. Green integration tests are not blanket security certification.
+- **E3 remains IN PROGRESS**: matrix 21–22 (iPhone offline/restart and Siri direct add to synchronized list, including lock-screen behavior) unverified; Siri receiver not yet implemented. No published PWA deployment, production schema change, or final E3 acceptance.
+- Source-of-truth progress references: `docs/E3_FINAL_TEST_MATRIX.md`, `docs/E3_DISPOSABLE_LAB_RUNBOOK.md`, `docs/E3_TOMBSTONE_RLS_PATCH.sql`. Functional requirements, architecture and roadmap are updated by dated 2026-11-07 supplements, retaining earlier baselines.

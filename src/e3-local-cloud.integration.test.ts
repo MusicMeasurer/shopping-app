@@ -1,0 +1,206 @@
+// Real account + RPC + IndexedDB integration. Disposable lab only.
+// Run exclusively in the e3-lab Actions environment; no secrets are logged.
+import 'fake-indexeddb/auto'
+import { describe, it, expect } from 'vitest'
+import { createClient } from '@supabase/supabase-js'
+import { createStorage } from './data/storage'
+import { createAccountSync } from './data/account-sync'
+import { createItem } from './domain/shopping'
+
+const labEnv = (globalThis as typeof globalThis & { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
+
+describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt integration (disposable lab)', () => {
+  it('sends a queued add, persists its server version, and acknowledges atomically', async () => {
+    const url = labEnv.E3_LAB_URL
+    const key = labEnv.E3_LAB_PUBLISHABLE_KEY
+    const email = labEnv.E3_USER_A_EMAIL
+    const password = labEnv.E3_USER_A_PASSWORD
+    if (!url || !key || !email || !password) throw new Error('E3 lab credentials required')
+    expect(new URL(url).hostname).toBe('gmrqeubhotjpmtwokfeq.supabase.co')
+    expect(key).toMatch(/^sb_publishable_/)
+    const client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+    const { error: loginError } = await client.auth.signInWithPassword({ email, password })
+    if (loginError) throw loginError
+    const { data: identity, error: identityError } = await client.auth.getUser()
+    if (identityError || !identity.user) throw new Error('No verified lab identity')
+    const accountId = identity.user.id
+    const { data: lists, error: listError } = await client.from('shopping_lists').select('id,owner_id')
+    if (listError) throw listError
+    const owned = lists?.find(row => row.owner_id === accountId)
+    if (!owned) throw new Error('No owned disposable test list')
+    const storage = createStorage('e3-integration-' + crypto.randomUUID())
+    const item = createItem('groceries', 'E3_LOCAL_SYNC_' + crypto.randomUUID())
+    const operationId = crypto.randomUUID()
+    let remoteCreated = false
+    try {
+      await storage.bindAccountList(accountId, 'groceries', owned.id)
+      await storage.saveAccountEdit(accountId, {
+        kind: 'cloud-add', operationId, localListId: 'groceries',
+        remoteListId: owned.id, itemId: item.id, item,
+      })
+      // Simulate losing the local acknowledgement after a successful server RPC.
+      let interruptReceipt = true
+      const receiptStorage = {
+        ...storage,
+        commitAccountReceipt: async (...args: Parameters<typeof storage.commitAccountReceipt>) => {
+          if (interruptReceipt) {
+            interruptReceipt = false
+            throw new Error('Simulated receipt persistence interruption')
+          }
+          return storage.commitAccountReceipt(...args)
+        },
+      }
+      const sync = createAccountSync(receiptStorage, client, {
+        accountId, remoteListId: owned.id, localListId: 'groceries',
+        isActive: () => true,
+      })
+      // Cleanup must also run if the RPC succeeds but the local commit fails.
+      try {
+        await expect(sync.flush()).rejects.toThrow('Simulated receipt persistence interruption')
+        remoteCreated = true
+        expect(await storage.readAccountPending(accountId)).toHaveLength(1)
+        const { data: afterFirst, error: firstReadError } = await client.from('shopping_items')
+          .select('id,version').eq('id', item.id)
+        if (firstReadError) throw firstReadError
+        expect(afterFirst).toHaveLength(1)
+        expect(await storage.readAccountItemVersions(accountId)).toEqual([])
+        // The same durable operation ID and payload must replay idempotently.
+        expect(await sync.flush()).toBe(1)
+        const { data: afterRetry, error: retryReadError } = await client.from('shopping_items')
+          .select('id,version').eq('id', item.id)
+        if (retryReadError) throw retryReadError
+        expect(afterRetry).toEqual(afterFirst)
+      } catch (error) {
+        const { data } = await client.from('shopping_items').select('id').eq('id', item.id)
+        remoteCreated = !!data?.length
+        throw error
+      }
+      expect(await storage.readAccountPending(accountId)).toEqual([])
+      const versions = await storage.readAccountItemVersions(accountId)
+      expect(versions).toHaveLength(1)
+      expect(versions[0].itemId).toBe(item.id)
+      expect(versions[0].remoteListId).toBe(owned.id)
+      const { data: rows, error: readError } = await client.from('shopping_items')
+        .select('id,version').eq('id', item.id)
+      if (readError) throw readError
+      expect(rows).toHaveLength(1)
+      expect(versions[0].version).toBe(rows![0].version)
+      expect(await sync.flush()).toBe(0)
+      // A second device changes the item first. Our queued edit still carries
+      // the previous server version and must fail without being acknowledged.
+      const originalVersion = rows![0].version as number
+      const external = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
+        p_item: item.id, p_name: item.name, p_purchased: true,
+        p_expected_version: originalVersion,
+      })
+      if (external.error) throw external.error
+      expect(external.data.item_version).toBe(originalVersion + 1)
+      const conflictOperationId = crypto.randomUUID()
+      await storage.saveAccountEdit(accountId, {
+        kind: 'cloud-update', operationId: conflictOperationId,
+        localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
+        expectedVersion: originalVersion, item: { ...item, name: item.name + '_local' },
+      })
+      await expect(sync.flush()).rejects.toThrow()
+      const stillPending = await storage.readAccountPending(accountId)
+      expect(stillPending).toHaveLength(1)
+      expect(stillPending[0].operationId).toBe(conflictOperationId)
+      const versionsAfterConflict = await storage.readAccountItemVersions(accountId)
+      expect(versionsAfterConflict[0].version).toBe(originalVersion)
+      const { data: serverAfterConflict, error: conflictReadError } = await client.from('shopping_items')
+        .select('name,purchased,version').eq('id', item.id)
+      if (conflictReadError) throw conflictReadError
+      expect(serverAfterConflict).toHaveLength(1)
+      expect(serverAfterConflict![0]).toEqual({
+        name: item.name, purchased: true, version: originalVersion + 1,
+      })
+    } finally {
+      if (remoteCreated) {
+        const { data: rows, error } = await client.from('shopping_items')
+          .select('version').eq('id', item.id)
+        if (error) throw error
+        if (rows?.length) {
+          const { error: deleteError } = await client.rpc('apply_item_change', {
+            p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'delete',
+            p_item: item.id, p_name: null, p_purchased: null,
+            p_expected_version: rows[0].version,
+          })
+          if (deleteError) throw deleteError
+        }
+      }
+      await storage.close()
+    }
+  }, 30000)
+  it('reconciles a server tombstone into a second offline device only after explicit review', async () => {
+    const url = labEnv.E3_LAB_URL
+    const key = labEnv.E3_LAB_PUBLISHABLE_KEY
+    const email = labEnv.E3_USER_A_EMAIL
+    const password = labEnv.E3_USER_A_PASSWORD
+    if (!url || !key || !email || !password) throw new Error('E3 lab credentials required')
+    expect(new URL(url).hostname).toBe('gmrqeubhotjpmtwokfeq.supabase.co')
+    expect(key).toMatch(/^sb_publishable_/)
+    const client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+    const { error: loginError } = await client.auth.signInWithPassword({ email, password })
+    if (loginError) throw loginError
+    const { data: identity, error: identityError } = await client.auth.getUser()
+    if (identityError || !identity.user) throw new Error('No verified lab identity')
+    const accountId = identity.user.id
+    const { data: lists, error: listError } = await client.from('shopping_lists').select('id,owner_id')
+    if (listError) throw listError
+    const owned = lists?.find(row => row.owner_id === accountId)
+    if (!owned) throw new Error('No owned disposable test list')
+    const storage = createStorage('e3-delete-device-' + crypto.randomUUID())
+    const item = createItem('groceries', 'E3_TOMBSTONE_' + crypto.randomUUID())
+    let serverVersion: number | null = null
+    try {
+      await storage.bindAccountList(accountId, 'groceries', owned.id)
+      const added = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'add',
+        p_item: item.id, p_name: item.name, p_purchased: false,
+        p_expected_version: null,
+      })
+      if (added.error) throw added.error
+      serverVersion = added.data.item_version as number
+      await storage.importRemoteOnlyBatch(accountId, owned.id, [{ item, version: serverVersion }])
+      const removed = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'delete',
+        p_item: item.id, p_name: null, p_purchased: null,
+        p_expected_version: serverVersion,
+      })
+      if (removed.error) throw removed.error
+      serverVersion = removed.data.item_version as number
+      const sync = createAccountSync(storage, client, {
+        accountId, remoteListId: owned.id, localListId: 'groceries', isActive: () => true,
+      })
+      const review = await sync.previewDeletions()
+      expect(review.reviewItems).toEqual([{ id: item.id, name: item.name }])
+      expect((await storage.readAccountItems(accountId)).map(row => row.id)).toContain(item.id)
+      expect(await sync.applyConfirmedDeletions([item.id])).toBe(1)
+      expect((await storage.readAccountItems(accountId)).map(row => row.id)).not.toContain(item.id)
+      const versions = await storage.readAccountItemVersions(accountId)
+      expect(versions.find(row => row.itemId === item.id)?.version).toBe(serverVersion)
+    } finally {
+      // A failed assertion can leave an active test row. Convert it to a
+      // tombstone only in the explicitly pinned disposable lab.
+      const { data: rows, error: cleanupReadError } = await client.from('shopping_items')
+        .select('version,deleted_at').eq('id', item.id).eq('list_id', owned.id)
+      if (cleanupReadError) throw cleanupReadError
+      const active = rows?.find(row => row.deleted_at === null)
+      if (active) {
+        const { error: cleanupError } = await client.rpc('apply_item_change', {
+          p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'delete',
+          p_item: item.id, p_name: null, p_purchased: null,
+          p_expected_version: active.version,
+        })
+        if (cleanupError) throw cleanupError
+      }
+      await storage.close()
+    }
+  }, 30000)
+
+})

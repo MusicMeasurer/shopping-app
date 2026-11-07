@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItem, type Item, type ListId } from '../domain/shopping'
-import type { Storage } from '../data/storage'
-export function useShopping(storage: Storage) {
+import type { ItemStore } from '../data/account-item-store'
+export function useShopping(storage: ItemStore, refreshRevision = 0) {
   const [items, setItems] = useState<Item[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -13,7 +13,7 @@ export function useShopping(storage: Storage) {
     catch { setError('Не удалось открыть сохранённые списки. Проверьте настройки браузера и повторите попытку.') }
     finally { setLoading(false) }
   }
-  useEffect(() => { void reload() }, [storage])
+  useEffect(() => { void reload() }, [storage, refreshRevision])
   async function mutate(action: () => Promise<void>, update: (current: Item[]) => Item[]) {
     if (locked.current || loading) return false
     locked.current = true; setBusy(true); setError('')
