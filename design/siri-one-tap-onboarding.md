@@ -7,7 +7,7 @@ Status: design / not implemented. Scope: disposable E3 preview only; production 
 2. iOS opens a prebuilt, vetted Shortcut and the user confirms installation. No manual editing of URL, JSON, HTTP headers, list UUID, or token.
 3. The installed Shortcut asks for an item and adds it to the selected list. Verify on physical iPhone, including lock-screen behavior.
 4. Setup/renewal/revocation is understandable and does not expose a bearer secret in a publicly shared template.
-5. Second account/device cannot use another account's credential; repeated network requests do not create duplicate items.
+5. A credential issued for list A cannot modify list B, including when a different account owns list B. A stolen bearer token *can* act on its authorized list until revoked/expired; device binding is a separate requirement, not a property of the existing endpoint. Repeated network requests do not create duplicate items.
 
 ## Platform constraint
 A PWA cannot silently create or install Apple Shortcuts or register App Intents. An iCloud-shared Shortcut can be opened for user-confirmed import, but its creation/publication requires Apple Shortcuts on an Apple device and an actual iCloud sharing URL. Do not invent such a URL or claim automatic installation.
@@ -24,3 +24,20 @@ Never embed a user's token in the shared Shortcut, URL query string, analytics, 
 
 ## Current proof
 Manual iPhone Shortcut POST to lab `siri-add` returned a receipt and test item appeared in the test cloud list. This does not validate onboarding, Siri voice invocation, or automatic token renewal.
+
+## Security test matrix (before provisioning implementation)
+
+| Case | Expected | Current status |
+| --- | --- | --- |
+| Valid token A, list A | Add item | Verified manually on iPhone |
+| Valid token A, list B owned by another user | Deny, no B mutation | To test |
+| Missing / malformed token | 401, no mutation | To test |
+| Revoked / expired token | Deny, no mutation | To test |
+| Same explicit operationId sent twice | Exactly one item | To test |
+| No operationId, repeated POST | Currently creates two operations; **not production-ready** | Known limitation |
+| Captured token A, list A from another device | Currently authorized (bearer semantics); requires mitigation | Known threat |
+| Template without user secrets | No credential leakage in iCloud shared Shortcut | To test on iPhone |
+
+## Architecture decision pending
+
+Do not implement a speculative 'one-click' UI until the import/pairing flow is demonstrated on a real device. Sharing an iCloud Shortcut URL is not the same as provisioning an account-specific secret. Explore whether the installed Shortcut can obtain a one-time pairing code without manual entry and securely persist a credential in its own action configuration. Do not place bearer secrets in deep links or publicly accessible templates. If this cannot be achieved reliably with a PWA, document the platform limitation and offer an explicit, truthful setup flow instead of calling it one-click.
