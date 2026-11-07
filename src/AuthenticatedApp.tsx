@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
+import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
@@ -362,6 +363,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
+      {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={lists.find(list => list.id === selectedLocal)!.name} />}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
