@@ -13,6 +13,7 @@ export function SiriSetup({ client, accountId, listId, listName }: {
   const [credentials, setCredentials] = useState<{ credentialId: string; expiresAt: string; revokedAt: string | null }[]>([])
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('')
+  const endpoint = client.supabaseUrl.replace(/\\/$/, '') + '/functions/v1/siri-add'
   useEffect(() => {
     setEnrollment(null)
     setMessage('')
@@ -67,6 +68,23 @@ export function SiriSetup({ client, accountId, listId, listName }: {
       <button type="button" disabled={busy} onClick={() => { setEnrollment(current => current ? { ...current, token: null } : null); setMessage('Ключ скрыт. Его можно отозвать ниже, пока эта страница открыта.') }}>Скрыть ключ</button></>}
 
     </div>}
+    <details>
+      <summary>Как настроить команду на iPhone</summary>
+      <ol>
+        <li>Откройте приложение «Команды» (Apple Shortcuts) и создайте новую команду «Добавить в покупки».</li>
+        <li>Добавьте действие «Запросить ввод» (текст): «Что добавить в список?».</li>
+        <li>Добавьте действие «Создать UUID» для уникального идентификатора каждой покупки.</li>
+        <li>Добавьте действие «Получить содержимое URL», метод POST, тип тела JSON. Укажите адрес сервера ниже.</li>
+        <li>В теле JSON передайте <code>name</code> из «Запросить ввод», <code>operationId</code> из «Создать UUID», <code>listId</code> из поля ниже.</li>
+        <li>Добавьте заголовки <code>Content-Type: application/json</code> и <code>Authorization: Bearer ВАШ_КЛЮЧ</code> (вместо ВАШ_КЛЮЧ вставьте скопированный секрет).</li>
+        <li>Проверьте команду вручную, затем произнесите: «Привет, Siri, Добавить в покупки».</li>
+      </ol>
+      <p>Адрес сервера (без секретов):</p>
+      <input aria-label="Адрес сервера Siri" readOnly value={endpoint} />
+      <p>ID облачного списка (без секретов):</p>
+      <input aria-label="ID облачного списка Siri" readOnly value={listId} />
+      <p>Если ответ сервера содержит <code>ok: true</code>, товар принят облаком. Чтобы увидеть его в текущем приложении, пока используйте «Сравнить с облаком» и импорт новых покупок.</p>
+    </details>
     <h4>Выданные ключи</h4>
     {credentials.filter(row => !row.revokedAt && Date.parse(row.expiresAt) > Date.now()).length === 0 ? <p>Нет действующих ключей.</p> : <ul>{credentials.filter(row => !row.revokedAt && Date.parse(row.expiresAt) > Date.now()).map(row => <li key={row.credentialId}>Действует до {new Date(row.expiresAt).toLocaleDateString('ru-RU')} <button type="button" disabled={busy} onClick={() => void revoke(row.credentialId)}>Отозвать</button></li>)}</ul>}
     {message && <p role="status">{message}</p>}
