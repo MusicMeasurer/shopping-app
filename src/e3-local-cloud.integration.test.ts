@@ -185,8 +185,20 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
       const versions = await storage.readAccountItemVersions(accountId)
       expect(versions.find(row => row.itemId === item.id)?.version).toBe(serverVersion)
     } finally {
-      // Tombstone is deliberately retained in the disposable lab to preserve server audit semantics.
-      // Never issue destructive cleanup against a non-lab hostname.
+      // A failed assertion can leave an active test row. Convert it to a
+      // tombstone only in the explicitly pinned disposable lab.
+      const { data: rows, error: cleanupReadError } = await client.from('shopping_items')
+        .select('version,deleted_at').eq('id', item.id).eq('list_id', owned.id)
+      if (cleanupReadError) throw cleanupReadError
+      const active = rows?.find(row => row.deleted_at === null)
+      if (active) {
+        const { error: cleanupError } = await client.rpc('apply_item_change', {
+          p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'delete',
+          p_item: item.id, p_name: null, p_purchased: null,
+          p_expected_version: active.version,
+        })
+        if (cleanupError) throw cleanupError
+      }
       await storage.close()
     }
   }, 30000)
