@@ -14,3 +14,12 @@ test('mobile browser: shopping workspace remains functional before Siri enrollme
   await page.reload()
   await expect(page.getByRole('checkbox', { name: 'Тест Siri: молоко' })).toBeVisible()
 })
+
+
+test('mobile browser: guest smoke must not be mistaken for authenticated cloud coverage', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await expect(page.getByLabel('Что нужно купить?')).toBeVisible()
+  // This CI build intentionally has no Supabase environment variables.
+  // The test verifies only offline guest mode, never a cloud login or Siri import.
+  await expect(page.getByText('Списки сохраняются на этом устройстве.', { exact: false })).toBeVisible()
+})
