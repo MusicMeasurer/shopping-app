@@ -1,4 +1,4 @@
-// E3 draft: not deployed. Requires reviewed 020_siri_add_REVIEW_ONLY.sql.
+// E3 lab deployment: active in disposable project only; not production.\n// Requires reviewed 020_siri_add_REVIEW_ONLY.sql.
 // Deploy with JWT verification disabled ONLY for this endpoint; it authenticates
 // a separately scoped Shortcut token, never a Supabase user session.
 import { createClient } from 'npm:@supabase/supabase-js@2.119.0'
