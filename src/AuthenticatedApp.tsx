@@ -131,10 +131,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     async function refresh() {
       if (!client || disposed || running || document.visibilityState === 'hidden' || !navigator.onLine) return
       running = true
+      let imported = 0
+      let failed = false
       try {
         if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
         const mappings = await storage.readAccountListMappings(accountId)
-        let imported = 0
         for (const mapping of mappings) {
           if (disposed || activeAccount.current !== accountId) return
           if (!lists.some(list => list.id === mapping.localListId)) continue
@@ -145,15 +146,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             isActive: () => !disposed && activeAccount.current === accountId,
           }).importRemoteOnly()
         }
-        if (!disposed && activeAccount.current === accountId && imported > 0) {
-          setWorkspaceRevision(value => value + 1)
-          setCloudRefreshStatus('Получено новых покупок из облака: ' + imported)
-        }
       } catch {
-        // A conflict or failed network request must not mutate local data.
-        // Explicit cloud comparison and import remain available.
-        if (!disposed && activeAccount.current === accountId) setCloudRefreshStatus('Автоматическая загрузка приостановлена. Проверьте облачный список вручную.')
+        // A failed list must not hide items already imported from other lists.
+        // Conflicting local items are never overwritten by the importer.
+        failed = true
       } finally {
+        if (!disposed && activeAccount.current === accountId) {
+          if (imported > 0) setWorkspaceRevision(value => value + 1)
+          if (failed) setCloudRefreshStatus(imported > 0
+            ? 'Получено новых покупок: ' + imported + '. Один из облачных списков требует ручной проверки.'
+            : 'Автоматическая загрузка приостановлена. Проверьте облачный список вручную.')
+          else if (imported > 0) setCloudRefreshStatus('Получено новых покупок из облака: ' + imported)
+        }
         running = false
       }
     }
