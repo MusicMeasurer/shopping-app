@@ -27,7 +27,7 @@ Deno.serve(async request => {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return json({ error: 'Invalid request' }, 400)
   const data = input as Record<string, unknown>
   if (Object.keys(data).some(key => !['operationId', 'listId', 'name'].includes(key)) ||
-      typeof data.operationId !== 'string' || !uuid.test(data.operationId) ||
+      (data.operationId !== undefined && (typeof data.operationId !== 'string' || !uuid.test(data.operationId))) ||
       typeof data.listId !== 'string' || !uuid.test(data.listId) ||
       typeof data.name !== 'string' || !data.name.trim() ||
       data.name.trim().length > 120 || /[\u0000-\u001f\u007f]/.test(data.name)) {
@@ -39,7 +39,7 @@ Deno.serve(async request => {
   try {
     const client = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
     const { data: receipt, error } = await client.rpc('siri_add_item', {
-      p_token: match[1], p_operation: data.operationId,
+      p_token: match[1], p_operation: data.operationId ?? crypto.randomUUID(),
       p_list: data.listId, p_name: data.name.trim(),
     })
     if (error) {
