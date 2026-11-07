@@ -31,6 +31,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [deletionReview, setDeletionReview] = useState<{ accountId: string; localListId: ListId; remoteListId: string; items: { id: string; name: string }[] } | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
+  const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const currentAccount = view.status === 'account' ? view.accountId : null
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
@@ -145,10 +146,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
         if (!disposed && activeAccount.current === accountId && imported > 0) {
           setWorkspaceRevision(value => value + 1)
+          setCloudRefreshStatus('Получено новых покупок из облака: ' + imported)
         }
       } catch {
         // A conflict or failed network request must not mutate local data.
         // Explicit cloud comparison and import remain available.
+        if (!disposed && activeAccount.current === accountId) setCloudRefreshStatus('Автоматическая загрузка приостановлена. Проверьте облачный список вручную.')
       } finally {
         running = false
       }
@@ -379,6 +382,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </aside>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
+      {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
       <p>Привязка не переносит существующие покупки. Новые изменения в привязанном списке отправляются автоматически при доступной сети.</p>
       <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
         {cloudLoading ? 'Проверяем…' : 'Загрузить мои облачные списки'}
