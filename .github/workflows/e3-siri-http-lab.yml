@@ -1,0 +1,34 @@
+name: E3 Siri lab HTTP negative contract
+on:
+  push:
+    branches: [feature/e3-cloud-auth]
+    paths:
+      - 'supabase/functions/siri-add/**'
+      - '.github/workflows/e3-siri-http-lab.yml'
+  workflow_dispatch:
+jobs:
+  http-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check deployed lab endpoint rejects unauthenticated requests
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint='https://gmrqeubhotjpmtwokfeq.supabase.co/functions/v1/siri-add'
+          check() {
+            local expected="$1"; shift
+            local actual
+            actual=$(curl --silent --show-error --retry 2 --max-time 20 --output /tmp/siri-body --write-out '%{http_code}' "$@" "$endpoint")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Expected HTTP $expected; got $actual"
+              cat /tmp/siri-body
+              exit 1
+            fi
+          }
+          check 405 -X GET
+          check 415 -X POST -H 'Content-Type: text/plain' --data 'hello'
+          check 401 -X POST -H 'Content-Type: application/json' --data '{}'
+          check 400 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $(printf 'a%.0s' {1..64})" --data '{broken'
+          check 400 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $(printf 'a%.0s' {1..64})" --data '{}'
+          echo 'PASS: 405, 415, 401, 400, 400'
