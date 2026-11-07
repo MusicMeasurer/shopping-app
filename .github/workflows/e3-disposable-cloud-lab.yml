@@ -31,12 +31,26 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -n "$E3_LAB_URL"
-          test -n "$E3_LAB_PUBLISHABLE_KEY"
-          test -n "$E3_USER_A_EMAIL"
-          test -n "$E3_USER_A_PASSWORD"
-          test "$E3_LAB_URL" = "https://gmrqeubhotjpmtwokfeq.supabase.co"
-          [[ "$E3_LAB_PUBLISHABLE_KEY" == sb_publishable_* ]]
+          check_present() {
+            local name="$1"
+            local value="$2"
+            if [[ -z "$value" ]]; then
+              echo "::error title=Missing test configuration::Environment secret $name is empty or unavailable"
+              exit 1
+            fi
+          }
+          check_present E3_LAB_URL "$E3_LAB_URL"
+          check_present E3_LAB_PUBLISHABLE_KEY "$E3_LAB_PUBLISHABLE_KEY"
+          check_present E3_USER_A_EMAIL "$E3_USER_A_EMAIL"
+          check_present E3_USER_A_PASSWORD "$E3_USER_A_PASSWORD"
+          if [[ "$E3_LAB_URL" != "https://gmrqeubhotjpmtwokfeq.supabase.co" ]]; then
+            echo "::error title=Wrong lab target::E3_LAB_URL does not match the pinned disposable Supabase project"
+            exit 1
+          fi
+          if [[ "$E3_LAB_PUBLISHABLE_KEY" != sb_publishable_* ]]; then
+            echo "::error title=Unsupported key format::E3_LAB_PUBLISHABLE_KEY must be a publishable key (sb_publishable_ prefix), not a legacy anon key"
+            exit 1
+          fi
       - run: npm ci
       - name: Run real lab integration tests
         run: npx vitest run src/e3-local-cloud.integration.test.ts
