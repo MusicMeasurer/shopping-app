@@ -27,7 +27,7 @@ export function parseSiriAddRequest(input: unknown): SiriAddRequest {
     throw new Error('Invalid item name')
   }
   const name = data.name.trim()
-  if (!name || name.length > 200 || /[\u0000-\u001f\u007f]/.test(name)) {
+  if (!name || name.length > 120 || /[\u0000-\u001f\u007f]/.test(name)) {
     throw new Error('Invalid item name')
   }
   return { operationId: data.operationId, listId: data.listId, name }
