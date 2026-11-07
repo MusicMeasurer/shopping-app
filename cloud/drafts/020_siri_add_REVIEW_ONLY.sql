@@ -30,10 +30,10 @@ begin
  perform 1 from public.shopping_lists
   where id = p_list and owner_id = v_actor and deleted_at is null for update;
  if not found then raise exception 'List unavailable'; end if;
- -- 32 bytes / 256 bits. hex is suitable for Shortcuts Authorization header.
- v_token := encode(extensions.gen_random_bytes(32), 'hex');
+ -- Two UUIDv4 values (~244 bits of randomness). hex is suitable for Shortcuts Authorization header.
+ v_token := replace(pg_catalog.gen_random_uuid()::text,'-','') || replace(pg_catalog.gen_random_uuid()::text,'-','');
  insert into public.siri_shortcut_credentials(owner_id,list_id,token_hash,expires_at)
- values(v_actor,p_list,extensions.digest(v_token,'sha256'),now()+interval '90 days')
+ values(v_actor,p_list,pg_catalog.sha256(pg_catalog.convert_to(v_token,'UTF8')),now()+interval '90 days')
  returning id into v_id;
  return jsonb_build_object('credential_id',v_id,'token',v_token,'expires_in_days',90);
 end;
@@ -78,7 +78,7 @@ begin
    raise exception 'Invalid request';
  end if;
  select * into v_credential from public.siri_shortcut_credentials
- where token_hash = extensions.digest(p_token,'sha256') for update;
+ where token_hash = pg_catalog.sha256(pg_catalog.convert_to(p_token,'UTF8')) for update;
  if not found or v_credential.revoked_at is not null or
     v_credential.expires_at <= now() or v_credential.list_id <> p_list then
    raise exception 'Unauthorized';
