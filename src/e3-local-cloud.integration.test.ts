@@ -134,4 +134,61 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
       await storage.close()
     }
   }, 30000)
+  it('reconciles a server tombstone into a second offline device only after explicit review', async () => {
+    const url = labEnv.E3_LAB_URL
+    const key = labEnv.E3_LAB_PUBLISHABLE_KEY
+    const email = labEnv.E3_USER_A_EMAIL
+    const password = labEnv.E3_USER_A_PASSWORD
+    if (!url || !key || !email || !password) throw new Error('E3 lab credentials required')
+    expect(new URL(url).hostname).toBe('gmrqeubhotjpmtwokfeq.supabase.co')
+    expect(key).toMatch(/^sb_publishable_/)
+    const client = createClient(url, key, {
+      auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    })
+    const { error: loginError } = await client.auth.signInWithPassword({ email, password })
+    if (loginError) throw loginError
+    const { data: identity, error: identityError } = await client.auth.getUser()
+    if (identityError || !identity.user) throw new Error('No verified lab identity')
+    const accountId = identity.user.id
+    const { data: lists, error: listError } = await client.from('shopping_lists').select('id,owner_id')
+    if (listError) throw listError
+    const owned = lists?.find(row => row.owner_id === accountId)
+    if (!owned) throw new Error('No owned disposable test list')
+    const storage = createStorage('e3-delete-device-' + crypto.randomUUID())
+    const item = createItem('groceries', 'E3_TOMBSTONE_' + crypto.randomUUID())
+    let serverVersion: number | null = null
+    try {
+      await storage.bindAccountList(accountId, 'groceries', owned.id)
+      const added = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'add',
+        p_item: item.id, p_name: item.name, p_purchased: false,
+        p_expected_version: null,
+      })
+      if (added.error) throw added.error
+      serverVersion = added.data.item_version as number
+      await storage.importRemoteOnlyBatch(accountId, owned.id, [{ item, version: serverVersion }])
+      const removed = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'delete',
+        p_item: item.id, p_name: null, p_purchased: null,
+        p_expected_version: serverVersion,
+      })
+      if (removed.error) throw removed.error
+      serverVersion = removed.data.item_version as number
+      const sync = createAccountSync(storage, client, {
+        accountId, remoteListId: owned.id, localListId: 'groceries', isActive: () => true,
+      })
+      const review = await sync.previewDeletions()
+      expect(review.reviewItems).toEqual([{ id: item.id, name: item.name }])
+      expect((await storage.readAccountItems(accountId)).map(row => row.id)).toContain(item.id)
+      expect(await sync.applyConfirmedDeletions([item.id])).toBe(1)
+      expect((await storage.readAccountItems(accountId)).map(row => row.id)).not.toContain(item.id)
+      const versions = await storage.readAccountItemVersions(accountId)
+      expect(versions.find(row => row.itemId === item.id)?.version).toBe(serverVersion)
+    } finally {
+      // Tombstone is deliberately retained in the disposable lab to preserve server audit semantics.
+      // Never issue destructive cleanup against a non-lab hostname.
+      await storage.close()
+    }
+  }, 30000)
+
 })
