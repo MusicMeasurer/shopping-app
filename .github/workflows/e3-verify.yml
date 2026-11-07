@@ -94,4 +94,5 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build
-      - run: npx playwright test tests/authenticated-cloud-live.spec.ts
+      # Both scenarios share the same hosted account A; avoid parallel auth/session traffic.
+      - run: npx playwright test tests/authenticated-cloud-live.spec.ts --workers=1
