@@ -34,3 +34,15 @@ This flow is **not literally one tap**: Apple requires user confirmation for Sho
 
 ## Open feasibility blocker
 Shortcuts may not be able to persist an exchange-returned credential into a reusable, secret action parameter without additional user editing or a third-party app. This must be proven on a real iPhone before implementation. Alternatives: a native iOS App Intents integration or a consciously less seamless, explicitly described setup. Do not collect or publish user token to test feasibility.
+
+## 2026-11-08 decision checkpoint: security architecture
+
+**Selected for lab prototyping:** single-use short-lived pairing authorization -> server-issued independent per-list, revocable credential -> Shortcuts add endpoint. This credential is *not* the user's Supabase session or password. Never include it in the published template, import questions, QR code, or web URL.
+
+**Credential storage not yet approved:** native Shortcuts file read/write is proven across executions, but an iCloud Drive/Shortcuts file can be accessible to other apps or synced devices depending on OS settings. No claim of Keychain-grade secrecy. Avoid putting live tokens in file until explicit security acceptance; lab test with harmless fixture only. If file is ultimately accepted, require short credential lifetime, list scope, revocation, minimal permissions, clear device-loss guidance, and explicit user disclosure. Do not claim binding to a physical device without cryptographic device attestation.
+
+**Pairing-code UX:** prefer an opaque high-entropy code displayed by PWA and entered once in the imported Shortcut, with explicit pairing approval in the signed-in PWA if code length must be human-friendly. Atomic single-use redemption, expiry, abuse throttling, generic failures, and server audit without secret logging are mandatory. A 6-digit code alone is insufficient without strict rate limits and account confirmation.
+
+**Remaining feasibility gates:** whether the Shortcut can conditionally read an absent credential file, redeem pairing code, save returned token and then use it on later runs; whether Siri voice and lock-screen permissions permit the flow; whether iCloud import carries only neutral actions; how credential renewal works without manually rebuilding the Shortcut. These must be tested before calling the experience one-button.
+
+**Implementation boundary:** draft/prototype only in isolated E3 lab. No production writes, no changes to existing working manual Siri Shortcut, no real secret entered into test Shortcuts until security review.
