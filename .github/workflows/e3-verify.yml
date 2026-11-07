@@ -19,3 +19,31 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+
+  siri-http-lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Verify deployed disposable Siri HTTP endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint='https://gmrqeubhotjpmtwokfeq.supabase.co/functions/v1/siri-add'
+          check() {
+            local expected="$1"; shift
+            local actual
+            actual=$(curl --silent --show-error --retry 2 --max-time 20 --output /tmp/siri-response --write-out '%{http_code}' "$@" "$endpoint")
+            if [[ "$actual" != "$expected" ]]; then
+              echo "Expected HTTP $expected; got $actual"
+              cat /tmp/siri-response
+              exit 1
+            fi
+          }
+          check 405 -X GET
+          check 415 -X POST -H 'Content-Type: text/plain' --data 'hello'
+          check 401 -X POST -H 'Content-Type: application/json' --data '{}'
+          check 400 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $(printf 'a%.0s' {1..64})" --data '{broken'
+          check 400 -X POST -H 'Content-Type: application/json' -H "Authorization: Bearer $(printf 'a%.0s' {1..64})" --data '{}'
+          echo 'PASS: deployed lab HTTP negative contract'
