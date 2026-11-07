@@ -44,3 +44,30 @@ export async function revokeSiriCredential(
   if (typeof data !== 'boolean') throw new Error('Invalid revocation response')
   return data
 }
+
+export type SiriCredentialMetadata = {
+  credentialId: string
+  expiresAt: string
+  revokedAt: string | null
+}
+
+/** Metadata only. The secret is never returned after enrollment. */
+export async function listSiriCredentials(
+  client: Pick<SupabaseClient, 'rpc'>,
+  cloudListId: string,
+): Promise<SiriCredentialMetadata[]> {
+  if (!uuid.test(cloudListId)) throw new Error('Select a valid cloud list')
+  const { data, error } = await client.rpc('list_siri_shortcuts', { p_list: cloudListId })
+  if (error) throw error
+  if (!Array.isArray(data)) throw new Error('Invalid credential list')
+  return data.map((row: unknown) => {
+    if (!row || typeof row !== 'object' || Array.isArray(row)) throw new Error('Invalid credential metadata')
+    const value = row as Record<string, unknown>
+    if (typeof value.credential_id !== 'string' || !uuid.test(value.credential_id) ||
+        typeof value.expires_at !== 'string' || Number.isNaN(Date.parse(value.expires_at)) ||
+        (value.revoked_at !== null && (typeof value.revoked_at !== 'string' || Number.isNaN(Date.parse(value.revoked_at))))) {
+      throw new Error('Invalid credential metadata')
+    }
+    return { credentialId: value.credential_id, expiresAt: value.expires_at, revokedAt: value.revoked_at as string | null }
+  })
+}
