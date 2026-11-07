@@ -137,3 +137,14 @@ Commits prove code changes, CI logs prove disposable PostgreSQL test outcomes, a
 - 2026-11-07: E3 #342 and E2 #197 green. Added offline-edit-vs-server-tombstone coordinator regression (`5546cf2`): pending local edits classify as conflicts and block confirmed deletion. Disposable real-cloud integration scenario exists but has not been executed with lab credentials; do not claim end-to-end validation. Production unchanged.
 
 - 2026-11-07: E3 #346 and E2 #199 green. Added IndexedDB regression tests (`9a35509`) for repeated reviewed tombstone confirmation and stale expected version after a newer recorded server version. Await CI. No production deployment.
+
+
+## 2026-11-07 · E3 consolidated acceptance checkpoint
+
+- Agreed a **fixed 22-case E3 acceptance matrix** in `docs/E3_FINAL_TEST_MATRIX.md`. After this package, new hypothetical scenarios go to post-E3 backlog; exceptions are real defects, security violations and mandatory acceptance blockers.
+- Automated suite: **E3 #370 and E2 #211 passed** on commit `89835568310ba552b629b0238be5544d34d302dd`. These validate the automated portion (matrix 1–18), not physical iPhone or Siri.
+- Hosted Supabase integration: **manual E3 disposable cloud integration #5 SUCCESS** on `feature/e3-cloud-auth`, commit `7d39d596625bde679ea46a59572a108be57e6e85`, 21 seconds. Covers queued add, idempotent retry, version conflict and explicit tombstone review/deletion (matrix 19–20). Previous attempts exposed a trailing slash in the E3_LAB_URL secret and a genuine lab RLS issue.
+- Confirmed root cause of tombstone failure: lab policy `items_read` excluded `deleted_at IS NOT NULL`. With explicit user authorization, modified **only disposable lab** `gmrqeubhotjpmtwokfeq` to `TO authenticated USING (can_access_list(list_id))`; verified policy via read-only query, rerun passed. Reviewed SQL patch stored in `docs/E3_TOMBSTONE_RLS_PATCH.sql`; **not deployed to production**.
+- Security advisors in disposable lab reported existing privileged-function warnings; review required before release. Green integration tests are not blanket security certification.
+- **E3 remains IN PROGRESS**: matrix 21–22 (iPhone offline/restart and Siri direct add to synchronized list, including lock-screen behavior) unverified; Siri receiver not yet implemented. No published PWA deployment, production schema change, or final E3 acceptance.
+- Source-of-truth progress references: `docs/E3_FINAL_TEST_MATRIX.md`, `docs/E3_DISPOSABLE_LAB_RUNBOOK.md`, `docs/E3_TOMBSTONE_RLS_PATCH.sql`. Functional requirements, architecture and roadmap are updated by dated 2026-11-07 supplements, retaining earlier baselines.
