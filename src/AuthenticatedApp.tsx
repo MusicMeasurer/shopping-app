@@ -118,6 +118,52 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setDeletionReview(null)
   }, [view.status === 'account' ? view.accountId : null])
 
+  // Read-only cloud refresh for verified, bound lists. Never apply remote
+  // deletions or overwrite local edits without explicit user review.
+  useEffect(() => {
+    if (!client || !currentAccount) return
+    const accountId = currentAccount
+    let disposed = false
+    let running = false
+    async function refresh() {
+      if (!client || disposed || running || document.visibilityState === 'hidden' || !navigator.onLine) return
+      running = true
+      try {
+        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
+        const mappings = await storage.readAccountListMappings(accountId)
+        let imported = 0
+        for (const mapping of mappings) {
+          if (disposed || activeAccount.current !== accountId) return
+          if (!lists.some(list => list.id === mapping.localListId)) continue
+          imported += await createAccountSync(storage, client, {
+            accountId,
+            localListId: mapping.localListId as ListId,
+            remoteListId: mapping.remoteListId,
+            isActive: () => !disposed && activeAccount.current === accountId,
+          }).importRemoteOnly()
+        }
+        if (!disposed && activeAccount.current === accountId && imported > 0) {
+          setWorkspaceRevision(value => value + 1)
+        }
+      } catch {
+        // A conflict or failed network request must not mutate local data.
+        // Explicit cloud comparison and import remain available.
+      } finally {
+        running = false
+      }
+    }
+    const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
+    const onOnline = () => void refresh()
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    void refresh()
+    return () => {
+      disposed = true
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+    }
+  }, [client, currentAccount, storage])
+
   async function loadCloudLists() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
