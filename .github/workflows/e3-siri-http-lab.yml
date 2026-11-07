@@ -5,7 +5,7 @@ on:
     paths:
       - 'supabase/functions/siri-add/**'
       - '.github/workflows/e3-siri-http-lab.yml'
-  workflow_dispatch:
+  pull_request:\n    branches: [main]\n  workflow_dispatch:
 jobs:
   http-contract:
     runs-on: ubuntu-latest
