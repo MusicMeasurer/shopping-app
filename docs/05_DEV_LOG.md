@@ -247,3 +247,13 @@ Researched official Apple Shortcuts iCloud sharing, import questions, URL scheme
 ## 2026-11-08 · Product strategy confirmed by user
 
 No Mac/Xcode; first release is a maximally functional, well-tested PWA. Native iOS (and paid tooling) only after evaluating PWA, no commitment now. Siri one-button UX remains non-negotiable: include only if technically verified on PWA, otherwise explicitly defer to native phase without blocking PWA release. Preserve Siri lab work, stop speculative native implementation. Architecture decision documented in `design/siri-onboarding-platform-decision.md` (commit `970783f`). Production untouched.
+
+## 2026-11-08 · PWA-first E4 batch: rename existing item (FR-003-03)
+
+Following user-approved PWA-first release strategy, resumed E4 instead of native Siri development. Inspected canonical requirements and roadmap: FR-003-03 (rename existing item preserving ID and purchase status) is mandatory and previously planned. Implemented on isolated `feature/e3-cloud-auth` branch:
+- shared item-name validation `normalizeItemName` in `src/domain/shopping.ts` (`f6f246d`);
+- `useShopping.rename` persists same item identity with updated name using existing account-aware item store (`5f2811a`);
+- inline form with Save/Cancel and labels in `src/App.tsx` (`4dca895`);
+- three Vitest cases for trimming, validation and item-identity preservation (`f803be1`).
+
+**Verification status:** source commits completed; automated Vitest/build and physical iPhone checks **NOT YET RUN**, so FR-003-03 remains **implemented, not verified**. Existing cloud queue may block consecutive edits pending sync; this is not silently bypassed. No production deployment, no main/docs changes. Next: CI/build regression and actual guest/account persistence tests before marking accepted.
