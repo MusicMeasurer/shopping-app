@@ -30,7 +30,7 @@ export function App({ storage }: { storage: Storage }) {
     if (event.touches.length !== 1 || target.closest('nav,button,input,textarea,select,[role="dialog"],.list-menu')) { swipe.current = null; return }
     swipe.current = { x: event.touches[0].clientX, y: event.touches[0].clientY }
   }
-  function endSwipe(event: React.TouchEvent<HTMLElement>) {
+  function endSwipe(event: ReactTouchEvent<HTMLElement>) {
     const origin = swipe.current
     swipe.current = null
     if (!origin || event.changedTouches.length !== 1 || draggingId) return
@@ -70,6 +70,7 @@ export function App({ storage }: { storage: Storage }) {
   function startPress(event: ReactPointerEvent<HTMLDivElement>, id: string) {
     if (shopping.busy || shopping.loading || event.button !== 0 || (event.target as HTMLElement).closest('.menu-anchor')) return
     if (drag.current.timer) clearTimeout(drag.current.timer)
+    event.currentTarget.setPointerCapture(event.pointerId)
     drag.current = { timer: null, id, target: id, started: false, x: event.clientX, y: event.clientY }
     drag.current.timer = setTimeout(() => {
       drag.current.started = true
