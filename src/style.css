@@ -41,3 +41,8 @@ nav .list-select[aria-pressed=true] + .list-order button{color:#fff}
 .dialog-buttons button{min-height:44px;padding:9px 14px;border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb;color:#203b30}
 .dialog-buttons button:last-child{background:#25634c;color:white}
 .field-error{color:#a12d26;font-size:13px;line-height:1.5;margin:8px 0 0}
+
+nav .list-tile:has(.menu-anchor){z-index:3}
+nav .menu-anchor{position:absolute;top:6px;right:6px;margin:0}
+nav .menu-trigger{background:#ffffff25;color:white;border-color:#ffffff60;width:36px;height:36px}
+nav .list-menu{color:#203b30}
