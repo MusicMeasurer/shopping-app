@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItem, parseItems, validateName, type Item, type ListId } from '../domain/shopping'
 import type { Storage, ShoppingListRecord, ArchivedListRecord } from '../data/storage'
+import { moveList, orderLists, orderArchives } from '../domain/ordering'
 export function useShopping(storage: Storage) {
   const [items, setItems] = useState<Item[]>([])
   const [lists, setLists] = useState<ShoppingListRecord[]>([])
@@ -13,7 +14,7 @@ export function useShopping(storage: Storage) {
     setLoading(true)
     try {
       const [nextItems, nextLists, nextArchives] = await Promise.all([storage.read(), storage.readLists(), storage.readArchives()])
-      setItems(nextItems); setLists(nextLists); setArchives(nextArchives); setError('')
+      setItems(nextItems); setLists(orderLists(nextLists)); setArchives(orderArchives(nextArchives)); setError('')
     } catch { setError('Не удалось открыть сохранённые списки. Проверьте настройки браузера и повторите попытку.') }
     finally { setLoading(false) }
   }
@@ -26,6 +27,11 @@ export function useShopping(storage: Storage) {
     finally { locked.current = false; setBusy(false) }
   }
   return { items, lists, archives, loading, busy, error, reload,
+    moveList: (id: string, direction: -1 | 1) => {
+      const next = moveList(lists, id, direction)
+      if (next.every((row, index) => row.id === lists[index]?.id)) return Promise.resolve(true)
+      return mutate(() => storage.reorderLists(next), () => setLists(next))
+    },
     add: async (listId: ListId, name: string) => {
       try {
         const next = parseItems(name).map(entry => ({ ...createItem(listId, entry.name), quantity: entry.quantity, unit: entry.unit }))
@@ -47,7 +53,7 @@ export function useShopping(storage: Storage) {
     createList: async (name: string, kind: 'permanent' | 'oneoff') => {
       try {
         const record: ShoppingListRecord = { id: crypto.randomUUID(), name: validateName(name), symbol: '🛒', kind, createdAt: Date.now() }
-        const ok = await mutate(() => storage.saveList(record), () => setLists(current => [...current, record]))
+        const ok = await mutate(() => storage.saveList(record), () => setLists(current => orderLists([...current, record])))
         return ok ? record.id : null
       } catch (error) { setError((error as Error).message); return null }
     },
@@ -70,7 +76,7 @@ export function useShopping(storage: Storage) {
       const id = crypto.randomUUID(), completedAt = Date.now()
       const snapshot: ArchivedListRecord = { id, sourceListId: record.id, name: record.name, kind: record.kind, completedAt, items: items.filter(item => item.listId === record.id) }
       return mutate(() => storage.completeList(record, id, completedAt), () => {
-        setArchives(current => [...current, snapshot])
+        setArchives(current => orderArchives([...current, snapshot]))
         setItems(current => current.filter(item => item.listId !== record.id))
         if (record.kind === 'oneoff') setLists(current => current.filter(row => row.id !== record.id))
       })
