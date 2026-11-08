@@ -74,3 +74,27 @@ nav .list-tile, nav .list-select, nav .menu-trigger, .list-menu button, .menu-di
   -webkit-tap-highlight-color: transparent;
 }
 .menu-dismiss:focus, .menu-dismiss:active { outline: none; background: transparent; }
+
+/* Stage 1: reversible card density, icon placement and app settings */
+header{display:flex;align-items:flex-start;gap:12px}
+header .header-copy{min-width:0;flex:1}
+.settings-trigger{flex:none;display:grid;place-items:center;width:44px;height:44px;margin-top:-7px;padding:0;border:0;border-radius:12px;background:transparent;color:#25634c;font-size:25px;line-height:1}
+.settings-panel{margin-top:16px;padding:16px}
+.settings-panel h2{font-size:18px}
+.settings-panel fieldset{border:0;padding:8px 0;margin:8px 0}
+.settings-panel legend{font-size:13px;font-weight:650}
+.settings-panel label{display:flex;align-items:center;gap:9px;min-height:44px;font-size:14px}
+.settings-panel input{accent-color:#25634c;width:18px;height:18px}
+.settings-panel>button{min-height:44px;padding:8px 14px;border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb}
+nav.lists-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+nav.lists-grid.standard{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+nav.lists-grid .list-select{display:flex;flex-direction:column;align-items:stretch;text-align:left;gap:8px;padding:12px;aspect-ratio:1.48;min-height:0;overflow:hidden}
+nav.lists-grid .list-symbol{display:block;align-self:flex-start;margin:0;font-size:23px;line-height:1.15;transform:translate(-2px,-3px)}
+nav.lists-grid .list-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;line-height:1.25;font-size:14px;margin:0;min-width:0}
+nav.lists-grid.standard .list-select{gap:5px;padding:9px;aspect-ratio:1.48}
+nav.lists-grid.standard .list-symbol{font-size:18px;transform:translate(-2px,-2px)}
+nav.lists-grid.standard .list-name{font-size:10.5px}
+nav.lists-grid.standard .menu-anchor{top:5px;right:5px}
+nav.lists-grid.standard .menu-trigger{width:30px;min-width:30px;max-width:30px;height:30px;min-height:30px;max-height:30px}
+nav.lists-grid.standard .menu-trigger span{font-size:12px}
+@media(max-width:360px){nav.lists-grid.standard .list-select{padding:7px}nav.lists-grid.standard .list-name{font-size:10px}}
