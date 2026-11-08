@@ -63,3 +63,14 @@ nav .menu-trigger span{display:block;font-size:14px;letter-spacing:1px;line-heig
 .list-menu button>span:first-child{width:20px;text-align:center;font-size:20px;margin:0}
 .list-menu .menu-check{margin-left:auto;color:#25634c}
 .list-menu .danger{color:#b33333}
+
+/* iOS Safari: prevent sticky touch-hover flash when a portaled menu closes */
+@media (hover: none) and (pointer: coarse) {
+  .list-menu button:hover { background: #fff; }
+  .list-menu button:active { background: #eef3eb; }
+  nav .list-tile:hover .list-select:not([aria-pressed=true]) { background: #fff; }
+}
+nav .list-tile, nav .list-select, nav .menu-trigger, .list-menu button, .menu-dismiss {
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-dismiss:focus, .menu-dismiss:active { outline: none; background: transparent; }
