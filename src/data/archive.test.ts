@@ -5,46 +5,6 @@ import { createItem } from '../domain/shopping'
 
 const list = (id: string, kind: 'permanent' | 'oneoff' = 'permanent'): ShoppingListRecord => ({
   id, name: id, symbol: '🛒', kind, createdAt: 1,
-  it('upgrades version-2 lists and archives without overwriting user changes', async () => {
-    const name = 'upgrade-v2-' + crypto.randomUUID()
-    const old = await (await import('idb')).openDB(name, 2, {
-      upgrade(db) {
-        db.createObjectStore('items', { keyPath: 'id' })
-        db.createObjectStore('lists', { keyPath: 'id' })
-        db.createObjectStore('archives', { keyPath: 'id' })
-      },
-    })
-    const renamed = { ...list('groceries'), name: 'Мои продукты' }
-    await old.put('lists', renamed)
-    const oldArchive = { id: 'old-archive', sourceListId: 'groceries', name: 'Старые покупки', kind: 'permanent' as const, completedAt: 12, items: [createItem('groceries', 'Мука')] }
-    await old.put('archives', oldArchive)
-    old.close()
-    const storage = createStorage(name)
-    expect((await storage.readLists()).find(row => row.id === 'groceries')).toEqual(renamed)
-    expect(await storage.readArchives()).toEqual([oldArchive])
-    await storage.close()
-  })
-
-  it('does not resurrect a deleted default list when reopened', async () => {
-    const name = 'deleted-default-' + crypto.randomUUID()
-    const first = createStorage(name)
-    expect((await first.readLists()).map(row => row.id)).toContain('groceries')
-    await first.deleteList('groceries')
-    await first.close()
-    const second = createStorage(name)
-    expect((await second.readLists()).map(row => row.id)).not.toContain('groceries')
-    await second.close()
-  })
-
-  it('batch-saves multiple items and rejects invalid batch atomically', async () => {
-    const storage = createStorage('batch-' + crypto.randomUUID())
-    const first = createItem('groceries', 'Молоко')
-    const second = createItem('groceries', 'Хлеб')
-    await storage.saveItems([first, second])
-    expect(await storage.read()).toHaveLength(2)
-    await storage.close()
-  })
-
 })
 
 describe('E4 IndexedDB archive', () => {
@@ -131,4 +91,44 @@ describe('E4 IndexedDB archive', () => {
     expect((await reopened.readArchives())[0].items[0].name).toBe('Соль')
     await reopened.close()
   })
+  it('upgrades version-2 lists and archives without overwriting user changes', async () => {
+    const name = 'upgrade-v2-' + crypto.randomUUID()
+    const old = await (await import('idb')).openDB(name, 2, {
+      upgrade(db) {
+        db.createObjectStore('items', { keyPath: 'id' })
+        db.createObjectStore('lists', { keyPath: 'id' })
+        db.createObjectStore('archives', { keyPath: 'id' })
+      },
+    })
+    const renamed = { ...list('groceries'), name: 'Мои продукты' }
+    await old.put('lists', renamed)
+    const oldArchive = { id: 'old-archive', sourceListId: 'groceries', name: 'Старые покупки', kind: 'permanent' as const, completedAt: 12, items: [createItem('groceries', 'Мука')] }
+    await old.put('archives', oldArchive)
+    old.close()
+    const storage = createStorage(name)
+    expect((await storage.readLists()).find(row => row.id === 'groceries')).toEqual(renamed)
+    expect(await storage.readArchives()).toEqual([oldArchive])
+    await storage.close()
+  })
+
+  it('does not resurrect a deleted default list when reopened', async () => {
+    const name = 'deleted-default-' + crypto.randomUUID()
+    const first = createStorage(name)
+    expect((await first.readLists()).map(row => row.id)).toContain('groceries')
+    await first.deleteList('groceries')
+    await first.close()
+    const second = createStorage(name)
+    expect((await second.readLists()).map(row => row.id)).not.toContain('groceries')
+    await second.close()
+  })
+
+  it('batch-saves multiple items', async () => {
+    const storage = createStorage('batch-' + crypto.randomUUID())
+    const first = createItem('groceries', 'Молоко')
+    const second = createItem('groceries', 'Хлеб')
+    await storage.saveItems([first, second])
+    expect(await storage.read()).toHaveLength(2)
+    await storage.close()
+  })
+
 })
