@@ -41,3 +41,11 @@ A possible native design: iOS app signs in to same Supabase cloud account, expos
 - End-to-end add, cross-account denial, revoked access, offline handling, duplicate retries, lock screen, no secrets in logs or shared URLs.
 - Verify cloud/list permissions, session recovery, and removal of credentials when user signs out or reports compromise.
 - Production remains untouched until explicit approval.
+
+## 2026-11-08 · Product owner decision: PWA-first release, native later
+
+**Decision (supersedes any suggestion to block PWA release on native App Intents):** User has no Mac/Xcode access. First ship a high-quality, maximally functional **PWA**, test product value and usability, then decide on native iOS development and paid tooling. Native app is likely eventually (~90% subjective estimate) but **not now**; do not purchase tools or start native work without a new explicit decision.
+
+**Siri release gate:** Keep the original one-button, no-manual-configuration acceptance criterion. Investigate PWA-compatible Siri only within a bounded, evidence-based feasibility effort. If it cannot be verified at the required UX/security level, explicitly **defer Siri to a future native release**, rather than delay the PWA or ship a manual setup under the one-button label. The existing manual lab Shortcut is a test fixture, not acceptable public onboarding. Preserve isolated Siri lab code and findings for possible reuse; do not promote incomplete feature into production.
+
+**Priorities:** resume PWA feature completion, usability, security, regression and release preparation per requirements/roadmap; do not allow Siri investigation to consume the critical path. Production branch/deployment remains unchanged without explicit approval.
