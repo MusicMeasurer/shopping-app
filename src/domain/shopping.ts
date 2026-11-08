@@ -4,9 +4,13 @@ export const lists = [
 ] as const
 export type ListId = typeof lists[number]['id']
 export interface Item { id: string; listId: ListId; name: string; purchased: boolean; createdAt: number }
-export function createItem(listId: ListId, rawName: string): Item {
+export function normalizeItemName(rawName: string): string {
   const name = rawName.trim()
   if (!name || name.length > 120) throw new Error('Введите название от 1 до 120 символов.')
+  return name
+}
+export function createItem(listId: ListId, rawName: string): Item {
+  const name = normalizeItemName(rawName)
   return { id: crypto.randomUUID(), listId, name, purchased: false, createdAt: Date.now() }
 }
 export function itemsForList(items: Item[], listId: ListId): Item[] {
