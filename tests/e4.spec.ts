@@ -28,7 +28,7 @@ test('E4: create, edit, archive and delete lists', async ({ page }) => {
 
 test('E4: explicit quantities survive reload; ambiguous names remain intact', async ({ page }) => {
   await page.goto('/shopping-app/')
-  await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Молоко 2 л\\nМука 1,5 кг\\nСахар 2')
+  await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Молоко 2 л\nМука 1,5 кг\nСахар 2')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByText('Молоко · 2 л')).toBeVisible()
   await expect(page.getByText('Мука · 1.5 кг')).toBeVisible()
