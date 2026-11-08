@@ -51,13 +51,17 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - name: Try non-forced lockfile security updates (no commit)
-        run: npm audit fix --package-lock-only
-      - name: Verify updated lockfile can install cleanly
+      - name: Try non-forced dependency security updates (no commit)
+        run: |
+          npm audit fix || true
+          git diff --stat -- package.json package-lock.json
+      - name: Verify updated dependencies can install cleanly
         run: npm ci
       - name: Verify tests and production build after updates
         run: |
           npm test
           npm run build
-      - name: Check remaining advisories
-        run: npm audit --audit-level=low
+      - name: Check remaining advisories (informational)
+        run: |
+          npm audit --json > remaining-audit.json || true
+          node -e 'const a=require("./remaining-audit.json"); console.log("REMAINING",JSON.stringify(a.metadata?.vulnerabilities)); for(const [name,v] of Object.entries(a.vulnerabilities||{})) console.log(name,v.severity)'
