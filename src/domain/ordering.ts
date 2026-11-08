@@ -13,6 +13,15 @@ export function moveList(lists: ShoppingListRecord[], id: string, direction: -1 
   ;[sorted[index], sorted[target]] = [sorted[target], sorted[index]]
   return sorted.map((list, position) => ({ ...list, position }))
 }
+export function placeList(lists: ShoppingListRecord[], movedId: string, targetId: string): ShoppingListRecord[] {
+  const sorted = orderLists(lists)
+  const from = sorted.findIndex(row => row.id === movedId)
+  const to = sorted.findIndex(row => row.id === targetId)
+  if (from < 0 || to < 0 || from === to) return sorted
+  const [moved] = sorted.splice(from, 1)
+  sorted.splice(to, 0, moved)
+  return sorted.map((row, position) => ({ ...row, position }))
+}
 export function orderArchives(archives: ArchivedListRecord[]): ArchivedListRecord[] {
   return [...archives].sort((a, b) => b.completedAt - a.completedAt || a.id.localeCompare(b.id))
 }
