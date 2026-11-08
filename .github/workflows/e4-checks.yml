@@ -51,6 +51,13 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Inspect PWA dependency chain and available versions
+        run: |
+          npm ls vite-plugin-pwa workbox-build @rollup/plugin-node-resolve deepmerge glob minimatch || true
+          npm view vite-plugin-pwa version
+          npm view workbox-build version
+          npm view glob version
+          npm view minimatch version
       - name: Try non-forced dependency security updates (no commit)
         run: |
           npm audit fix || true
