@@ -103,3 +103,13 @@ nav.lists-grid.standard .menu-trigger span{font-size:12px}
 .section-switch{display:flex;justify-content:center;align-items:center;gap:5px;margin:-8px 0 20px}
 .section-switch button{border:0;background:transparent;min-width:44px;min-height:44px;padding:0;color:#c8d6cb;font-size:12px;line-height:1;-webkit-tap-highlight-color:transparent}
 .section-switch button.current{color:#25634c;font-size:16px}
+
+/* Stage 3: add-list tile and compact dialog */
+nav.lists-grid .create-list-tile{border:1px dashed #9ab8a4;background:#eef3eb;color:#25634c;justify-content:center;align-items:center;text-align:center;gap:3px}
+nav.lists-grid .create-plus{font-size:35px;line-height:1;font-weight:350;margin:0}
+nav.lists-grid.standard .create-plus{font-size:28px}
+nav.lists-grid .create-list-tile .list-name{font-size:12px;text-align:center}
+nav.lists-grid.standard .create-list-tile .list-name{font-size:10px}
+.create-dialog form{display:grid;gap:10px}
+.create-dialog form>label{margin:4px 0 0}
+.create-dialog input,.create-dialog select{width:100%;min-width:0;border:1px solid #d8dfd6;border-radius:12px;padding:12px;background:#fafbf8;color:#203b30;font-size:16px}
