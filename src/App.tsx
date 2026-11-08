@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from 'react'
+import { useRef, useState, type FormEvent, type PointerEvent as ReactPointerEvent } from 'react'
+import { createPortal } from 'react-dom'
 import { itemsForList, type Item } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
 import type { Storage } from './data/storage'
@@ -9,6 +10,11 @@ export function App({ storage }: { storage: Storage }) {
   const [kind, setKind] = useState<'permanent' | 'oneoff'>('permanent')
   const [showArchive, setShowArchive] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState({ top: 0, left: 0 })
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
+  const drag = useRef<{ timer: ReturnType<typeof setTimeout> | null, id: string | null, target: string | null, started: boolean, x: number, y: number }>({ timer: null, id: null, target: null, started: false, x: 0, y: 0 })
+  const suppressClick = useRef(false)
   const [renaming, setRenaming] = useState(false)
   const [renameName, setRenameName] = useState('')
   const [itemError, setItemError] = useState('')
@@ -36,6 +42,43 @@ export function App({ storage }: { storage: Storage }) {
     event.preventDefault()
     if (list && renameName.trim() && await shopping.renameList(list, renameName)) setRenaming(false)
   }
+  function startPress(event: ReactPointerEvent<HTMLDivElement>, id: string) {
+    if (shopping.busy || shopping.loading || event.button !== 0 || (event.target as HTMLElement).closest('.menu-anchor')) return
+    if (drag.current.timer) clearTimeout(drag.current.timer)
+    drag.current = { timer: null, id, target: id, started: false, x: event.clientX, y: event.clientY }
+    drag.current.timer = setTimeout(() => {
+      drag.current.started = true
+      setMenuOpen(false)
+      setDraggingId(id)
+      setOverId(id)
+      if (navigator.vibrate) navigator.vibrate(15)
+    }, 380)
+  }
+  function movePress(event: ReactPointerEvent<HTMLDivElement>) {
+    const state = drag.current
+    if (!state.id) return
+    if (!state.started) {
+      if (Math.hypot(event.clientX - state.x, event.clientY - state.y) > 12) {
+        if (state.timer) clearTimeout(state.timer)
+        drag.current.id = null
+      }
+      return
+    }
+    const target = document.elementFromPoint(event.clientX, event.clientY)?.closest<HTMLElement>('[data-list-id]')?.dataset.listId
+    if (target) { state.target = target; setOverId(target) }
+  }
+  function finishPress() {
+    const state = drag.current
+    if (state.timer) clearTimeout(state.timer)
+    if (state.started && state.id) {
+      suppressClick.current = true
+      if (state.target && state.target !== state.id) void shopping.placeList(state.id, state.target)
+      window.setTimeout(() => { suppressClick.current = false }, 0)
+    }
+    drag.current = { timer: null, id: null, target: null, started: false, x: 0, y: 0 }
+    setDraggingId(null)
+    setOverId(null)
+  }
   function startEdit(item: Item) {
     setEditing(item); setEditName(item.name); setEditQuantity(item.quantity?.toString() ?? ''); setEditUnit(item.unit ?? '')
   }
@@ -45,7 +88,7 @@ export function App({ storage }: { storage: Storage }) {
   }
   return <main>
     <header><div className="brand">ПОКУПКИ · E4 (разработка)</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
-    <nav aria-label="Списки покупок">{shopping.lists.map((row, index) => <div className="list-tile" key={row.id}><button className="list-select" aria-pressed={!showArchive && list?.id === row.id} onClick={() => { setActive(row.id); setName(''); setItemError(''); setMenuOpen(false); setShowArchive(false) }}><span aria-hidden="true">{row.symbol}</span>{row.name}</button><div className="list-order"><button type="button" aria-label={`Поднять список ${row.name}`} disabled={shopping.busy || index === 0} onClick={() => void shopping.moveList(row.id, -1)}>↑</button><button type="button" aria-label={`Опустить список ${row.name}`} disabled={shopping.busy || index === shopping.lists.length - 1} onClick={() => void shopping.moveList(row.id, 1)}>↓</button></div>{!showArchive && list?.id === row.id && <div className="menu-anchor"><button type="button" className="menu-trigger" aria-label="Действия со списком" aria-expanded={menuOpen} aria-haspopup="menu" onClick={() => setMenuOpen(open => !open)}>⋯</button>{menuOpen && <div className="list-menu" role="menu" aria-label="Действия со списком"><button role="menuitem" onClick={() => { setRenameName(list.name); setMenuOpen(false); setRenaming(true) }}><span aria-hidden="true">✎</span> Переименовать</button><div className="menu-caption">ТИП СПИСКА</div><button role="menuitemradio" aria-checked={list.kind === 'oneoff'} onClick={() => { setMenuOpen(false); void shopping.changeListKind(list, 'oneoff') }}><span aria-hidden="true">⌛</span> Разовый <span className="menu-check">{list.kind === 'oneoff' ? '✓' : ''}</span></button><button role="menuitemradio" aria-checked={list.kind === 'permanent'} onClick={() => { setMenuOpen(false); void shopping.changeListKind(list, 'permanent') }}><span aria-hidden="true">∞</span> Постоянный <span className="menu-check">{list.kind === 'permanent' ? '✓' : ''}</span></button><div className="menu-separator"/><button role="menuitem" onClick={async () => { setMenuOpen(false); if (window.confirm('Завершить список и перенести товары в архив?')) { const ok = await shopping.completeList(list); if (ok && list.kind === 'oneoff') setActive('') } }}><span aria-hidden="true">✓</span> Завершить список</button><button role="menuitem" className="danger" onClick={async () => { setMenuOpen(false); if (window.confirm('Удалить список и активные товары? Архив сохранится.')) { const ok = await shopping.deleteList(list.id); if (ok) setActive('') } }}><span aria-hidden="true">▤</span> Удалить список</button></div>}</div>}</div>)}</nav>
+    <nav aria-label="Списки покупок">{shopping.lists.map(row => <div className={`list-tile${draggingId === row.id ? ' dragging' : ''}${overId === row.id && draggingId !== row.id ? ' drag-over' : ''}`} data-list-id={row.id} key={row.id} onPointerDown={event => startPress(event, row.id)} onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}><button className="list-select" aria-pressed={!showArchive && list?.id === row.id} onClick={event => { if (suppressClick.current) { event.preventDefault(); return } setActive(row.id); setName(''); setItemError(''); setMenuOpen(false); setShowArchive(false) }}><span aria-hidden="true">{row.symbol}</span>{row.name}</button>{!showArchive && list?.id === row.id && <div className="menu-anchor"><button type="button" className="menu-trigger" aria-label="Действия со списком" aria-expanded={menuOpen} aria-haspopup="menu" onClick={event => { const rect = event.currentTarget.getBoundingClientRect(); setMenuPosition({ top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340)), left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)) }); setMenuOpen(open => !open) }}><span aria-hidden="true">•••</span></button>{menuOpen && createPortal(<><button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuOpen(false)}/><div className="list-menu" style={{ top: menuPosition.top, left: menuPosition.left }} role="menu" aria-label="Действия со списком"><button role="menuitem" onClick={() => { setRenameName(list.name); setMenuOpen(false); setRenaming(true) }}><span aria-hidden="true">✎</span> Переименовать</button><div className="menu-caption">ТИП СПИСКА</div><button role="menuitemradio" aria-checked={list.kind === 'oneoff'} onClick={() => { setMenuOpen(false); void shopping.changeListKind(list, 'oneoff') }}><span aria-hidden="true">⌛</span> Разовый <span className="menu-check">{list.kind === 'oneoff' ? '✓' : ''}</span></button><button role="menuitemradio" aria-checked={list.kind === 'permanent'} onClick={() => { setMenuOpen(false); void shopping.changeListKind(list, 'permanent') }}><span aria-hidden="true">∞</span> Постоянный <span className="menu-check">{list.kind === 'permanent' ? '✓' : ''}</span></button><div className="menu-separator"/><button role="menuitem" onClick={async () => { setMenuOpen(false); if (window.confirm('Завершить список и перенести товары в архив?')) { const ok = await shopping.completeList(list); if (ok && list.kind === 'oneoff') setActive('') } }}><span aria-hidden="true">✓</span> Завершить список</button><button role="menuitem" className="danger" onClick={async () => { setMenuOpen(false); if (window.confirm('Удалить список и активные товары? Архив сохранится.')) { const ok = await shopping.deleteList(list.id); if (ok) setActive('') } }}><span aria-hidden="true">▤</span> Удалить список</button></div></div>}</div>)}</nav>
     <div className="e4-actions"><button type="button" aria-pressed={showArchive} onClick={() => setShowArchive(value => !value)}>Архив ({shopping.archives.length})</button></div>
     {shopping.error && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
     {showArchive ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{shopping.archives.length === 0 ? <p>Архив пока пуст.</p> : shopping.archives.map(snapshot => <article className="archive-entry" key={snapshot.id}><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : list && <section aria-labelledby="list-title">
