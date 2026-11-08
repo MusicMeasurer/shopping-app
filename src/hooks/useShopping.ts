@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createItem, type Item, type ListId } from '../domain/shopping'
+import { createItem, normalizeItemName, type Item, type ListId } from '../domain/shopping'
 import type { ItemStore } from '../data/account-item-store'
 export function useShopping(storage: ItemStore, refreshRevision = 0) {
   const [items, setItems] = useState<Item[]>([])
@@ -25,6 +25,17 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
     add: async (listId: ListId, name: string) => {
       try { const item = createItem(listId, name); return await mutate(() => storage.save(item), current => [...current, item]) }
       catch (error) { setError((error as Error).message); return false }
+    },
+    rename: async (item: Item, rawName: string) => {
+      try {
+        const name = normalizeItemName(rawName)
+        if (name === item.name) return true
+        const updated = { ...item, name }
+        return await mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row))
+      } catch (error) {
+        setError((error as Error).message)
+        return false
+      }
     },
     toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },
     remove: (id: string) => mutate(() => storage.remove(id), current => current.filter(item => item.id !== id)),
