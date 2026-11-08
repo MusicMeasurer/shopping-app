@@ -98,3 +98,8 @@ nav.lists-grid.standard .menu-anchor{top:5px;right:5px}
 nav.lists-grid.standard .menu-trigger{width:30px;min-width:30px;max-width:30px;height:30px;min-height:30px;max-height:30px}
 nav.lists-grid.standard .menu-trigger span{font-size:12px}
 @media(max-width:360px){nav.lists-grid.standard .list-select{padding:7px}nav.lists-grid.standard .list-name{font-size:10px}}
+
+/* Stage 2: subtle two-page indicator */
+.section-switch{display:flex;justify-content:center;align-items:center;gap:5px;margin:-8px 0 20px}
+.section-switch button{border:0;background:transparent;min-width:44px;min-height:44px;padding:0;color:#c8d6cb;font-size:12px;line-height:1;-webkit-tap-highlight-color:transparent}
+.section-switch button.current{color:#25634c;font-size:16px}
