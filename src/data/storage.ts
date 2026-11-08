@@ -28,7 +28,12 @@ export function createStorage(name = 'shopping-app') {
       if (!db.objectStoreNames.contains('lists')) db.createObjectStore('lists', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
         // Seed exactly once, including upgrades from v1/v2. Never resurrect deleted defaults.
-        if (oldVersion < 3) for (const list of defaults) tx.objectStore('lists').put({ ...list, kind: 'permanent', createdAt: 0 })
+        if (oldVersion < 3) for (const list of defaults) {
+          const store = tx.objectStore('lists')
+          void store.get(list.id).then(existing => {
+            if (!existing) return store.put({ ...list, kind: 'permanent', createdAt: 0 })
+          })
+        }
     },
     blocking() { void database.then(db => db.close()) },
   })
