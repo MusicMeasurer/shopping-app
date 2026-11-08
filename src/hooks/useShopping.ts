@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItem, parseItems, validateName, type Item, type ListId } from '../domain/shopping'
 import type { Storage, ShoppingListRecord, ArchivedListRecord } from '../data/storage'
-import { moveList, orderLists, orderArchives } from '../domain/ordering'
+import { moveList, placeList, orderLists, orderArchives } from '../domain/ordering'
 export function useShopping(storage: Storage) {
   const [items, setItems] = useState<Item[]>([])
   const [lists, setLists] = useState<ShoppingListRecord[]>([])
@@ -29,6 +29,11 @@ export function useShopping(storage: Storage) {
   return { items, lists, archives, loading, busy, error, reload,
     moveList: (id: string, direction: -1 | 1) => {
       const next = moveList(lists, id, direction)
+      if (next.every((row, index) => row.id === lists[index]?.id)) return Promise.resolve(true)
+      return mutate(() => storage.reorderLists(next), () => setLists(next))
+    },
+    placeList: (id: string, targetId: string) => {
+      const next = placeList(lists, id, targetId)
       if (next.every((row, index) => row.id === lists[index]?.id)) return Promise.resolve(true)
       return mutate(() => storage.reorderLists(next), () => setLists(next))
     },
