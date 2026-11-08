@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import type { Item } from '../domain/shopping'
+import { lists as defaults, type Item } from '../domain/shopping'
 
 export interface ShoppingListRecord {
   id: string
@@ -22,11 +22,13 @@ interface ShoppingDB extends DBSchema {
   archives: { key: string; value: ArchivedListRecord }
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 2, {
-    upgrade(db) {
+  const database = openDB<ShoppingDB>(name, 3, {
+    upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('lists')) db.createObjectStore('lists', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
+        // Seed exactly once, including upgrades from v1/v2. Never resurrect deleted defaults.
+        if (oldVersion < 3) for (const list of defaults) tx.objectStore('lists').put({ ...list, kind: 'permanent', createdAt: 0 })
     },
     blocking() { void database.then(db => db.close()) },
   })
@@ -36,6 +38,11 @@ export function createStorage(name = 'shopping-app') {
     async remove(id: string) { await (await database).delete('items', id) },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord) { await (await database).put('lists', list) },
+      async saveItems(items: Item[]): Promise<void> {
+        const tx = (await database).transaction('items', 'readwrite')
+        for (const item of items) await tx.store.put(item)
+        await tx.done
+      },
     async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
     async deleteList(listId: string): Promise<void> {
       const db = await database
