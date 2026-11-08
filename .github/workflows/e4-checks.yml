@@ -41,3 +41,23 @@ jobs:
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build
       - run: npm run test:e2e
+  dependency-remediation-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Try non-forced lockfile security updates (no commit)
+        run: npm audit fix --package-lock-only
+      - name: Verify updated lockfile can install cleanly
+        run: npm ci
+      - name: Verify tests and production build after updates
+        run: |
+          npm test
+          npm run build
+      - name: Check remaining advisories
+        run: npm audit --audit-level=low
