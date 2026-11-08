@@ -48,6 +48,9 @@ export function createStorage(name = 'shopping-app') {
     async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
       const db = await database
       const tx = db.transaction(['lists', 'items', 'archives'], 'readwrite')
+      // Observe abort immediately: a failed request rejects both itself and tx.done.
+      const completion = tx.done
+      void completion.catch(() => {})
       const allItems = await tx.objectStore('items').getAll()
       const items = allItems.filter(item => item.listId === list.id)
       await tx.objectStore('archives').add({
@@ -56,7 +59,7 @@ export function createStorage(name = 'shopping-app') {
       })
       for (const item of items) await tx.objectStore('items').delete(item.id)
       if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
-      await tx.done
+      await completion
     },
     async close() { (await database).close() },
   }
