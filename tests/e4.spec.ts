@@ -141,3 +141,17 @@ test('E4: menu is within viewport and trigger is circular', async ({ page }) => 
   expect(rect.y).toBeGreaterThanOrEqual(0)
   expect(rect.y + rect.height).toBeLessThanOrEqual(viewport.height + 1)
 })
+
+test('E4: card density setting persists and leaves list data unchanged', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await expect(page.getByRole('radio', { name: /Крупный/ })).toBeChecked()
+  await page.getByRole('radio', { name: /Стандартный/ }).check()
+  await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
+  await expect(page.locator('nav .list-tile')).toHaveCount(2)
+  await page.reload()
+  await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await page.getByRole('radio', { name: /Крупный/ }).check()
+  await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
+})
