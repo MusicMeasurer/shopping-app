@@ -18,7 +18,7 @@ describe('E4 IndexedDB archive', () => {
     old.close()
     const storage = createStorage(name)
     expect(await storage.read()).toEqual([milk])
-    expect(await storage.readLists()).toEqual([])
+    expect((await storage.readLists()).map(list => list.id).sort()).toEqual(['groceries', 'household'])
     expect(await storage.readArchives()).toEqual([])
     await storage.close()
   })
@@ -31,7 +31,7 @@ describe('E4 IndexedDB archive', () => {
     await storage.save(milk)
     await storage.completeList(record, 'archive-1', 100)
     expect(await storage.read()).toEqual([])
-    expect(await storage.readLists()).toEqual([record])
+    expect((await storage.readLists()).find(list => list.id === record.id)).toEqual(record)
     expect(await storage.readArchives()).toEqual([{
       id: 'archive-1', sourceListId: 'groceries', name: 'groceries',
       kind: 'permanent', completedAt: 100, items: [milk],
@@ -45,7 +45,7 @@ describe('E4 IndexedDB archive', () => {
     await storage.saveList(record)
     await storage.save(createItem('groceries', 'Хлеб'))
     await storage.completeList(record, 'archive-2', 200)
-    expect(await storage.readLists()).toEqual([])
+    expect((await storage.readLists()).some(list => list.id === record.id)).toBe(false)
     expect(await storage.read()).toEqual([])
     expect(await storage.readArchives()).toHaveLength(1)
     await storage.close()
@@ -60,7 +60,7 @@ describe('E4 IndexedDB archive', () => {
     await storage.save(createItem('groceries', 'Второй'))
     await storage.deleteList('groceries')
     expect(await storage.read()).toEqual([])
-    expect(await storage.readLists()).toEqual([])
+    expect((await storage.readLists()).some(list => list.id === record.id)).toBe(false)
     expect((await storage.readArchives())[0].items[0].name).toBe('Первый')
     await storage.close()
   })
