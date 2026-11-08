@@ -7,6 +7,7 @@ export interface ShoppingListRecord {
   symbol: string
   kind: 'permanent' | 'oneoff'
   createdAt: number
+  position?: number
 }
 export interface ArchivedListRecord {
   id: string
@@ -43,6 +44,11 @@ export function createStorage(name = 'shopping-app') {
     async remove(id: string) { await (await database).delete('items', id) },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord) { await (await database).put('lists', list) },
+    async reorderLists(records: ShoppingListRecord[]): Promise<void> {
+      const tx = (await database).transaction('lists', 'readwrite')
+      for (const record of records) await tx.store.put(record)
+      await tx.done
+    },
       async saveItems(items: Item[]): Promise<void> {
         const tx = (await database).transaction('items', 'readwrite')
         for (const item of items) await tx.store.put(item)
