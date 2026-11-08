@@ -243,3 +243,7 @@ Following user feedback about incorrect Russian action labels and incomplete ins
 ## 2026-11-08 · Apple Siri one-button platform decision gate
 
 Researched official Apple Shortcuts iCloud sharing, import questions, URL schemes, App Intents, App Shortcuts and testing docs. Documented verified vs unproven mechanisms and architecture comparison in `design/siri-onboarding-platform-decision.md` (commit `f77a601`). **Finding:** PWA+iCloud Shortcut automatic secure one-button credential handoff is unproven; native App Intents has documented immediate Siri availability after native app install, but requires native build/signing/distribution and real-device tests. No claim that native companion is implemented or that PWA is impossible. Await user architecture/distribution decision; no production changes.
+
+## 2026-11-08 · Product strategy confirmed by user
+
+No Mac/Xcode; first release is a maximally functional, well-tested PWA. Native iOS (and paid tooling) only after evaluating PWA, no commitment now. Siri one-button UX remains non-negotiable: include only if technically verified on PWA, otherwise explicitly defer to native phase without blocking PWA release. Preserve Siri lab work, stop speculative native implementation. Architecture decision documented in `design/siri-onboarding-platform-decision.md` (commit `970783f`). Production untouched.
