@@ -28,7 +28,7 @@ export function useShopping(storage: Storage) {
   return { items, lists, archives, loading, busy, error, reload,
     add: async (listId: ListId, name: string) => {
       try {
-        const next = parseItems(name).map(entry => createItem(listId, entry))
+        const next = parseItems(name).map(entry => ({ ...createItem(listId, entry.name), quantity: entry.quantity, unit: entry.unit }))
         return await mutate(() => storage.saveItems(next), () => setItems(current => [...current, ...next]))
       } catch (error) { setError((error as Error).message); return false }
     },
