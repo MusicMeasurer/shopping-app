@@ -57,6 +57,11 @@ export function useShopping(storage: Storage) {
         return await mutate(() => storage.saveList(updated), () => setLists(current => current.map(row => row.id === record.id ? updated : row)))
       } catch (error) { setError((error as Error).message); return false }
     },
+    changeListKind: (record: ShoppingListRecord, kind: 'permanent' | 'oneoff') => {
+      if (record.kind === kind) return Promise.resolve(true)
+      const updated = { ...record, kind }
+      return mutate(() => storage.saveList(updated), () => setLists(current => current.map(row => row.id === record.id ? updated : row)))
+    },
     deleteList: (id: string) => mutate(() => storage.deleteList(id), () => {
       setLists(current => current.filter(row => row.id !== id))
       setItems(current => current.filter(item => item.listId !== id))
