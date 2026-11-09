@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import { lists, itemsForList, type ListId } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
-import type { ShoppingListRecord, Storage } from './data/storage'
+import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
 import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number }) {
@@ -15,10 +15,17 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
   const [newListName, setNewListName] = useState('')
   const [creatingList, setCreatingList] = useState(false)
   const [changingList, setChangingList] = useState(false)
+  const [archives, setArchives] = useState<ArchivedListRecord[]>([])
+  const [showArchive, setShowArchive] = useState(false)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
-    void storage.readLists().then(rows => { if (!cancelled) setLocalLists(rows.sort((a, b) => (a.position ?? a.createdAt) - (b.position ?? b.createdAt))) }).catch(error => {
+    void Promise.all([storage.readLists(), storage.readArchives()]).then(([rows, snapshots]) => {
+      if (!cancelled) {
+        setLocalLists(rows.sort((a, b) => (a.position ?? a.createdAt) - (b.position ?? b.createdAt)))
+        setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
+      }
+    }).catch(error => {
       if (!cancelled) setListError(error instanceof Error ? error.message : 'Не удалось загрузить списки')
     })
     return () => { cancelled = true }
@@ -32,6 +39,22 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
       setLocalLists(await storage.readLists())
       setListError(null)
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить список') }
+    finally { setChangingList(false) }
+  }
+  async function completeLocalList() {
+    if (accountId !== null || !list || changingList || shopping.busy || shopping.loading) return
+    if (!rows.length) { setListError('Пустой список нельзя завершить.'); return }
+    if (!window.confirm('Завершить список и перенести товары в архив?')) return
+    setChangingList(true)
+    try {
+      await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now())
+      const [updatedLists, snapshots] = await Promise.all([storage.readLists(), storage.readArchives()])
+      setLocalLists(updatedLists)
+      setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
+      setListError(null)
+      await shopping.reload()
+      if (list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
+    } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
   const visibleLists = accountId === null && localLists !== null ? localLists : lists
@@ -73,11 +96,12 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
   }
   return <main>
     <header><div className="brand">ПОКУПКИ · v0.0.1</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
-    <nav aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>
-    {accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
-    {accountId === null && list && <div className="list-toolbar" aria-label="Управление списком"><button type="button" disabled={changingList} onClick={() => { const name = window.prompt('Новое название списка', list.name); if (name !== null) void updateLocalList('rename', list.id, name) }}>Переименовать список</button><button type="button" disabled={changingList} onClick={() => void updateLocalList('kind', list.id, ('kind' in list && list.kind === 'oneoff') ? 'permanent' : 'oneoff')}>Тип: {'kind' in list && list.kind === 'oneoff' ? 'разовый' : 'постоянный'}</button></div>}
+    {accountId === null && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-pressed={!showArchive} onClick={() => setShowArchive(false)}>Активные списки</button><button type="button" aria-pressed={showArchive} onClick={() => setShowArchive(true)}>Архив ({archives.length})</button></div>}
+    {!showArchive && <nav aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>}
+    {!showArchive && accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
+    {!showArchive && accountId === null && list && <div className="list-toolbar" aria-label="Управление списком"><button type="button" disabled={changingList} onClick={() => { const name = window.prompt('Новое название списка', list.name); if (name !== null) void updateLocalList('rename', list.id, name) }}>Переименовать список</button><button type="button" disabled={changingList} onClick={() => void updateLocalList('kind', list.id, ('kind' in list && list.kind === 'oneoff') ? 'permanent' : 'oneoff')}>Тип: {'kind' in list && list.kind === 'oneoff' ? 'разовый' : 'постоянный'}</button><button type="button" disabled={changingList || shopping.busy || shopping.loading || rows.length === 0} onClick={() => void completeLocalList()}>Завершить список</button></div>}
     {listError && <p role="alert" className="error">{listError}</p>}
-    <section aria-labelledby="list-title">
+    {showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
       <div className="section-heading"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>
       <form onSubmit={submit}><label htmlFor="item-name">Что нужно купить?</label><div className="input-row"><input id="item-name" value={name} onChange={event => setName(event.target.value)} placeholder="Например, молоко" maxLength={120} autoComplete="off" disabled={shopping.loading || shopping.busy}/><button className="add" disabled={shopping.loading || shopping.busy || !name.trim()} aria-label="Добавить товар">+</button></div></form>
       {shopping.error && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
