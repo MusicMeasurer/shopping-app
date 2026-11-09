@@ -78,6 +78,7 @@ export function useShopping(storage: Storage) {
       setItems(current => current.filter(item => item.listId !== id))
     }),
     completeList: (record: ShoppingListRecord) => {
+      if (!items.some(item => item.listId === record.id)) return Promise.resolve(false)
       const id = crypto.randomUUID(), completedAt = Date.now()
       const snapshot: ArchivedListRecord = { id, sourceListId: record.id, name: record.name, kind: record.kind, completedAt, items: items.filter(item => item.listId === record.id) }
       return mutate(() => storage.completeList(record, id, completedAt), () => {
