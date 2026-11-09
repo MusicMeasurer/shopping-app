@@ -1,1 +1,115 @@
 :root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#203b30;background:#f5f6f2;font-synthesis:none;text-rendering:optimizeLegibility}*{box-sizing:border-box}body{margin:0}button,input{font:inherit}button{cursor:pointer;touch-action:manipulation}button:disabled{cursor:default;opacity:.5}button:focus-visible,input:focus-visible{outline:3px solid #c58a20;outline-offset:3px}main{max-width:660px;margin:auto;padding:calc(32px + env(safe-area-inset-top)) max(20px,env(safe-area-inset-right)) calc(24px + env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left))}.brand{font-size:12px;font-weight:750;letter-spacing:2px;color:#537060}h1{font-size:36px;letter-spacing:-1.5px;margin:14px 0 8px}header p{color:#627068;font-size:15px;line-height:1.6;margin:0}nav{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:28px 0}nav button{border:1px solid #d8dfd6;border-radius:16px;padding:14px 10px;background:#fff;color:#526258;min-height:84px;font-size:14px;font-weight:650}nav span{display:block;font-size:24px;margin-bottom:8px}nav button[aria-pressed=true]{background:#25634c;color:white;border-color:#25634c;box-shadow:0 5px 14px #25634c20}section{border:1px solid #e1e6dd;border-radius:22px;background:white;padding:20px;box-shadow:0 8px 32px #203b3005}.section-heading{display:flex;align-items:center;flex-wrap:wrap;gap:8px;justify-content:space-between;margin-bottom:24px}h2{font-size:20px;margin:0}.count{font-size:12px;white-space:nowrap;background:#eef3eb;border-radius:20px;padding:7px 10px}form>label{display:block;font-size:13px;font-weight:650;margin-bottom:9px}.input-row{display:flex;gap:8px}.input-row input{min-width:0;width:100%;border:1px solid #d8dfd6;border-radius:12px;padding:14px 12px;font-size:16px;background:#fafbf8;color:#203b30}.add{flex-shrink:0;width:50px;min-height:50px;border:0;border-radius:12px;background:#25634c;color:white;font-size:28px}.empty{text-align:center;padding:40px 0 24px}.empty>span{display:inline-grid;place-items:center;width:54px;height:54px;background:#eef3eb;border-radius:50%;font-size:26px;color:#5b7f65}h3{font-size:16px;margin:18px 0 8px}.empty p,footer{font-size:13px;color:#68776d;line-height:1.7}ul{list-style:none;padding:0;margin:20px 0 0}li{display:flex;align-items:center;border-top:1px solid #eef0ea;gap:8px;min-height:62px}.item{display:flex;align-items:center;gap:12px;flex:1;min-width:0;padding:10px 0;cursor:pointer}.item span{overflow-wrap:anywhere;line-height:1.5}.item input{width:24px;height:24px;flex-shrink:0;accent-color:#25634c;margin:0}.purchased .item span{text-decoration:line-through;color:#788579}.delete{border:0;background:transparent;color:#7b655a;font-size:26px;min-width:44px;min-height:44px}.error{margin-top:16px;border-radius:10px;padding:12px;background:#fff0e9;color:#8a3521;font-size:14px}.error button{display:block;margin-top:10px;min-height:44px;border:1px solid currentColor;background:transparent;color:inherit;border-radius:8px}.complete{font-size:14px;color:#25634c}footer{text-align:center;margin:24px 0 0}@media(max-width:360px){main{padding-left:12px;padding-right:12px}section{padding:16px}h1{font-size:32px}}
+
+/* E4 responsive controls */
+nav{grid-template-columns:repeat(auto-fit,minmax(130px,1fr))}
+button,select,textarea{font:inherit}
+textarea,select,.e4-create input,.e4-editor input{width:100%;min-width:0;border:1px solid #d8dfd6;border-radius:12px;padding:12px;background:#fafbf8;color:#203b30;font-size:16px}
+.input-row textarea{flex:1;resize:vertical}
+.e4-actions{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0 20px}
+.e4-actions button,.e4-create button{border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb;color:#203b30;min-height:44px;padding:9px 12px}
+.e4-create,.e4-editor{margin-top:20px}
+.e4-create form,.e4-editor form{display:grid;gap:10px;margin-top:16px}
+.e4-create form>label,.e4-editor form>label{margin:0}
+.e4-small{border:0;background:transparent;min-width:44px;min-height:44px;color:#25634c}
+.archive-entry{border-top:1px solid #eef0ea;padding:14px 0}
+.archive-entry li{min-height:38px}
+
+/* E4 compact list management */
+nav .list-tile{position:relative;min-width:0}
+nav .list-select{width:100%;padding-bottom:42px;overflow-wrap:anywhere}
+nav .list-order{position:absolute;bottom:5px;left:0;right:0;display:flex;justify-content:center;gap:12px}
+nav .list-order button{min-height:36px;min-width:44px;padding:0;border:0;background:transparent;font-size:21px;color:#25634c}
+nav .list-select[aria-pressed=true] + .list-order button{color:#fff}
+.section-heading{position:relative;gap:10px}
+.menu-anchor{position:relative;margin-left:auto}
+.menu-trigger{width:44px;height:44px;border-radius:50%;border:1px solid #d8dfd6;background:#eef3eb;font-size:28px;line-height:1;color:#203b30}
+.list-menu{position:absolute;right:0;top:50px;z-index:10;width:min(280px,calc(100vw - 64px));background:white;border:1px solid #d8dfd6;border-radius:14px;padding:6px;box-shadow:0 12px 36px #203b3030}
+.list-menu button{display:flex;align-items:center;gap:12px;text-align:left;width:100%;min-height:44px;padding:9px 12px;border:0;background:white;color:#203b30;border-radius:9px}
+.list-menu button:hover,.list-menu button:focus-visible{background:#eef3eb}
+.list-menu button>span:first-child{width:20px;text-align:center;font-size:20px}
+.list-menu .menu-check{margin-left:auto;color:#25634c}
+.list-menu .danger{color:#b33333}
+.menu-caption{padding:12px 12px 4px;font-size:11px;font-weight:750;letter-spacing:1px;color:#69766c}
+.menu-separator{height:1px;background:#e8ece6;margin:6px 8px}
+.dialog-backdrop{position:fixed;inset:0;z-index:30;background:#17281f88;display:grid;place-items:center;padding:20px}
+.rename-dialog{width:min(100%,420px);box-shadow:0 16px 48px #17281f44}
+.rename-dialog form{margin-top:18px}
+.rename-input{display:flex;align-items:center;border:1px solid #cbd9cd;border-radius:12px;overflow:hidden;background:#fafbf8}
+.rename-input input{width:100%;min-width:0;border:0;padding:13px;font-size:16px;background:transparent;color:#203b30}
+.rename-input button{flex-shrink:0;width:48px;height:48px;border:0;background:transparent;color:#526258;font-size:23px}
+.dialog-buttons{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+.dialog-buttons button{min-height:44px;padding:9px 14px;border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb;color:#203b30}
+.dialog-buttons button:last-child{background:#25634c;color:white}
+.field-error{color:#a12d26;font-size:13px;line-height:1.5;margin:8px 0 0}
+
+nav .list-tile:has(.menu-anchor){z-index:3}
+nav .menu-anchor{position:absolute;top:6px;right:6px;margin:0}
+nav .menu-trigger{background:#ffffff25;color:white;border-color:#ffffff60;width:36px;height:36px}
+nav .list-menu{color:#203b30}
+
+/* E4 iPhone corrections: true circular trigger, top-layer menu, touch sorting */
+nav .list-tile{touch-action:none;user-select:none;-webkit-user-select:none;transition:transform .14s ease,box-shadow .14s ease}
+nav .list-select{padding-bottom:14px;min-height:112px}
+nav .list-order{display:none}
+nav .list-tile.dragging{opacity:.64;transform:scale(1.035);z-index:8;filter:drop-shadow(0 9px 12px #203b3040)}
+nav .list-tile.drag-over .list-select{outline:3px dashed #2b795a;outline-offset:2px}
+nav .menu-anchor{top:8px;right:8px;width:36px;height:36px;z-index:4}
+nav .menu-trigger{box-sizing:border-box;display:grid;place-items:center;min-width:36px;max-width:36px;width:36px;min-height:36px;max-height:36px;height:36px;aspect-ratio:1;border-radius:50%;padding:0;margin:0;line-height:1;background:#ffffff30;color:#fff;border:1px solid #ffffff80;box-shadow:none}
+nav .menu-trigger span{display:block;font-size:14px;letter-spacing:1px;line-height:1;margin:0;transform:translateY(-1px);white-space:nowrap}
+.menu-dismiss{position:fixed;inset:0;z-index:100;border:0;background:transparent;cursor:default}
+.list-menu{position:fixed;z-index:101;width:280px;max-width:calc(100vw - 24px);max-height:calc(100dvh - 20px);overflow-y:auto;background:white;border:1px solid #d8dfd6;border-radius:14px;padding:6px;box-shadow:0 12px 36px #203b3040;color:#203b30}
+.list-menu button{display:flex;align-items:center;gap:12px;text-align:left;width:100%;min-height:44px;padding:9px 12px;border:0;background:white;color:#203b30;border-radius:9px;font-size:15px;font-weight:600}
+.list-menu button:hover,.list-menu button:focus-visible{background:#eef3eb}
+.list-menu button>span:first-child{width:20px;text-align:center;font-size:20px;margin:0}
+.list-menu .menu-check{margin-left:auto;color:#25634c}
+.list-menu .danger{color:#b33333}
+
+/* iOS Safari: prevent sticky touch-hover flash when a portaled menu closes */
+@media (hover: none) and (pointer: coarse) {
+  .list-menu button:hover { background: #fff; }
+  .list-menu button:active { background: #eef3eb; }
+  nav .list-tile:hover .list-select:not([aria-pressed=true]) { background: #fff; }
+}
+nav .list-tile, nav .list-select, nav .menu-trigger, .list-menu button, .menu-dismiss {
+  -webkit-tap-highlight-color: transparent;
+}
+.menu-dismiss:focus, .menu-dismiss:active { outline: none; background: transparent; }
+
+/* Stage 1: reversible card density, icon placement and app settings */
+header{display:flex;align-items:flex-start;gap:12px}
+header .header-copy{min-width:0;flex:1}
+.settings-trigger{flex:none;display:grid;place-items:center;width:44px;height:44px;margin-top:-7px;padding:0;border:0;border-radius:12px;background:transparent;color:#25634c;font-size:25px;line-height:1}
+.settings-panel{margin-top:16px;padding:16px}
+.settings-panel h2{font-size:18px}
+.settings-panel fieldset{border:0;padding:8px 0;margin:8px 0}
+.settings-panel legend{font-size:13px;font-weight:650}
+.settings-panel label{display:flex;align-items:center;gap:9px;min-height:44px;font-size:14px}
+.settings-panel input{accent-color:#25634c;width:18px;height:18px}
+.settings-panel>button{min-height:44px;padding:8px 14px;border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb}
+nav.lists-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+nav.lists-grid.standard{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+nav.lists-grid .list-select{display:flex;flex-direction:column;align-items:stretch;text-align:left;gap:8px;padding:12px;aspect-ratio:1.48;min-height:0;overflow:hidden}
+nav.lists-grid .list-symbol{display:block;align-self:flex-start;margin:0;font-size:23px;line-height:1.15;transform:translate(-2px,-3px)}
+nav.lists-grid .list-name{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;text-overflow:ellipsis;overflow-wrap:anywhere;line-height:1.25;font-size:14px;margin:0;min-width:0}
+nav.lists-grid.standard .list-select{gap:5px;padding:9px;aspect-ratio:1.48}
+nav.lists-grid.standard .list-symbol{font-size:18px;transform:translate(-2px,-2px)}
+nav.lists-grid.standard .list-name{font-size:10.5px}
+nav.lists-grid.standard .menu-anchor{top:5px;right:5px}
+nav.lists-grid.standard .menu-trigger{width:30px;min-width:30px;max-width:30px;height:30px;min-height:30px;max-height:30px}
+nav.lists-grid.standard .menu-trigger span{font-size:12px}
+@media(max-width:360px){nav.lists-grid.standard .list-select{padding:7px}nav.lists-grid.standard .list-name{font-size:10px}}
+
+/* Stage 2: subtle two-page indicator */
+.section-switch{display:flex;justify-content:center;align-items:center;gap:5px;margin:-8px 0 20px}
+.section-switch button{border:0;background:transparent;min-width:44px;min-height:44px;padding:0;color:#c8d6cb;font-size:12px;line-height:1;-webkit-tap-highlight-color:transparent}
+.section-switch button.current{color:#25634c;font-size:16px}
+
+/* Stage 3: add-list tile and compact dialog */
+nav.lists-grid .create-list-tile{border:1px dashed #9ab8a4;background:#eef3eb;color:#25634c;justify-content:center;align-items:center;text-align:center;gap:3px}
+nav.lists-grid .create-plus{font-size:35px;line-height:1;font-weight:350;margin:0}
+nav.lists-grid.standard .create-plus{font-size:28px}
+nav.lists-grid .create-list-tile .list-name{font-size:12px;text-align:center}
+nav.lists-grid.standard .create-list-tile .list-name{font-size:10px}
+.create-dialog form{display:grid;gap:10px}
+.create-dialog form>label{margin:4px 0 0}
+.create-dialog input,.create-dialog select{width:100%;min-width:0;border:1px solid #d8dfd6;border-radius:12px;padding:12px;background:#fafbf8;color:#203b30;font-size:16px}
