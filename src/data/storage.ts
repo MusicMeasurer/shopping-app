@@ -64,6 +64,23 @@ export function createStorage(name = 'shopping-app') {
   return {
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
+    async renameList(listId: string, name: string): Promise<void> {
+      const trimmed = name.trim()
+      if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+      const tx = (await database).transaction('lists', 'readwrite')
+      const list = await tx.store.get(listId)
+      if (!list) { await tx.done; throw new Error('Список не найден') }
+      await tx.store.put({ ...list, name: trimmed })
+      await tx.done
+    },
+    async changeListKind(listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
+      if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
+      const tx = (await database).transaction('lists', 'readwrite')
+      const list = await tx.store.get(listId)
+      if (!list) { await tx.done; throw new Error('Список не найден') }
+      await tx.store.put({ ...list, kind })
+      await tx.done
+    },
     async reorderLists(records: ShoppingListRecord[]): Promise<void> {
       const tx = (await database).transaction('lists', 'readwrite')
       for (const record of records) await tx.store.put(record)
