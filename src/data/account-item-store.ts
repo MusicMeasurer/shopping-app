@@ -22,4 +22,4 @@ export function itemStoreForAccount(storage: Storage, accountId: string | null) 
       : storage.removeAccountItem(accountId, id),
   }
 }
-export type ItemStore = ReturnType<typeof itemStoreForAccount>
+export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'save' | 'remove'> & { saveMany?: (items: Item[]) => Promise<void> }
