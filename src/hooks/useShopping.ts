@@ -1,32 +1,91 @@
 import { useEffect, useRef, useState } from 'react'
-import { createItem, type Item, type ListId } from '../domain/shopping'
-import type { Storage } from '../data/storage'
+import { createItem, parseItems, validateName, type Item, type ListId } from '../domain/shopping'
+import type { Storage, ShoppingListRecord, ArchivedListRecord } from '../data/storage'
+import { moveList, placeList, orderLists, orderArchives } from '../domain/ordering'
 export function useShopping(storage: Storage) {
   const [items, setItems] = useState<Item[]>([])
+  const [lists, setLists] = useState<ShoppingListRecord[]>([])
+  const [archives, setArchives] = useState<ArchivedListRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const locked = useRef(false)
   const reload = async () => {
     setLoading(true)
-    try { setItems(await storage.read()); setError('') }
-    catch { setError('Не удалось открыть сохранённые списки. Проверьте настройки браузера и повторите попытку.') }
+    try {
+      const [nextItems, nextLists, nextArchives] = await Promise.all([storage.read(), storage.readLists(), storage.readArchives()])
+      setItems(nextItems); setLists(orderLists(nextLists)); setArchives(orderArchives(nextArchives)); setError('')
+    } catch { setError('Не удалось открыть сохранённые списки. Проверьте настройки браузера и повторите попытку.') }
     finally { setLoading(false) }
   }
   useEffect(() => { void reload() }, [storage])
-  async function mutate(action: () => Promise<void>, update: (current: Item[]) => Item[]) {
+  async function mutate(action: () => Promise<void>, update: () => void) {
     if (locked.current || loading) return false
     locked.current = true; setBusy(true); setError('')
-    try { await action(); setItems(update); return true }
+    try { await action(); update(); return true }
     catch { setError('Не удалось сохранить изменение. Данные на экране не изменены. Попробуйте ещё раз.'); return false }
     finally { locked.current = false; setBusy(false) }
   }
-  return { items, loading, busy, error, reload,
-    add: async (listId: ListId, name: string) => {
-      try { const item = createItem(listId, name); return await mutate(() => storage.save(item), current => [...current, item]) }
-      catch (error) { setError((error as Error).message); return false }
+  return { items, lists, archives, loading, busy, error, reload,
+    moveList: (id: string, direction: -1 | 1) => {
+      const next = moveList(lists, id, direction)
+      if (next.every((row, index) => row.id === lists[index]?.id)) return Promise.resolve(true)
+      return mutate(() => storage.reorderLists(next), () => setLists(next))
     },
-    toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },
-    remove: (id: string) => mutate(() => storage.remove(id), current => current.filter(item => item.id !== id)),
+    placeList: (id: string, targetId: string) => {
+      const next = placeList(lists, id, targetId)
+      if (next.every((row, index) => row.id === lists[index]?.id)) return Promise.resolve(true)
+      return mutate(() => storage.reorderLists(next), () => setLists(next))
+    },
+    add: async (listId: ListId, name: string) => {
+      try {
+        const next = parseItems(name).map(entry => ({ ...createItem(listId, entry.name), quantity: entry.quantity, unit: entry.unit }))
+        return await mutate(() => storage.saveItems(next), () => setItems(current => [...current, ...next]))
+      } catch (error) { setError((error as Error).message); return false }
+    },
+    toggle: (item: Item) => {
+      const updated = { ...item, purchased: !item.purchased }
+      return mutate(() => storage.save(updated), () => setItems(current => current.map(row => row.id === item.id ? updated : row)))
+    },
+    edit: async (item: Item, name: string, quantity?: number, unit?: string) => {
+      try {
+        const updated = { ...item, name: validateName(name), quantity, unit: unit?.trim() || undefined }
+        if (quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0)) throw new Error('Количество должно быть положительным.')
+        return await mutate(() => storage.save(updated), () => setItems(current => current.map(row => row.id === item.id ? updated : row)))
+      } catch (error) { setError((error as Error).message); return false }
+    },
+    remove: (id: string) => mutate(() => storage.remove(id), () => setItems(current => current.filter(item => item.id !== id))),
+    createList: async (name: string, kind: 'permanent' | 'oneoff') => {
+      try {
+        const record: ShoppingListRecord = { id: crypto.randomUUID(), name: validateName(name), symbol: '🛒', kind, createdAt: Date.now() }
+        const ok = await mutate(() => storage.saveList(record), () => setLists(current => orderLists([...current, record])))
+        return ok ? record.id : null
+      } catch (error) { setError((error as Error).message); return null }
+    },
+    renameList: async (record: ShoppingListRecord, name: string) => {
+      try {
+        const updated = { ...record, name: validateName(name) }
+        return await mutate(() => storage.saveList(updated), () => setLists(current => current.map(row => row.id === record.id ? updated : row)))
+      } catch (error) { setError((error as Error).message); return false }
+    },
+    changeListKind: (record: ShoppingListRecord, kind: 'permanent' | 'oneoff') => {
+      if (record.kind === kind) return Promise.resolve(true)
+      const updated = { ...record, kind }
+      return mutate(() => storage.saveList(updated), () => setLists(current => current.map(row => row.id === record.id ? updated : row)))
+    },
+    deleteList: (id: string) => mutate(() => storage.deleteList(id), () => {
+      setLists(current => current.filter(row => row.id !== id))
+      setItems(current => current.filter(item => item.listId !== id))
+    }),
+    completeList: (record: ShoppingListRecord) => {
+      if (!items.some(item => item.listId === record.id)) return Promise.resolve(false)
+      const id = crypto.randomUUID(), completedAt = Date.now()
+      const snapshot: ArchivedListRecord = { id, sourceListId: record.id, name: record.name, kind: record.kind, completedAt, items: items.filter(item => item.listId === record.id) }
+      return mutate(() => storage.completeList(record, id, completedAt), () => {
+        setArchives(current => orderArchives([...current, snapshot]))
+        setItems(current => current.filter(item => item.listId !== record.id))
+        if (record.kind === 'oneoff') setLists(current => current.filter(row => row.id !== record.id))
+      })
+    },
   }
 }
