@@ -92,30 +92,21 @@ test('E4: reorder and rename persist after reload', async ({ page }) => {
   const first = await cards.nth(0).boundingBox()
   const second = await cards.nth(1).boundingBox()
   if (!first || !second) throw new Error('List cards are not visible')
-  // WebKit's mobile mouse API does not reproduce a finger long-press.
-  // Exercise the same React pointer handlers with a touch pointer on mobile.
-  if (test.info().project.name === 'iphone-webkit') {
-    await page.evaluate(async ({ first, second }) => {
-      const source = document.querySelector<HTMLElement>('nav .list-tile')
-      if (!source) throw new Error('Missing draggable tile')
-      const pointerId = 17
-      const dispatch = (type: string, x: number, y: number) => {
-        const event = new PointerEvent(type, { bubbles: true, cancelable: true, pointerId, pointerType: 'touch', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })
-        source.dispatchEvent(event)
-      }
-      const x = first.x + 45, y = first.y + first.height / 2
-      dispatch('pointerdown', x, y)
-      await new Promise(resolve => setTimeout(resolve, 450))
-      dispatch('pointermove', second.x + 45, second.y + second.height / 2)
-      dispatch('pointerup', second.x + 45, second.y + second.height / 2)
-    }, { first, second })
-  } else {
-    await page.mouse.move(first.x + 45, first.y + first.height / 2)
-    await page.mouse.down()
-    await page.waitForTimeout(450)
-    await page.mouse.move(second.x + 45, second.y + second.height / 2, { steps: 8 })
-    await page.mouse.up()
-  }
+  // Both mobile projects must exercise identical touch-pointer semantics.
+  await page.evaluate(async ({ first, second }) => {
+    const source = document.querySelector<HTMLElement>('nav .list-tile')
+    if (!source) throw new Error('Missing draggable tile')
+    const pointerId = 17
+    const dispatch = (type: string, x: number, y: number) => {
+      const event = new PointerEvent(type, { bubbles: true, cancelable: true, pointerId, pointerType: 'touch', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })
+      source.dispatchEvent(event)
+    }
+    const x = first.x + 45, y = first.y + first.height / 2
+    dispatch('pointerdown', x, y)
+    await new Promise(resolve => setTimeout(resolve, 450))
+    dispatch('pointermove', second.x + 45, second.y + second.height / 2)
+    dispatch('pointerup', second.x + 45, second.y + second.height / 2)
+  }, { first, second })
   await expect(page.locator('nav .list-select').first()).toContainText('Хозяйственные покупки')
   await page.reload()
   await expect(page.locator('nav .list-select').first()).toContainText('Хозяйственные покупки')
