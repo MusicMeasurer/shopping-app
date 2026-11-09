@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import type { Item } from '../domain/shopping'
+import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
 interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string }
@@ -32,7 +32,7 @@ function accountKey(accountId: string, operationId: string): string {
 }
 export function createStorage(name = 'shopping-app') {
   const database = openDB<ShoppingDB>(name, 7, {
-    upgrade(db) {
+    upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
       if (!db.objectStoreNames.contains('accountOperations')) {
@@ -52,8 +52,12 @@ export function createStorage(name = 'shopping-app') {
         store.createIndex('byAccount', 'accountId')
       }
       // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
-      if (!db.objectStoreNames.contains('lists')) db.createObjectStore('lists', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('lists')) {
+        db.createObjectStore('lists', { keyPath: 'id' })
+        for (const list of defaultLists) void tx.objectStore('lists').put({ ...list, kind: 'permanent', createdAt: 0 })
+      }
       if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
+
     },
     blocking() { void database.then(db => db.close()) },
   })
@@ -63,6 +67,11 @@ export function createStorage(name = 'shopping-app') {
     async reorderLists(records: ShoppingListRecord[]): Promise<void> {
       const tx = (await database).transaction('lists', 'readwrite')
       for (const record of records) await tx.store.put(record)
+      await tx.done
+    },
+    async saveItems(items: Item[]): Promise<void> {
+      const tx = (await database).transaction('items', 'readwrite')
+      for (const item of items) await tx.store.put(item)
       await tx.done
     },
     async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
