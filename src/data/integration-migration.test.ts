@@ -45,4 +45,42 @@ describe('E3/E4 additive migration to v7', () => {
     expect((await storage.readLists()).length).toBe(1)
     await storage.close()
   })
+  it('does not restore removed E4 defaults on a later upgrade', async () => {
+    const name = unique()
+    const db = await openDB(name, 3, { upgrade(db) {
+      db.createObjectStore('items', { keyPath: 'id' })
+      db.createObjectStore('lists', { keyPath: 'id' })
+      db.createObjectStore('archives', { keyPath: 'id' })
+    } })
+    db.close()
+    const storage = createStorage(name)
+    expect(await storage.readLists()).toEqual([])
+    await storage.close()
+  })
+  it('archives guest list atomically without touching account-owned items', async () => {
+    const name = unique()
+    const storage = createStorage(name)
+    const list = { id: 'trip', name: 'Поездка', symbol: '🚗', kind: 'oneoff' as const, createdAt: 1 }
+    const item = { id: 'guest-trip', listId: 'trip', name: 'Вода', purchased: false, createdAt: 2 }
+    await storage.saveList(list)
+    await storage.saveItems([item])
+    await storage.saveAccountItem('account-1', { ...item, id: 'account-trip' })
+    await storage.completeList(list, 'archive-trip', 3)
+    expect(await storage.read()).toEqual([])
+    expect((await storage.readArchives())[0].items).toEqual([item])
+    expect((await storage.readLists()).some(x => x.id === 'trip')).toBe(false)
+    expect((await storage.readAccountItems('account-1')).map(x => x.id)).toEqual(['account-trip'])
+    await storage.close()
+  })
+  it('rejects completion of empty list without writing an archive', async () => {
+    const name = unique()
+    const storage = createStorage(name)
+    const list = { id: 'empty', name: 'Пустой', symbol: '📋', kind: 'oneoff' as const, createdAt: 1 }
+    await storage.saveList(list)
+    await expect(storage.completeList(list, 'archive-empty', 2)).rejects.toThrow()
+    expect(await storage.readArchives()).toEqual([])
+    expect((await storage.readLists()).some(x => x.id === 'empty')).toBe(true)
+    await storage.close()
+  })
+
 })
