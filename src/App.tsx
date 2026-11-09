@@ -53,7 +53,7 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
       setListError(null)
       await shopping.reload()
-      if (list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
+      if ('kind' in list && list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
