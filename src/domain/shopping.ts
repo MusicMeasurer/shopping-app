@@ -21,7 +21,7 @@ export function itemsForList(items: Item[], listId: ListId): Item[] {
 // E4 parsing is additive: existing E3 item names and cloud item contracts remain intact.
 export interface ParsedItem { name: string; quantity?: number; unit?: string }
 const units = 'кг|г|л|мл|шт|уп|упак|пач|бут|бан|kg|g|l|ml|pcs|pc'
-const quantitySuffix = new RegExp('^(.+?)\\\\s+(\\\\d+(?:[.,]\\\\d+)?)\\\\s+(' + units + ')$', 'iu')
+const quantitySuffix = new RegExp('^(.+?)\\s+(\\d+(?:[.,]\\d+)?)\\s+(' + units + ')$', 'iu')
 export function parseItem(line: string): ParsedItem {
   const raw = normalizeItemName(line)
   const match = raw.match(quantitySuffix)
