@@ -33,7 +33,7 @@ export function parseItem(line: string): ParsedItem {
   return { name, quantity, unit: match[3] }
 }
 export function parseItems(text: string): ParsedItem[] {
-  const lines = text.split(/\\r?\\n/).map(line => line.trim()).filter(Boolean)
+  const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean)
   if (!lines.length) throw new Error('Введите хотя бы один товар.')
   return lines.map(parseItem)
 }
