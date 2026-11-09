@@ -164,7 +164,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await page.reload()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('radio', { name: /Крупный/ }).check()
+  await page.getByRole('radio', { name: 'Крупный (2 в ряд)', exact: true }).check()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
 })
 
