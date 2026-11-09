@@ -32,22 +32,22 @@ function accountKey(accountId: string, operationId: string): string {
 }
 export function createStorage(name = 'shopping-app') {
   const database = openDB<ShoppingDB>(name, 7, {
-    upgrade(db, oldVersion) {
-      if (oldVersion < 1) db.createObjectStore('items', { keyPath: 'id' })
-      if (oldVersion < 2) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
-      if (oldVersion < 3) {
+    upgrade(db) {
+      if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      if (!db.objectStoreNames.contains('accountOperations')) {
         const store = db.createObjectStore('accountOperations', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 4) {
+      if (!db.objectStoreNames.contains('accountItems')) {
         const store = db.createObjectStore('accountItems', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 5) {
+      if (!db.objectStoreNames.contains('accountListMappings')) {
         const store = db.createObjectStore('accountListMappings', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 6) {
+      if (!db.objectStoreNames.contains('accountItemVersions')) {
         const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
