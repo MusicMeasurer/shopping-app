@@ -226,7 +226,7 @@ test('E4: card and content sizing are independent', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   await page.getByRole('radio', { name: /Стандартный \(3 в ряд\)/ }).check()
-  await page.getByRole('radio', { name: 'Крупный', exact: true }).check()
+  await page.locator('input[name="content-size"][type="radio"]').last().check()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await expect(page.locator('main')).toHaveClass(/content-large/)
   await page.reload()
