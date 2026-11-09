@@ -10,7 +10,15 @@ interface ScopedOperation {
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
+export interface ShoppingListRecord {
+  id: string; name: string; symbol: string; kind: 'permanent' | 'oneoff'; createdAt: number; position?: number
+}
+export interface ArchivedListRecord {
+  id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
+}
 interface ShoppingDB extends DBSchema {
+  lists: { key: string; value: ShoppingListRecord }
+  archives: { key: string; value: ArchivedListRecord }
   items: { key: string; value: Item }
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
@@ -23,7 +31,7 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 6, {
+  const database = openDB<ShoppingDB>(name, 7, {
     upgrade(db, oldVersion) {
       if (oldVersion < 1) db.createObjectStore('items', { keyPath: 'id' })
       if (oldVersion < 2) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -43,10 +51,37 @@ export function createStorage(name = 'shopping-app') {
         const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
+      // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
+      if (!db.objectStoreNames.contains('lists')) db.createObjectStore('lists', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
     },
     blocking() { void database.then(db => db.close()) },
   })
   return {
+    async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
+    async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
+    async reorderLists(records: ShoppingListRecord[]): Promise<void> {
+      const tx = (await database).transaction('lists', 'readwrite')
+      for (const record of records) await tx.store.put(record)
+      await tx.done
+    },
+    async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
+    async deleteList(listId: string): Promise<void> {
+      const tx = (await database).transaction(['lists', 'items'], 'readwrite')
+      const items = await tx.objectStore('items').getAll()
+      for (const item of items) if (item.listId === listId) await tx.objectStore('items').delete(item.id)
+      await tx.objectStore('lists').delete(listId)
+      await tx.done
+    },
+    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
+      const tx = (await database).transaction(['lists', 'items', 'archives'], 'readwrite')
+      const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
+      if (!items.length) { tx.abort(); throw new Error('Cannot archive an empty list') }
+      await tx.objectStore('archives').add({ id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items })
+      for (const item of items) await tx.objectStore('items').delete(item.id)
+      if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
+      await tx.done
+    },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
     async save(item: Item) { await (await database).put('items', item) },
     async remove(id: string) { await (await database).delete('items', id) },
