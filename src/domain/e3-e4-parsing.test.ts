@@ -4,8 +4,8 @@ import { normalizeItemName, parseItem, parseItems, validateName } from './shoppi
 describe('E3/E4 shared input contracts', () => {
   it('retains E3 trimming and validation', () => {
     expect(normalizeItemName('  Молоко  ')).toBe('Молоко')
-    expect(validateName('  ')).toThrow()
-    expect(validateName('x'.repeat(121))).toThrow()
+    expect(() => validateName('  ')).toThrow()
+    expect(() => validateName('x'.repeat(121))).toThrow()
   })
   it('parses quantity and units with comma or dot', () => {
     expect(parseItem('Молоко 2 л')).toEqual({ name: 'Молоко', quantity: 2, unit: 'л' })
