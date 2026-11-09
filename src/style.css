@@ -132,3 +132,17 @@ nav.lists-grid{margin-top:8px}
 .app-shell.large section[aria-labelledby="list-title"] h2{font-size:24px}
 .app-shell.large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
 @media(max-width:380px){.list-toolbar button{width:30px;min-width:30px;height:36px;font-size:19px}.section-heading{gap:5px}}
+
+/* E4: independent content accessibility setting */
+.app-shell.content-standard section[aria-labelledby="list-title"]{line-height:1.2}
+.app-shell.content-standard section[aria-labelledby="list-title"] .item span{line-height:1.2;font-size:1em}
+.app-shell.content-standard section[aria-labelledby="list-title"] li{min-height:54px}
+.app-shell.content-standard section[aria-labelledby="list-title"] .item{padding:8px 0}
+.app-shell.content-standard section[aria-labelledby="list-title"] h2{font-size:20px}
+.app-shell.content-large section[aria-labelledby="list-title"]{font-size:1.2em}
+.app-shell.content-large section[aria-labelledby="list-title"] h2{font-size:24px}
+.app-shell.content-large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
+nav.lists-grid .list-select:not(.create-list-tile){display:grid;grid-template-rows:auto minmax(0,1fr);align-items:stretch}
+nav.lists-grid .list-name-wrap{display:flex;align-items:center;min-height:0;min-width:0;overflow:hidden}
+nav.lists-grid .list-name-wrap .list-name{margin:0}
+.list-toolbar button svg{display:block;flex:none}
