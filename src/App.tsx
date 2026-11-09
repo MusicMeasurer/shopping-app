@@ -14,6 +14,7 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
   const [listError, setListError] = useState<string | null>(null)
   const [newListName, setNewListName] = useState('')
   const [creatingList, setCreatingList] = useState(false)
+  const [changingList, setChangingList] = useState(false)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
@@ -22,6 +23,17 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
     })
     return () => { cancelled = true }
   }, [storage, accountId])
+  async function updateLocalList(action: 'rename' | 'kind', listId: string, value: string) {
+    if (accountId !== null || changingList) return
+    setChangingList(true)
+    try {
+      if (action === 'rename') await storage.renameList(listId, value)
+      else await storage.changeListKind(listId, value as ShoppingListRecord['kind'])
+      setLocalLists(await storage.readLists())
+      setListError(null)
+    } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить список') }
+    finally { setChangingList(false) }
+  }
   const visibleLists = accountId === null && localLists !== null ? localLists : lists
   useEffect(() => {
     if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
@@ -63,6 +75,7 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
     <header><div className="brand">ПОКУПКИ · v0.0.1</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
     <nav aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>
     {accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
+    {accountId === null && list && <div className="list-toolbar" aria-label="Управление списком"><button type="button" disabled={changingList} onClick={() => { const name = window.prompt('Новое название списка', list.name); if (name !== null) void updateLocalList('rename', list.id, name) }}>Переименовать список</button><button type="button" disabled={changingList} onClick={() => void updateLocalList('kind', list.id, ('kind' in list && list.kind === 'oneoff') ? 'permanent' : 'oneoff')}>Тип: {'kind' in list && list.kind === 'oneoff' ? 'разовый' : 'постоянный'}</button></div>}
     {listError && <p role="alert" className="error">{listError}</p>}
     <section aria-labelledby="list-title">
       <div className="section-heading"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>
