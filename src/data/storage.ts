@@ -84,12 +84,15 @@ export function createStorage(name = 'shopping-app') {
     },
     async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
       const tx = (await database).transaction(['lists', 'items', 'archives'], 'readwrite')
+      // Observe transaction rejection before abort; otherwise idb tx.done can become unhandled.
+      const completion = tx.done
+      void completion.catch(() => {})
       const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
-      if (!items.length) { tx.abort(); throw new Error('Cannot archive an empty list') }
+      if (!items.length) { tx.abort(); await completion.catch(() => {}); throw new Error('Cannot archive an empty list') }
       await tx.objectStore('archives').add({ id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items })
       for (const item of items) await tx.objectStore('items').delete(item.id)
       if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
-      await tx.done
+      await completion
     },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
     async save(item: Item) { await (await database).put('items', item) },
