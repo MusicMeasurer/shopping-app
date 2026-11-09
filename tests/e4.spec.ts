@@ -246,7 +246,8 @@ test('E4 acceptance: editing preserves purchase state and optional fields can be
   await page.goto('/shopping-app/')
   await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Молоко 2 л')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
-  await page.getByRole('checkbox', { name: 'Молоко' }).check()
+  await page.getByRole('checkbox', { name: 'Молоко' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
   await page.getByRole('button', { name: 'Изменить Молоко' }).click()
   await page.getByLabel('Название', { exact: true }).fill('Кефир')
   await page.getByLabel('Количество').fill('')
@@ -271,6 +272,7 @@ test('E4 acceptance: cancelled completion does not change active list or archive
   await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(page.getByText('Архив пока пуст.')).toBeVisible()
   await page.reload()
+  await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(page.getByText('Архив пока пуст.')).toBeVisible()
 })
 
@@ -294,6 +296,7 @@ test('E4 acceptance: deleting active list preserves its completed archive histor
   await expect(page.getByText('Кофе — 2 уп')).toBeVisible()
   await expect(page.getByText('Сахар')).toHaveCount(0)
   await page.reload()
+  await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(page.getByRole('heading', { name: 'Список для удаления' })).toBeVisible()
 })
 
