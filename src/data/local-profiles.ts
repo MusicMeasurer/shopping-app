@@ -33,6 +33,8 @@ export function bindProfile(registry: LocalProfileRegistry, profileId: string, v
 /** Never reuse an existing profile ID or silently replace its contents. */
 export function addProfile(registry: LocalProfileRegistry, profile: LocalProfile): LocalProfileRegistry {
   if (!profile.id.trim() || registry.profiles.some(p => p.id === profile.id)) throw new Error('Duplicate or empty local profile ID')
+  if (!Number.isFinite(profile.createdAt)) throw new Error('Valid profile creation timestamp required')
+  if (profile.cloudAccountId !== null && !profile.cloudAccountId.trim()) throw new Error('Valid cloud account identity required')
   if (profile.cloudAccountId && registry.profiles.some(p => p.cloudAccountId === profile.cloudAccountId)) throw new Error('Duplicate cloud account')
   return { profiles: [...registry.profiles, profile], activeProfileId: profile.id }
 }
