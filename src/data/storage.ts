@@ -40,7 +40,7 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 9, {
+  const database = openDB<ShoppingDB>(name, 10, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -78,6 +78,9 @@ export function createStorage(name = 'shopping-app') {
       if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
 
     },
+    // A v10 versionchange forces cooperative v9 clients to close; v9 clients
+    // cannot reopen after the upgrade. Uncooperative older connections block
+    // the upgrade, so cutover cannot start while they still hold the database.
     blocking() { void database.then(db => db.close()) },
   })
   /** The fence is checked inside the SAME readwrite transaction as a legacy mutation.
