@@ -195,10 +195,27 @@ export function createStorage(name = 'shopping-app') {
         const migration = await tx.objectStore('profileMigrations').get('legacy-guest-v1')
         if (!original || original.cloudAccountId !== null || !migration ||
             migration.profileId !== original.id) throw new Error('Original guest migration missing or ambiguous')
-        const matching = <T extends { id: string }>(source: T[], scoped: ProfileOwnedRecord<T>[]) =>
-          source.length === scoped.length && source.every(row =>
-            scoped.some(entry => entry.key === JSON.stringify([original.id, row.id]) &&
-              JSON.stringify(entry.record) === JSON.stringify(row)))
+        // Late legacy-only additions can be replayed safely. Conflicting edits,
+        // deletions, or profile-side edits are ambiguous and block cutover.
+        // All reconciliation and the fence marker share one readwrite transaction.
+        const reconcile = async <T extends { id: string }>(
+          source: T[], scoped: ProfileOwnedRecord<T>[],
+          store: 'profileLists' | 'profileItems' | 'profileArchives',
+        ) => {
+          const byId = new Map(source.map(row => [row.id, row]))
+          for (const entry of scoped) {
+            const legacy = byId.get(entry.record.id)
+            if (!legacy || entry.key !== JSON.stringify([original.id, entry.record.id]) ||
+                JSON.stringify(legacy) !== JSON.stringify(entry.record)) {
+              throw new Error('Legacy guest data conflicts with profile snapshot; cutover blocked')
+            }
+          }
+          const copied = new Set(scoped.map(row => row.record.id))
+          for (const row of source) if (!copied.has(row.id)) {
+            const key = JSON.stringify([original.id, row.id])
+            await tx.objectStore(store).add({ key, profileId: original.id, record: row })
+          }
+        }
         const lists = await tx.objectStore('lists').getAll()
         const profileLists = await tx.objectStore('profileLists').index('byProfile').getAll(original.id)
         const items = await tx.objectStore('items').getAll()
@@ -207,13 +224,21 @@ export function createStorage(name = 'shopping-app') {
         const profileArchives = await tx.objectStore('profileArchives').index('byProfile').getAll(original.id)
         const pending = await tx.objectStore('pendingOperations').getAll()
         const profilePending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(original.id)
-        if (!matching(lists, profileLists) || !matching(items, profileItems) ||
-            !matching(archives, profileArchives) ||
-            pending.length !== profilePending.length ||
-            !pending.every(row => profilePending.some(entry =>
-              entry.key === JSON.stringify([original.id, row.operationId]) &&
-              JSON.stringify(entry.record) === JSON.stringify(row)))) {
-          throw new Error('Legacy guest data differs from profile snapshot; cutover blocked')
+        await reconcile(lists, profileLists, 'profileLists')
+        await reconcile(items, profileItems, 'profileItems')
+        await reconcile(archives, profileArchives, 'profileArchives')
+        const legacyQueue = new Map(pending.map(row => [row.operationId, row]))
+        for (const entry of profilePending) {
+          const legacy = legacyQueue.get(entry.record.operationId)
+          if (!legacy || entry.key !== JSON.stringify([original.id, entry.record.operationId]) ||
+              JSON.stringify(legacy) !== JSON.stringify(entry.record)) {
+            throw new Error('Legacy pending operations conflict with profile snapshot; cutover blocked')
+          }
+        }
+        const copiedOperations = new Set(profilePending.map(row => row.record.operationId))
+        for (const row of pending) if (!copiedOperations.has(row.operationId)) {
+          const key = JSON.stringify([original.id, row.operationId])
+          await tx.objectStore('profilePendingOperations').add({ key, profileId: original.id, record: row })
         }
         const existing = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (existing && existing.profileId !== original.id) throw new Error('Cutover ownership mismatch')
