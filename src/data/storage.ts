@@ -213,7 +213,7 @@ export function createStorage(name = 'shopping-app') {
           const copied = new Set(scoped.map(row => row.record.id))
           for (const row of source) if (!copied.has(row.id)) {
             const key = JSON.stringify([original.id, row.id])
-            await tx.objectStore(store).add({ key, profileId: original.id, record: row })
+            await tx.objectStore(store).add({ key, profileId: original.id, record: row as ShoppingListRecord & Item & ArchivedListRecord })
           }
         }
         const lists = await tx.objectStore('lists').getAll()
