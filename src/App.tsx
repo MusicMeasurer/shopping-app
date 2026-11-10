@@ -21,7 +21,9 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
       if (cancelled) return
       if (id && (!profiles || !profiles.profiles.some(p => p.id === id))) throw new Error('Cutover profile missing')
       setRegistry(profiles)
-      setGuestProfile(id ? (profiles?.activeProfileId ?? id) : null)
+      const active = profiles?.profiles.find(p => p.id === profiles.activeProfileId)
+      // A guest session must never expose a cloud-bound profile without verification.
+      setGuestProfile(id ? (active?.cloudAccountId === null ? active.id : id) : null)
     }).catch(() => {
       if (!cancelled) setStartupError('Не удалось определить хранилище покупок. Изменения заблокированы.')
     })
