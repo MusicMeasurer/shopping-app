@@ -218,6 +218,7 @@ it('keeps two profile item namespaces separate and preserves the original after 
   expect(registry).not.toBeNull()
   const friendId = crypto.randomUUID()
   await expect(storage.saveProfileItem(friendId, friend)).rejects.toThrow('Unknown local profile')
+  await storage.markGuestCutoverReady()
   await storage.createLocalProfile(friendId, Date.now())
   await storage.saveProfileItem(friendId, friend)
   expect(await storage.readProfileItems(friendId)).toEqual([friend])
@@ -250,6 +251,7 @@ it('scopes list changes and archive completion to one profile', async () => {
   const storage = createStorage('scoped-archive-' + crypto.randomUUID())
   const owner = await storage.migrateLegacyGuestToProfile()
   const friend = crypto.randomUUID()
+  await storage.markGuestCutoverReady()
   await storage.createLocalProfile(friend, Date.now())
   const item = createItem('groceries', 'Друг покупает молоко')
   const friendList = { id: 'groceries', name: 'Список друга', symbol: '🛒', kind: 'oneoff' as const, createdAt: 1 }
