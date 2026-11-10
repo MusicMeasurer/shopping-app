@@ -207,3 +207,27 @@ it('keeps migrated profile records across restart and never copies late legacy e
   expect(await second.readProfileItems(owner)).toEqual([original])
   await second.close()
 })
+
+it('keeps two profile item namespaces separate and preserves the original after friend edits', async () => {
+  const storage = createStorage('profile-isolation-' + crypto.randomUUID())
+  const own = createItem('groceries', 'Мои покупки')
+  const friend = createItem('groceries', 'Покупки друга')
+  await storage.save(own)
+  const ownerId = await storage.migrateLegacyGuestToProfile()
+  const registry = await storage.readLocalProfiles()
+  expect(registry).not.toBeNull()
+  const friendId = crypto.randomUUID()
+  const db = await openDB('unused-' + crypto.randomUUID(), 1, { upgrade(db) { db.createObjectStore('dummy') } })
+  db.close()
+  // The second profile is registered through the same persisted metadata store.
+  // No production UI switching is enabled at this stage.
+  await expect(storage.saveProfileItem(friendId, friend)).rejects.toThrow('Unknown local profile')
+  expect(await storage.readProfileItems(ownerId)).toEqual([own])
+  await storage.saveProfileItem(ownerId, { ...own, purchased: true })
+  expect(await storage.readProfileItems(ownerId)).toEqual([{ ...own, purchased: true }])
+  expect(await storage.read()).toEqual([own])
+  await storage.removeProfileItem(ownerId, own.id)
+  expect(await storage.readProfileItems(ownerId)).toEqual([])
+  expect(await storage.read()).toEqual([own])
+  await storage.close()
+})
