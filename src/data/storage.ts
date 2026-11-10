@@ -455,50 +455,64 @@ export function createStorage(name = 'shopping-app') {
       return (await (await database).getAllFromIndex('profilePendingOperations', 'byProfile', profileId)).map(row => row.record)
     },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
-    async saveList(list: ShoppingListRecord): Promise<void> { await legacyMutation(['lists'], async tx => { await tx.objectStore('lists').put(list) }) },
+    async saveList(list: ShoppingListRecord): Promise<void> {
+      await legacyMutation(['lists'], async tx => { await tx.objectStore('lists').put(list) })
+    },
     async renameList(listId: string, name: string): Promise<void> {
       const trimmed = name.trim()
       if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
-      return legacyMutation(['lists'], async tx => {
-      const list = await tx.objectStore('lists').get(listId)
-      if (!list) throw new Error('Список не найден')
-      await tx.objectStore('lists').put({ ...list, name: trimmed })
+      await legacyMutation(['lists'], async tx => {
+        const store = tx.objectStore('lists')
+        const list = await store.get(listId)
+        if (!list) throw new Error('Список не найден')
+        await store.put({ ...list, name: trimmed })
       })
     },
     async changeListKind(listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
       if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
-      const tx = (await database).transaction('lists', 'readwrite')
-      const list = await tx.store.get(listId)
-      if (!list) throw new Error('Список не найден')
-      await tx.objectStore('lists').put({ ...list, kind })
+      await legacyMutation(['lists'], async tx => {
+        const store = tx.objectStore('lists')
+        const list = await store.get(listId)
+        if (!list) throw new Error('Список не найден')
+        await store.put({ ...list, kind })
       })
     },
     async reorderLists(records: ShoppingListRecord[]): Promise<void> {
-      await legacyMutation(['lists'], async tx => { for (const record of records) await tx.objectStore('lists').put(record) })
+      await legacyMutation(['lists'], async tx => {
+        for (const record of records) await tx.objectStore('lists').put(record)
+      })
     },
     async saveItems(items: Item[]): Promise<void> {
-      await legacyMutation(['items'], async tx => { for (const item of items) await tx.objectStore('items').put(item) })
+      await legacyMutation(['items'], async tx => {
+        for (const item of items) await tx.objectStore('items').put(item)
+      })
     },
     async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
     async deleteList(listId: string): Promise<void> {
       await legacyMutation(['lists', 'items'], async tx => {
-      const items = await tx.objectStore('items').getAll()
-      for (const item of items) if (item.listId === listId) await tx.objectStore('items').delete(item.id)
-      await tx.objectStore('lists').delete(listId)
+        const items = await tx.objectStore('items').getAll()
+        for (const item of items) if (item.listId === listId) await tx.objectStore('items').delete(item.id)
+        await tx.objectStore('lists').delete(listId)
       })
     },
     async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
       await legacyMutation(['lists', 'items', 'archives'], async tx => {
-      const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
-      if (!items.length) throw new Error('Cannot archive an empty list')
-      await tx.objectStore('archives').add({ id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items })
-      for (const item of items) await tx.objectStore('items').delete(item.id)
-      if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
+        const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
+        if (!items.length) throw new Error('Cannot archive an empty list')
+        await tx.objectStore('archives').add({
+          id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items,
+        })
+        for (const item of items) await tx.objectStore('items').delete(item.id)
+        if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
       })
     },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
-    async save(item: Item) { await legacyMutation(['items'], async tx => { await tx.objectStore('items').put(item) }) },
-    async remove(id: string) { await legacyMutation(['items'], async tx => { await tx.objectStore('items').delete(id) }) },
+    async save(item: Item): Promise<void> {
+      await legacyMutation(['items'], async tx => { await tx.objectStore('items').put(item) })
+    },
+    async remove(id: string): Promise<void> {
+      await legacyMutation(['items'], async tx => { await tx.objectStore('items').delete(id) })
+    },
     // Guest items remain in the original store until explicit migration.
     async readAccountItems(accountId: string): Promise<Item[]> {
       accountKey(accountId, 'check')
