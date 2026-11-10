@@ -4,11 +4,29 @@ import { useShopping } from './hooks/useShopping'
 import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
 import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
+import { profileItemStore } from './data/profile-item-store'
 export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number }) {
-  return <ShoppingWorkspace key={accountId ?? 'guest'} storage={storage} accountId={accountId} onQueued={onQueued} refreshRevision={refreshRevision} />
+  // Never mount a legacy guest workspace before resolving the durable cutover
+  // marker. Otherwise a stale guest view could attempt writes after cutover.
+  const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
+  const [startupError, setStartupError] = useState('')
+  useEffect(() => {
+    if (accountId !== null) return
+    let cancelled = false
+    setGuestProfile(undefined)
+    void storage.readGuestCutoverOwner().then(id => {
+      if (!cancelled) setGuestProfile(id)
+    }).catch(() => {
+      if (!cancelled) setStartupError('Не удалось определить хранилище покупок. Изменения заблокированы.')
+    })
+    return () => { cancelled = true }
+  }, [storage, accountId, guestProfileId])
+  if (accountId === null && startupError) return <main><p role="alert">{startupError}</p></main>
+  if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
+  return <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? guestProfile : null} onQueued={onQueued} refreshRevision={refreshRevision} />
 }
 
-function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; onQueued?: () => void; refreshRevision: number }) {
+function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number }) {
   const [active, setActive] = useState<ListId>('groceries')
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -20,7 +38,7 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
-    void Promise.all([storage.readLists(), storage.readArchives()]).then(([rows, snapshots]) => {
+    void Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()]).then(([rows, snapshots]) => {
       if (!cancelled) {
         setLocalLists(rows.sort((a, b) => (a.position ?? a.createdAt) - (b.position ?? b.createdAt)))
         setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
@@ -34,9 +52,14 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
     if (accountId !== null || changingList) return
     setChangingList(true)
     try {
-      if (action === 'rename') await storage.renameList(listId, value)
-      else await storage.changeListKind(listId, value as ShoppingListRecord['kind'])
-      setLocalLists(await storage.readLists())
+      if (action === 'rename') {
+        if (guestProfileId) await storage.renameProfileList(guestProfileId, listId, value)
+        else await storage.renameList(listId, value)
+      } else {
+        if (guestProfileId) await storage.changeProfileListKind(guestProfileId, listId, value as ShoppingListRecord['kind'])
+        else await storage.changeListKind(listId, value as ShoppingListRecord['kind'])
+      }
+      setLocalLists(guestProfileId ? await storage.readProfileLists(guestProfileId) : await storage.readLists())
       setListError(null)
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить список') }
     finally { setChangingList(false) }
@@ -47,8 +70,9 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
     if (!window.confirm('Завершить список и перенести товары в архив?')) return
     setChangingList(true)
     try {
-      await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now())
-      const [updatedLists, snapshots] = await Promise.all([storage.readLists(), storage.readArchives()])
+      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now())
+      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now())
+      const [updatedLists, snapshots] = await Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()])
       setLocalLists(updatedLists)
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
       setListError(null)
@@ -69,7 +93,8 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
     const list: ShoppingListRecord = { id: crypto.randomUUID(), name: trimmed, symbol: '📝', kind: 'oneoff', createdAt: Date.now(), position: localLists.length }
     setCreatingList(true)
     try {
-      await storage.saveList(list)
+      if (guestProfileId) await storage.saveProfileList(guestProfileId, list)
+      else await storage.saveList(list)
       setLocalLists(previous => previous ? [...previous, list] : [list])
       setActive(list.id)
       setNewListName('')
@@ -81,7 +106,7 @@ function ShoppingWorkspace({ storage, accountId, onQueued, refreshRevision }: { 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   // Guest remains the default until a verified auth session is available.
-  const itemStore = useMemo(() => accountId === null ? itemStoreForAccount(storage, null) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, onQueued])
+  const itemStore = useMemo(() => accountId === null ? (guestProfileId ? profileItemStore(storage, guestProfileId) : itemStoreForAccount(storage, null)) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, guestProfileId, onQueued])
   const shopping = useShopping(itemStore, refreshRevision)
   const rows = itemsForList(shopping.items, active)
   const remaining = rows.filter(item => !item.purchased).length
