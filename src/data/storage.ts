@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import { initializeProfiles, type LocalProfileRegistry } from './local-profiles'
+import { addProfile, initializeProfiles, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
@@ -148,6 +148,25 @@ export function createStorage(name = 'shopping-app') {
       } catch (error) {
         try { tx.abort() } catch { /* transaction already completed or aborted */ }
         await completion.catch(() => {})
+        throw error
+      }
+    },
+    /** Add a separate local profile without modifying the original profile's data. */
+    async createLocalProfile(id: string, createdAt: number): Promise<LocalProfileRegistry> {
+      const db = await database
+      const tx = db.transaction('localProfileRegistry', 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.store.get('device')
+        if (!current) throw new Error('Initialize local profiles first')
+        const registry = addProfile(current.registry, { id, cloudAccountId: null, createdAt })
+        await tx.store.put({ key: 'device', registry })
+        await done
+        return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
         throw error
       }
     },
