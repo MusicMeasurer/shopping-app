@@ -315,3 +315,28 @@ it('deletes a list and its items only inside the selected local profile', async 
   await expect(storage.deleteProfileList(friend, 'groceries')).rejects.toThrow('Список не найден')
   await storage.close()
 })
+
+it('commits guest cutover readiness atomically only when all four namespaces match', async () => {
+  const storage = createStorage('cutover-ready-' + crypto.randomUUID())
+  const item = createItem('groceries', 'Сыр')
+  await storage.save(item)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.readGuestCutoverOwner()).toBeNull()
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  expect(await storage.readGuestCutoverOwner()).toBe(owner)
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  await storage.close()
+})
+
+it('refuses cutover marker after a late legacy edit and keeps original data', async () => {
+  const storage = createStorage('cutover-refuse-' + crypto.randomUUID())
+  await storage.save(createItem('groceries', 'Старое'))
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const late = createItem('groceries', 'Новое')
+  await storage.save(late)
+  await expect(storage.markGuestCutoverReady()).rejects.toThrow('cutover blocked')
+  expect(await storage.readGuestCutoverOwner()).toBeNull()
+  expect((await storage.read()).some(item => item.id === late.id)).toBe(true)
+  expect((await storage.readProfileItems(owner)).some(item => item.id === late.id)).toBe(false)
+  await storage.close()
+})
