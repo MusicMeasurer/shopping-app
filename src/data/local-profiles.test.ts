@@ -28,6 +28,12 @@ describe('local profile model', () => {
     const bound = bindProfile(owner, 'owner', 'account-a')
     expect(() => addProfile(bound, { id: 'second', cloudAccountId: 'account-a', createdAt: 2 })).toThrow()
   })
+  it('rejects invalid profile metadata before it can enter the registry', () => {
+    const owner = initializeProfiles('owner', 1)
+    expect(() => addProfile(owner, { id: 'bad-time', cloudAccountId: null, createdAt: Number.NaN })).toThrow('timestamp')
+    expect(() => addProfile(owner, { id: 'bad-account', cloudAccountId: '   ', createdAt: 2 })).toThrow('cloud account')
+    expect(owner.profiles).toHaveLength(1)
+  })
   it('does not modify the original registry when switching', () => {
     const owner = initializeProfiles('owner', 1)
     const friend = addProfile(owner, { id: 'friend', cloudAccountId: null, createdAt: 2 })
