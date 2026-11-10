@@ -208,6 +208,131 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** Refuse cutover if legacy guest data changed after its one-time snapshot.
+     * No writes occur on failure; this prevents silently discarding newer edits.
+     */
+    async verifyLegacyProfileCutover(): Promise<string> {
+      const db = await database
+      const tx = db.transaction([
+        'localProfileRegistry', 'profileMigrations', 'lists', 'items', 'archives',
+        'pendingOperations', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations',
+      ], 'readonly')
+      const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+      const original = registry?.profiles[0]
+      const marker = await tx.objectStore('profileMigrations').get('legacy-guest-v1')
+      if (!original || original.cloudAccountId !== null || !marker || marker.profileId !== original.id) {
+        await tx.done
+        throw new Error('Legacy profile cutover is not ready')
+      }
+      const same = <T extends { id: string }>(legacy: T[], scoped: ProfileOwnedRecord<T>[]) =>
+        legacy.length === scoped.length && legacy.every(record => {
+          const match = scoped.find(row => row.key === JSON.stringify([original.id, record.id]))
+          return match && JSON.stringify(match.record) === JSON.stringify(record)
+        })
+      const legacyLists = await tx.objectStore('lists').getAll()
+      const profileLists = await tx.objectStore('profileLists').index('byProfile').getAll(original.id)
+      const legacyItems = await tx.objectStore('items').getAll()
+      const profileItems = await tx.objectStore('profileItems').index('byProfile').getAll(original.id)
+      const legacyArchives = await tx.objectStore('archives').getAll()
+      const profileArchives = await tx.objectStore('profileArchives').index('byProfile').getAll(original.id)
+      const legacyQueue = await tx.objectStore('pendingOperations').getAll()
+      const profileQueue = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(original.id)
+      await tx.done
+      if (!same(legacyLists, profileLists) || !same(legacyItems, profileItems) ||
+          !same(legacyArchives, profileArchives) ||
+          legacyQueue.length !== profileQueue.length ||
+          legacyQueue.some(record => {
+            const row = profileQueue.find(row => row.key === JSON.stringify([original.id, record.operationId]))
+            return !row || JSON.stringify(row.record) !== JSON.stringify(record)
+          })) {
+        throw new Error('Legacy data changed since profile snapshot; cutover blocked')
+      }
+      return original.id
+    },
+    /** Profile-only list operations. No legacy or other profile stores are mutated. */
+    async saveProfileList(profileId: string, list: ShoppingListRecord): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileLists'], 'readwrite')
+      const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+      if (!registry?.profiles.some(profile => profile.id === profileId)) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Unknown local profile')
+      }
+      await tx.objectStore('profileLists').put({
+        key: JSON.stringify([profileId, list.id]), profileId, record: list,
+      })
+      await tx.done
+    },
+    async renameProfileList(profileId: string, listId: string, name: string): Promise<void> {
+      const trimmed = name.trim()
+      if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+      const db = await database
+      const tx = db.transaction('profileLists', 'readwrite')
+      const key = JSON.stringify([profileId, listId])
+      const existing = await tx.store.get(key)
+      if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
+      await tx.store.put({ ...existing, record: { ...existing.record, name: trimmed } })
+      await tx.done
+    },
+    async changeProfileListKind(profileId: string, listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
+      if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
+      const db = await database
+      const tx = db.transaction('profileLists', 'readwrite')
+      const key = JSON.stringify([profileId, listId])
+      const existing = await tx.store.get(key)
+      if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
+      await tx.store.put({ ...existing, record: { ...existing.record, kind } })
+      await tx.done
+    },
+    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['profileLists', 'profileItems', 'profileArchives'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const key = JSON.stringify([profileId, listId])
+        const list = await tx.objectStore('profileLists').get(key)
+        if (!list) throw new Error('Список не найден в профиле')
+        const rows = (await tx.objectStore('profileItems').index('byProfile').getAll(profileId))
+          .filter(row => row.record.listId === listId)
+        if (!rows.length) throw new Error('Cannot archive an empty list')
+        const archive: ArchivedListRecord = {
+          id: archiveId, sourceListId: listId, name: list.record.name,
+          kind: list.record.kind, completedAt, items: rows.map(row => row.record),
+        }
+        await tx.objectStore('profileArchives').add({
+          key: JSON.stringify([profileId, archiveId]), profileId, record: archive,
+        })
+        for (const row of rows) await tx.objectStore('profileItems').delete(row.key)
+        if (list.record.kind === 'oneoff') await tx.objectStore('profileLists').delete(key)
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async enqueueProfilePending(profileId: string, operation: PendingItemOperation): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profilePendingOperations'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+        const key = JSON.stringify([profileId, operation.operationId])
+        const existing = await tx.objectStore('profilePendingOperations').get(key)
+        if (existing && JSON.stringify(existing.record) !== JSON.stringify(operation)) {
+          throw new Error('Operation ID collision with different payload')
+        }
+        if (!existing) await tx.objectStore('profilePendingOperations').add({ key, profileId, record: operation })
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
     async readProfileLists(profileId: string): Promise<ShoppingListRecord[]> {
       if (!profileId.trim()) throw new Error('Profile ID required')
       return (await (await database).getAllFromIndex('profileLists', 'byProfile', profileId)).map(row => row.record)
