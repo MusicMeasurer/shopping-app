@@ -321,6 +321,27 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** Batch import is atomic: a multiline add never saves only part of a list. */
+    async saveProfileItems(profileId: string, items: Item[]): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+        if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
+        for (const item of items) {
+          const key = JSON.stringify([profileId, item.id])
+          await tx.objectStore('profileItems').put({ key, profileId, record: item })
+        }
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already finished */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
     async removeProfileItem(profileId: string, itemId: string): Promise<void> {
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
