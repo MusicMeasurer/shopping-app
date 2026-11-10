@@ -24,6 +24,7 @@ interface ShoppingDB extends DBSchema {
   profileArchives: { key: string; value: ProfileOwnedRecord<ArchivedListRecord>; indexes: { byProfile: string } }
   profilePendingOperations: { key: string; value: ProfileOwnedRecord<PendingItemOperation>; indexes: { byProfile: string } }
   profileMigrations: { key: string; value: { key: string; profileId: string; completedAt: number } }
+  profileCutover: { key: string; value: { key: string; profileId: string; activatedAt: number } }
   localProfileRegistry: { key: string; value: { key: string; registry: LocalProfileRegistry } }
   lists: { key: string; value: ShoppingListRecord }
   archives: { key: string; value: ArchivedListRecord }
@@ -39,7 +40,7 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 8, {
+  const database = openDB<ShoppingDB>(name, 9, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -66,6 +67,7 @@ export function createStorage(name = 'shopping-app') {
         }
       }
       if (!db.objectStoreNames.contains('profileMigrations')) db.createObjectStore('profileMigrations', { keyPath: 'key' })
+      if (!db.objectStoreNames.contains('profileCutover')) db.createObjectStore('profileCutover', { keyPath: 'key' })
       // Additive v8 metadata only. Legacy lists, items, archives and queues remain untouched.
       if (!db.objectStoreNames.contains('localProfileRegistry')) db.createObjectStore('localProfileRegistry', { keyPath: 'key' })
       // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
@@ -150,6 +152,60 @@ export function createStorage(name = 'shopping-app') {
         await completion.catch(() => {})
         throw error
       }
+    },
+    /** Transactionally validate the entire guest snapshot and record cutover readiness.
+     * No UI or legacy writer is switched by this marker alone.
+     */
+    async markGuestCutoverReady(): Promise<string> {
+      const db = await database
+      const tx = db.transaction([
+        'localProfileRegistry', 'profileMigrations', 'profileCutover',
+        'lists', 'items', 'archives', 'pendingOperations',
+        'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations',
+      ], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        const original = registry?.profiles[0]
+        const migration = await tx.objectStore('profileMigrations').get('legacy-guest-v1')
+        if (!original || original.cloudAccountId !== null || !migration ||
+            migration.profileId !== original.id) throw new Error('Original guest migration missing or ambiguous')
+        const matching = <T extends { id: string }>(source: T[], scoped: ProfileOwnedRecord<T>[]) =>
+          source.length === scoped.length && source.every(row =>
+            scoped.some(entry => entry.key === JSON.stringify([original.id, row.id]) &&
+              JSON.stringify(entry.record) === JSON.stringify(row)))
+        const lists = await tx.objectStore('lists').getAll()
+        const profileLists = await tx.objectStore('profileLists').index('byProfile').getAll(original.id)
+        const items = await tx.objectStore('items').getAll()
+        const profileItems = await tx.objectStore('profileItems').index('byProfile').getAll(original.id)
+        const archives = await tx.objectStore('archives').getAll()
+        const profileArchives = await tx.objectStore('profileArchives').index('byProfile').getAll(original.id)
+        const pending = await tx.objectStore('pendingOperations').getAll()
+        const profilePending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(original.id)
+        if (!matching(lists, profileLists) || !matching(items, profileItems) ||
+            !matching(archives, profileArchives) ||
+            pending.length !== profilePending.length ||
+            !pending.every(row => profilePending.some(entry =>
+              entry.key === JSON.stringify([original.id, row.operationId]) &&
+              JSON.stringify(entry.record) === JSON.stringify(row)))) {
+          throw new Error('Legacy guest data differs from profile snapshot; cutover blocked')
+        }
+        const existing = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (existing && existing.profileId !== original.id) throw new Error('Cutover ownership mismatch')
+        if (!existing) await tx.objectStore('profileCutover').add({
+          key: 'legacy-guest-v1', profileId: original.id, activatedAt: Date.now(),
+        })
+        await done
+        return original.id
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async readGuestCutoverOwner(): Promise<string | null> {
+      return (await (await database).get('profileCutover', 'legacy-guest-v1'))?.profileId ?? null
     },
     /** Profile-local queue acknowledgement; cannot touch another profile. */
     async acknowledgeProfilePending(profileId: string, operationId: string): Promise<void> {
