@@ -1,4 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
+import { initializeProfiles, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
@@ -17,6 +18,7 @@ export interface ArchivedListRecord {
   id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
 }
 interface ShoppingDB extends DBSchema {
+  localProfileRegistry: { key: string; value: { key: string; registry: LocalProfileRegistry } }
   lists: { key: string; value: ShoppingListRecord }
   archives: { key: string; value: ArchivedListRecord }
   items: { key: string; value: Item }
@@ -31,7 +33,7 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 7, {
+  const database = openDB<ShoppingDB>(name, 8, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -51,6 +53,8 @@ export function createStorage(name = 'shopping-app') {
         const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
+      // Additive v8 metadata only. Legacy lists, items, archives and queues remain untouched.
+      if (!db.objectStoreNames.contains('localProfileRegistry')) db.createObjectStore('localProfileRegistry', { keyPath: 'key' })
       // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
       if (!db.objectStoreNames.contains('lists')) {
         db.createObjectStore('lists', { keyPath: 'id' })
@@ -62,6 +66,19 @@ export function createStorage(name = 'shopping-app') {
     blocking() { void database.then(db => db.close()) },
   })
   return {
+    /** Atomic first-use initialization; preserves legacy stores and stable identity across restarts. */
+    async ensureLocalProfiles(): Promise<LocalProfileRegistry> {
+      const tx = (await database).transaction('localProfileRegistry', 'readwrite')
+      const existing = await tx.store.get('device')
+      if (existing) { await tx.done; return existing.registry }
+      const registry = initializeProfiles(crypto.randomUUID(), Date.now())
+      await tx.store.add({ key: 'device', registry })
+      await tx.done
+      return registry
+    },
+    async readLocalProfiles(): Promise<LocalProfileRegistry | null> {
+      return (await (await database).get('localProfileRegistry', 'device'))?.registry ?? null
+    },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
     async renameList(listId: string, name: string): Promise<void> {
