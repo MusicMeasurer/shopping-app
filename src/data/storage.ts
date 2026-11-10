@@ -151,6 +151,44 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** All profile writes require an existing profile and completed legacy cutover.
+     * This guard prevents accidental cross-profile writes before migration.
+     */
+    async saveProfileItem(profileId: string, item: Item): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+        if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
+        const key = JSON.stringify([profileId, item.id])
+        await tx.objectStore('profileItems').put({ key, profileId, record: item })
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async removeProfileItem(profileId: string, itemId: string): Promise<void> {
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+        if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
+        await tx.objectStore('profileItems').delete(JSON.stringify([profileId, itemId]))
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
     async readProfileLists(profileId: string): Promise<ShoppingListRecord[]> {
       if (!profileId.trim()) throw new Error('Profile ID required')
       return (await (await database).getAllFromIndex('profileLists', 'byProfile', profileId)).map(row => row.record)
