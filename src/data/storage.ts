@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import { addProfile, initializeProfiles, type LocalProfileRegistry } from './local-profiles'
+import { addProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
@@ -292,6 +292,67 @@ export function createStorage(name = 'shopping-app') {
         if (!current) throw new Error('Initialize local profiles first')
         const registry = addProfile(current.registry, { id, cloudAccountId: null, createdAt })
         await tx.store.put({ key: 'device', registry })
+        await done
+        return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    /** Persist the active local profile. Does not authenticate or rebind cloud accounts. */
+    async switchLocalProfile(profileId: string): Promise<LocalProfileRegistry> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.objectStore('localProfileRegistry').get('device')
+        if (!current) throw new Error('Local profiles not initialized')
+        const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (!cutover) throw new Error('Profile cutover is not active')
+        const registry = switchProfile(current.registry, profileId)
+        // A cloud-bound profile cannot be activated as an unauthenticated guest.
+        if (registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId !== null) {
+          throw new Error('Cloud-bound profile requires verified account')
+        }
+        await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
+        await done
+        return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    /** Irreversible LOCAL-only purge, requiring a fresh exact confirmation.
+     * Never removes the original migrated guest, the last profile, or cloud data.
+     */
+    async deleteLocalProfile(profileId: string, confirmationId: string): Promise<LocalProfileRegistry> {
+      if (!profileId.trim() || confirmationId !== profileId) throw new Error('Profile deletion confirmation mismatch')
+      const db = await database
+      const tx = db.transaction([
+        'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
+        'profileArchives', 'profilePendingOperations',
+      ], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.objectStore('localProfileRegistry').get('device')
+        if (!current) throw new Error('Local profiles not initialized')
+        const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (!cutover) throw new Error('Profile cutover is not active')
+        if (cutover.profileId === profileId) throw new Error('Original guest profile cannot be deleted')
+        const registry = removeProfileMetadata(current.registry, profileId)
+        const pending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(profileId)
+        if (pending.length) throw new Error('Profile has unsynced operations; deletion blocked')
+        for (const storeName of ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const) {
+          const store = tx.objectStore(storeName)
+          const records = await store.index('byProfile').getAll(profileId)
+          for (const row of records) await store.delete(row.key)
+        }
+        await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
       } catch (error) {
