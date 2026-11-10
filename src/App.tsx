@@ -5,25 +5,66 @@ import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/sto
 import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import { profileItemStore } from './data/profile-item-store'
+import type { LocalProfileRegistry } from './data/local-profiles'
 export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
   const [startupError, setStartupError] = useState('')
+  const [registry, setRegistry] = useState<LocalProfileRegistry | null>(null)
+  const [profileBusy, setProfileBusy] = useState(false)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
     setGuestProfile(undefined)
-    void storage.readGuestCutoverOwner().then(id => {
-      if (!cancelled) setGuestProfile(id)
+    void Promise.all([storage.readGuestCutoverOwner(), storage.readLocalProfiles()]).then(([id, profiles]) => {
+      if (cancelled) return
+      if (id && (!profiles || !profiles.profiles.some(p => p.id === id))) throw new Error('Cutover profile missing')
+      setRegistry(profiles)
+      setGuestProfile(id ? (profiles?.activeProfileId ?? id) : null)
     }).catch(() => {
       if (!cancelled) setStartupError('Не удалось определить хранилище покупок. Изменения заблокированы.')
     })
     return () => { cancelled = true }
   }, [storage, accountId])
-  if (accountId === null && startupError) return <main><p role="alert">{startupError}</p></main>
+  async function createGuestProfile() {
+    if (profileBusy || !registry || !guestProfile) return
+    setProfileBusy(true)
+    try {
+      const next = await storage.createLocalProfile(crypto.randomUUID(), Date.now())
+      setRegistry(next)
+      setGuestProfile(next.activeProfileId)
+      setStartupError('')
+    } catch { setStartupError('Не удалось создать локальный профиль. Данные не изменены.') }
+    finally { setProfileBusy(false) }
+  }
+  async function selectGuestProfile(id: string) {
+    if (profileBusy || !registry || !guestProfile || id === guestProfile) return
+    setProfileBusy(true)
+    try {
+      const next = await storage.switchLocalProfile(id)
+      setRegistry(next)
+      setGuestProfile(next.activeProfileId)
+    } catch { setStartupError('Не удалось переключить локальный профиль. Изменения заблокированы.') }
+    finally { setProfileBusy(false) }
+  }
+  async function removeGuestProfile() {
+    if (profileBusy || !registry || !guestProfile || registry.profiles[0]?.id === guestProfile) return
+    if (!window.confirm('Удалить локальные списки и архивы этого профиля с устройства? Облачные данные не удаляются. Неотправленные операции блокируют удаление.')) return
+    setProfileBusy(true)
+    try {
+      const next = await storage.deleteLocalProfile(guestProfile, guestProfile)
+      setRegistry(next)
+      setGuestProfile(next.activeProfileId)
+    } catch { setStartupError('Не удалось удалить профиль. Возможно, есть неотправленные изменения. Данные сохранены.') }
+    finally { setProfileBusy(false) }
+  }
+  if (accountId === null && startupError) return <main><p role="alert">{startupError}</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
-  return <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} />
+  return <>
+    {accountId === null && guestProfile && registry && <section aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.filter(p => p.cloudAccountId === null).map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</section>}
+    <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} />
+  </>
 }
 
 function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number }) {
@@ -47,7 +88,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       if (!cancelled) setListError(error instanceof Error ? error.message : 'Не удалось загрузить списки')
     })
     return () => { cancelled = true }
-  }, [storage, accountId])
+  }, [storage, accountId, guestProfileId])
   async function updateLocalList(action: 'rename' | 'kind', listId: string, value: string) {
     if (accountId !== null || changingList) return
     setChangingList(true)
