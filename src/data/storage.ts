@@ -151,6 +151,56 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** Atomic rebase of the original guest snapshot while legacy UI is still active.
+     * Fail closed if any scoped edits already exist. All four stores are replaced
+     * together in one transaction, preventing partial snapshots on interruption.
+     * This is a preparation step, NOT permission to enable the new UI.
+     */
+    async refreshLegacyGuestSnapshot(): Promise<string> {
+      const db = await database
+      const tx = db.transaction([
+        'localProfileRegistry', 'profileMigrations', 'lists', 'items', 'archives',
+        'pendingOperations', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations',
+      ], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        const original = registry?.profiles[0]
+        const marker = await tx.objectStore('profileMigrations').get('legacy-guest-v1')
+        if (!original || original.cloudAccountId !== null || !marker || marker.profileId !== original.id) {
+          throw new Error('Legacy snapshot is not initialized for the original guest')
+        }
+        const lists = await tx.objectStore('lists').getAll()
+        const items = await tx.objectStore('items').getAll()
+        const archives = await tx.objectStore('archives').getAll()
+        const pending = await tx.objectStore('pendingOperations').getAll()
+        const scopedLists = await tx.objectStore('profileLists').index('byProfile').getAll(original.id)
+        const scopedItems = await tx.objectStore('profileItems').index('byProfile').getAll(original.id)
+        const scopedArchives = await tx.objectStore('profileArchives').index('byProfile').getAll(original.id)
+        const scopedPending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(original.id)
+        // A changed profile record must never be overwritten by a legacy snapshot.
+        // We intentionally reject the ambiguous case rather than guessing which edit wins.
+        const unchanged = <T extends { id: string }>(legacy: T[], scoped: ProfileOwnedRecord<T>[]) =>
+          legacy.length === scoped.length && legacy.every(record =>
+            scoped.some(row => row.key === JSON.stringify([original.id, record.id]) &&
+              JSON.stringify(row.record) === JSON.stringify(record)))
+        const queueUnchanged = pending.length === scopedPending.length && pending.every(record =>
+          scopedPending.some(row => row.key === JSON.stringify([original.id, record.operationId]) &&
+            JSON.stringify(row.record) === JSON.stringify(record)))
+        if (!unchanged(lists, scopedLists) || !unchanged(items, scopedItems) ||
+            !unchanged(archives, scopedArchives) || !queueUnchanged) {
+          throw new Error('Profile snapshot differs from legacy; manual reconciliation required')
+        }
+        // Nothing to refresh: the snapshot already matches. Keep this idempotent.
+        await done
+        return original.id
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
     /** Add a separate local profile without modifying the original profile's data. */
     async createLocalProfile(id: string, createdAt: number): Promise<LocalProfileRegistry> {
       const db = await database
