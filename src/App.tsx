@@ -17,7 +17,16 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
     if (accountId !== null) return
     let cancelled = false
     setGuestProfile(undefined)
-    void Promise.all([storage.readGuestCutoverOwner(), storage.readLocalProfiles()]).then(([id, profiles]) => {
+    void (async () => {
+      // IndexedDB v10 upgrades only after older open connections have closed.
+      // Never activate cutover while an older build can still write legacy data.
+      const existing = await storage.readGuestCutoverOwner()
+      if (!existing) {
+        await storage.migrateLegacyGuestToProfile()
+        await storage.markGuestCutoverReady()
+      }
+      return Promise.all([storage.readGuestCutoverOwner(), storage.readLocalProfiles()])
+    })().then(([id, profiles]) => {
       if (cancelled) return
       if (id && (!profiles || !profiles.profiles.some(p => p.id === id))) throw new Error('Cutover profile missing')
       setRegistry(profiles)
