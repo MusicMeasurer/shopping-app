@@ -80,6 +80,30 @@ export function createStorage(name = 'shopping-app') {
     },
     blocking() { void database.then(db => db.close()) },
   })
+  /** The fence is checked inside the SAME readwrite transaction as a legacy mutation.
+   * New clients cannot race the cutover marker. Already-open older builds
+   * lack this guard and still require separate version coordination.
+   */
+  async function legacyMutation<T extends 'lists' | 'items' | 'archives' | 'pendingOperations'>(
+    stores: T[],
+    mutate: (tx: import('idb').IDBPTransaction<ShoppingDB, ('lists' | 'items' | 'archives' | 'pendingOperations' | 'profileCutover')[], 'readwrite'>) => Promise<void>,
+  ): Promise<void> {
+    const db = await database
+    const tx = db.transaction([...stores, 'profileCutover'], 'readwrite')
+    const done = tx.done
+    void done.catch(() => {})
+    try {
+      if (await tx.objectStore('profileCutover').get('legacy-guest-v1')) {
+        throw new Error('Legacy guest writes blocked after profile cutover')
+      }
+      await mutate(tx)
+      await done
+    } catch (error) {
+      try { tx.abort() } catch { /* already finished */ }
+      await done.catch(() => {})
+      throw error
+    }
+  }
   return {
     /** Atomic first-use initialization; preserves legacy stores and stable identity across restarts. */
     async ensureLocalProfiles(): Promise<LocalProfileRegistry> {
@@ -431,57 +455,50 @@ export function createStorage(name = 'shopping-app') {
       return (await (await database).getAllFromIndex('profilePendingOperations', 'byProfile', profileId)).map(row => row.record)
     },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
-    async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
+    async saveList(list: ShoppingListRecord): Promise<void> { await legacyMutation(['lists'], async tx => { await tx.objectStore('lists').put(list) }) },
     async renameList(listId: string, name: string): Promise<void> {
       const trimmed = name.trim()
       if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
-      const tx = (await database).transaction('lists', 'readwrite')
-      const list = await tx.store.get(listId)
-      if (!list) { await tx.done; throw new Error('Список не найден') }
-      await tx.store.put({ ...list, name: trimmed })
-      await tx.done
+      return legacyMutation(['lists'], async tx => {
+      const list = await tx.objectStore('lists').get(listId)
+      if (!list) throw new Error('Список не найден')
+      await tx.objectStore('lists').put({ ...list, name: trimmed })
+      })
     },
     async changeListKind(listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
       if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
       const tx = (await database).transaction('lists', 'readwrite')
       const list = await tx.store.get(listId)
-      if (!list) { await tx.done; throw new Error('Список не найден') }
-      await tx.store.put({ ...list, kind })
-      await tx.done
+      if (!list) throw new Error('Список не найден')
+      await tx.objectStore('lists').put({ ...list, kind })
+      })
     },
     async reorderLists(records: ShoppingListRecord[]): Promise<void> {
-      const tx = (await database).transaction('lists', 'readwrite')
-      for (const record of records) await tx.store.put(record)
-      await tx.done
+      await legacyMutation(['lists'], async tx => { for (const record of records) await tx.objectStore('lists').put(record) })
     },
     async saveItems(items: Item[]): Promise<void> {
-      const tx = (await database).transaction('items', 'readwrite')
-      for (const item of items) await tx.store.put(item)
-      await tx.done
+      await legacyMutation(['items'], async tx => { for (const item of items) await tx.objectStore('items').put(item) })
     },
     async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
     async deleteList(listId: string): Promise<void> {
-      const tx = (await database).transaction(['lists', 'items'], 'readwrite')
+      await legacyMutation(['lists', 'items'], async tx => {
       const items = await tx.objectStore('items').getAll()
       for (const item of items) if (item.listId === listId) await tx.objectStore('items').delete(item.id)
       await tx.objectStore('lists').delete(listId)
-      await tx.done
+      })
     },
     async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
-      const tx = (await database).transaction(['lists', 'items', 'archives'], 'readwrite')
-      // Observe transaction rejection before abort; otherwise idb tx.done can become unhandled.
-      const completion = tx.done
-      void completion.catch(() => {})
+      await legacyMutation(['lists', 'items', 'archives'], async tx => {
       const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
-      if (!items.length) { tx.abort(); await completion.catch(() => {}); throw new Error('Cannot archive an empty list') }
+      if (!items.length) throw new Error('Cannot archive an empty list')
       await tx.objectStore('archives').add({ id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items })
       for (const item of items) await tx.objectStore('items').delete(item.id)
       if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
-      await completion
+      })
     },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
-    async save(item: Item) { await (await database).put('items', item) },
-    async remove(id: string) { await (await database).delete('items', id) },
+    async save(item: Item) { await legacyMutation(['items'], async tx => { await tx.objectStore('items').put(item) }) },
+    async remove(id: string) { await legacyMutation(['items'], async tx => { await tx.objectStore('items').delete(id) }) },
     // Guest items remain in the original store until explicit migration.
     async readAccountItems(accountId: string): Promise<Item[]> {
       accountKey(accountId, 'check')
@@ -500,18 +517,14 @@ export function createStorage(name = 'shopping-app') {
       return (await database).getAll('pendingOperations')
     },
     async enqueuePending(operation: PendingItemOperation): Promise<void> {
-      const db = await database
-      const tx = db.transaction('pendingOperations', 'readwrite')
-      const existing = await tx.store.get(operation.operationId)
-      if (existing && JSON.stringify(existing) !== JSON.stringify(operation)) {
-        await tx.done
-        throw new Error('Operation ID collision with different payload')
-      }
-      if (!existing) await tx.store.add(operation)
-      await tx.done
+      await legacyMutation(['pendingOperations'], async tx => {
+      const existing = await tx.objectStore('pendingOperations').get(operation.operationId)
+      if (existing && JSON.stringify(existing) !== JSON.stringify(operation)) throw new Error('Operation ID collision with different payload')
+      if (!existing) await tx.objectStore('pendingOperations').add(operation)
+      })
     },
     async acknowledgePending(operationId: string): Promise<void> {
-      await (await database).delete('pendingOperations', operationId)
+      await legacyMutation(['pendingOperations'], async tx => { await tx.objectStore('pendingOperations').delete(operationId) })
     },
     async readAccountPending(accountId: string): Promise<PendingItemOperation[]> {
       accountKey(accountId, 'check')
