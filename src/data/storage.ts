@@ -284,14 +284,17 @@ export function createStorage(name = 'shopping-app') {
     /** Add a separate local profile without modifying the original profile's data. */
     async createLocalProfile(id: string, createdAt: number): Promise<LocalProfileRegistry> {
       const db = await database
-      const tx = db.transaction('localProfileRegistry', 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
-        const current = await tx.store.get('device')
+        const current = await tx.objectStore('localProfileRegistry').get('device')
         if (!current) throw new Error('Initialize local profiles first')
+        const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (!cutover) throw new Error('Profile cutover is not active')
+        if (current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover owner mismatch')
         const registry = addProfile(current.registry, { id, cloudAccountId: null, createdAt })
-        await tx.store.put({ key: 'device', registry })
+        await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
       } catch (error) {
