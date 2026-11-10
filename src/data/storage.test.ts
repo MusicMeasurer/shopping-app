@@ -482,3 +482,23 @@ it('prevents an old v9 client from reopening after the v10 cutover barrier', asy
   expect(await current.readProfileItems(owner)).toEqual([item])
   await current.close()
 })
+
+it('waits for an uncooperative old v9 connection before upgrading or cutover', async () => {
+  const name = 'blocked-upgrade-' + crypto.randomUUID()
+  const old = await openDB(name, 9, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+  })
+  const item = createItem('groceries', 'Не потерять')
+  await old.put('items', item)
+  const current = createStorage(name)
+  let opened = false
+  const opening = current.read().then(rows => { opened = true; return rows })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(opened).toBe(false)
+  old.close()
+  expect(await opening).toEqual([item])
+  const owner = await current.migrateLegacyGuestToProfile()
+  expect(await current.markGuestCutoverReady()).toBe(owner)
+  expect(await current.readProfileItems(owner)).toEqual([item])
+  await current.close()
+})
