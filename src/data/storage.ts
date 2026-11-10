@@ -17,7 +17,13 @@ export interface ShoppingListRecord {
 export interface ArchivedListRecord {
   id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
 }
+interface ProfileOwnedRecord<T> { key: string; profileId: string; record: T }
 interface ShoppingDB extends DBSchema {
+  profileLists: { key: string; value: ProfileOwnedRecord<ShoppingListRecord>; indexes: { byProfile: string } }
+  profileItems: { key: string; value: ProfileOwnedRecord<Item>; indexes: { byProfile: string } }
+  profileArchives: { key: string; value: ProfileOwnedRecord<ArchivedListRecord>; indexes: { byProfile: string } }
+  profilePendingOperations: { key: string; value: ProfileOwnedRecord<PendingItemOperation>; indexes: { byProfile: string } }
+  profileMigrations: { key: string; value: { key: string; profileId: string; completedAt: number } }
   localProfileRegistry: { key: string; value: { key: string; registry: LocalProfileRegistry } }
   lists: { key: string; value: ShoppingListRecord }
   archives: { key: string; value: ArchivedListRecord }
@@ -53,6 +59,13 @@ export function createStorage(name = 'shopping-app') {
         const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
+      for (const storeName of ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const) {
+        if (!db.objectStoreNames.contains(storeName)) {
+          const store = db.createObjectStore(storeName, { keyPath: 'key' })
+          store.createIndex('byProfile', 'profileId')
+        }
+      }
+      if (!db.objectStoreNames.contains('profileMigrations')) db.createObjectStore('profileMigrations', { keyPath: 'key' })
       // Additive v8 metadata only. Legacy lists, items, archives and queues remain untouched.
       if (!db.objectStoreNames.contains('localProfileRegistry')) db.createObjectStore('localProfileRegistry', { keyPath: 'key' })
       // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
@@ -78,6 +91,78 @@ export function createStorage(name = 'shopping-app') {
     },
     async readLocalProfiles(): Promise<LocalProfileRegistry | null> {
       return (await (await database).get('localProfileRegistry', 'device'))?.registry ?? null
+    },
+    /** Copy legacy guest data into its original local profile, atomically and idempotently.
+     * Legacy stores are deliberately retained for rollback and older clients.
+     * This method does not activate profile-scoped writes in the UI.
+     */
+    async migrateLegacyGuestToProfile(): Promise<string> {
+      const db = await database
+      const tx = db.transaction([
+        'localProfileRegistry', 'profileMigrations', 'lists', 'items', 'archives',
+        'pendingOperations', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations',
+      ], 'readwrite')
+      const completion = tx.done
+      void completion.catch(() => {})
+      try {
+        let registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry) {
+          registry = initializeProfiles(crypto.randomUUID(), Date.now())
+          await tx.objectStore('localProfileRegistry').add({ key: 'device', registry })
+        }
+        // Only the original profile may inherit legacy guest data; a bound or
+        // switched account must never be assigned the legacy guest namespace.
+        const original = registry.profiles[0]
+        if (!original || original.cloudAccountId !== null) throw new Error('Legacy guest profile ownership is ambiguous')
+        const marker = await tx.objectStore('profileMigrations').get('legacy-guest-v1')
+        if (marker) {
+          if (marker.profileId !== original.id) throw new Error('Legacy migration owner mismatch')
+          await completion
+          return original.id
+        }
+        const specs = [
+          ['lists', 'profileLists', 'id'],
+          ['items', 'profileItems', 'id'],
+          ['archives', 'profileArchives', 'id'],
+          ['pendingOperations', 'profilePendingOperations', 'operationId'],
+        ] as const
+        for (const [source, destination, idField] of specs) {
+          const records = await tx.objectStore(source).getAll()
+          for (const record of records) {
+            const id = record[idField]
+            const key = JSON.stringify([original.id, id])
+            // Destination must be empty before first migration; do not overwrite
+            // any profile data in case of an interrupted or unexpected workflow.
+            if (await tx.objectStore(destination).get(key)) throw new Error('Profile migration destination collision')
+            await tx.objectStore(destination).add({ key, profileId: original.id, record })
+          }
+        }
+        await tx.objectStore('profileMigrations').add({
+          key: 'legacy-guest-v1', profileId: original.id, completedAt: Date.now(),
+        })
+        await completion
+        return original.id
+      } catch (error) {
+        if (tx.active) tx.abort()
+        await completion.catch(() => {})
+        throw error
+      }
+    },
+    async readProfileLists(profileId: string): Promise<ShoppingListRecord[]> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      return (await (await database).getAllFromIndex('profileLists', 'byProfile', profileId)).map(row => row.record)
+    },
+    async readProfileItems(profileId: string): Promise<Item[]> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      return (await (await database).getAllFromIndex('profileItems', 'byProfile', profileId)).map(row => row.record)
+    },
+    async readProfileArchives(profileId: string): Promise<ArchivedListRecord[]> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      return (await (await database).getAllFromIndex('profileArchives', 'byProfile', profileId)).map(row => row.record)
+    },
+    async readProfilePending(profileId: string): Promise<PendingItemOperation[]> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      return (await (await database).getAllFromIndex('profilePendingOperations', 'byProfile', profileId)).map(row => row.record)
     },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
