@@ -84,8 +84,8 @@ export function createStorage(name = 'shopping-app') {
    * New clients cannot race the cutover marker. Already-open older builds
    * lack this guard and still require separate version coordination.
    */
-  async function legacyMutation<T extends 'lists' | 'items' | 'archives' | 'pendingOperations'>(
-    stores: T[],
+  async function legacyMutation(
+    stores: ('lists' | 'items' | 'archives' | 'pendingOperations')[],
     mutate: (tx: import('idb').IDBPTransaction<ShoppingDB, ('lists' | 'items' | 'archives' | 'pendingOperations' | 'profileCutover')[], 'readwrite'>) => Promise<void>,
   ): Promise<void> {
     const db = await database
