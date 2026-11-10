@@ -465,3 +465,20 @@ it('refuses profile switching and deletion until guest cutover is active', async
   expect(await storage.readGuestCutoverOwner()).toBeNull()
   await storage.close()
 })
+
+it('prevents an old v9 client from reopening after the v10 cutover barrier', async () => {
+  const name = 'version-fence-' + crypto.randomUUID()
+  const old = await openDB(name, 9, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+    blocking() { old.close() },
+  })
+  const item = createItem('groceries', 'Сохранённое')
+  await old.put('items', item)
+  const current = createStorage(name)
+  expect(await current.read()).toEqual([item])
+  await expect(openDB(name, 9)).rejects.toThrow()
+  const owner = await current.migrateLegacyGuestToProfile()
+  expect(await current.markGuestCutoverReady()).toBe(owner)
+  expect(await current.readProfileItems(owner)).toEqual([item])
+  await current.close()
+})
