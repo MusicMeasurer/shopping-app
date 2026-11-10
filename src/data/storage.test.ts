@@ -135,3 +135,40 @@ it('rejects a stale reviewed deletion when a newer server version was recorded',
   expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(4)
   await storage.close()
 })
+
+it('initializes a stable unregistered local profile without touching legacy data', async () => {
+  const name = 'profile-v8-' + crypto.randomUUID()
+  const item = createItem('groceries', 'Хлеб')
+  const legacy = await openDB(name, 7, {
+    upgrade(db) {
+      db.createObjectStore('items', { keyPath: 'id' })
+      db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      db.createObjectStore('lists', { keyPath: 'id' })
+      db.createObjectStore('archives', { keyPath: 'id' })
+    },
+  })
+  await legacy.put('items', item)
+  await legacy.put('pendingOperations', { operationId: 'pending-guest', kind: 'upsert', item })
+  legacy.close()
+  const first = createStorage(name)
+  const profile = await first.ensureLocalProfiles()
+  expect(profile.profiles).toHaveLength(1)
+  expect(profile.profiles[0].cloudAccountId).toBeNull()
+  expect(profile.profiles[0].id).toBeTruthy()
+  expect(await first.read()).toEqual([item])
+  expect(await first.readPending()).toHaveLength(1)
+  await first.close()
+  const second = createStorage(name)
+  expect(await second.ensureLocalProfiles()).toEqual(profile)
+  expect(await second.readLocalProfiles()).toEqual(profile)
+  expect(await second.read()).toEqual([item])
+  await second.close()
+})
+
+it('initializes the local identity only once during concurrent first use', async () => {
+  const storage = createStorage('profile-race-' + crypto.randomUUID())
+  const profiles = await Promise.all([storage.ensureLocalProfiles(), storage.ensureLocalProfiles()])
+  expect(profiles[0]).toEqual(profiles[1])
+  expect(await storage.readLocalProfiles()).toEqual(profiles[0])
+  await storage.close()
+})
