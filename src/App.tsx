@@ -20,10 +20,10 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
       if (!cancelled) setStartupError('Не удалось определить хранилище покупок. Изменения заблокированы.')
     })
     return () => { cancelled = true }
-  }, [storage, accountId, guestProfileId])
+  }, [storage, accountId])
   if (accountId === null && startupError) return <main><p role="alert">{startupError}</p></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
-  return <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? guestProfile : null} onQueued={onQueued} refreshRevision={refreshRevision} />
+  return <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} />
 }
 
 function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number }) {
