@@ -120,22 +120,25 @@ export function createStorage(name = 'shopping-app') {
           await completion
           return original.id
         }
-        const specs = [
-          ['lists', 'profileLists', 'id'],
-          ['items', 'profileItems', 'id'],
-          ['archives', 'profileArchives', 'id'],
-          ['pendingOperations', 'profilePendingOperations', 'operationId'],
-        ] as const
-        for (const [source, destination, idField] of specs) {
-          const records = await tx.objectStore(source).getAll()
-          for (const record of records) {
-            const id = record[idField]
-            const key = JSON.stringify([original.id, id])
-            // Destination must be empty before first migration; do not overwrite
-            // any profile data in case of an interrupted or unexpected workflow.
-            if (await tx.objectStore(destination).get(key)) throw new Error('Profile migration destination collision')
-            await tx.objectStore(destination).add({ key, profileId: original.id, record })
-          }
+        for (const record of await tx.objectStore('lists').getAll()) {
+          const key = JSON.stringify([original.id, record.id])
+          if (await tx.objectStore('profileLists').get(key)) throw new Error('Profile migration destination collision')
+          await tx.objectStore('profileLists').add({ key, profileId: original.id, record })
+        }
+        for (const record of await tx.objectStore('items').getAll()) {
+          const key = JSON.stringify([original.id, record.id])
+          if (await tx.objectStore('profileItems').get(key)) throw new Error('Profile migration destination collision')
+          await tx.objectStore('profileItems').add({ key, profileId: original.id, record })
+        }
+        for (const record of await tx.objectStore('archives').getAll()) {
+          const key = JSON.stringify([original.id, record.id])
+          if (await tx.objectStore('profileArchives').get(key)) throw new Error('Profile migration destination collision')
+          await tx.objectStore('profileArchives').add({ key, profileId: original.id, record })
+        }
+        for (const record of await tx.objectStore('pendingOperations').getAll()) {
+          const key = JSON.stringify([original.id, record.operationId])
+          if (await tx.objectStore('profilePendingOperations').get(key)) throw new Error('Profile migration destination collision')
+          await tx.objectStore('profilePendingOperations').add({ key, profileId: original.id, record })
         }
         await tx.objectStore('profileMigrations').add({
           key: 'legacy-guest-v1', profileId: original.id, completedAt: Date.now(),
@@ -143,7 +146,7 @@ export function createStorage(name = 'shopping-app') {
         await completion
         return original.id
       } catch (error) {
-        if (tx.active) tx.abort()
+        try { tx.abort() } catch { /* transaction already completed or aborted */ }
         await completion.catch(() => {})
         throw error
       }
