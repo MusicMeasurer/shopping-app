@@ -85,6 +85,21 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
 }
 
 function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision, headerActions }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode }) {
+  const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
+    try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
+  })
+  const [contentSize, setContentSize] = useState<'large' | 'standard'>(() => {
+    try { return localStorage.getItem('shopping-content-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
+  })
+  const [settingsOpen, setSettingsOpen] = useState(false)
+  function chooseCardSize(value: 'large' | 'standard') {
+    setCardSize(value)
+    try { localStorage.setItem('shopping-card-size', value) } catch { /* storage disabled */ }
+  }
+  function chooseContentSize(value: 'large' | 'standard') {
+    setContentSize(value)
+    try { localStorage.setItem('shopping-content-size', value) } catch { /* storage disabled */ }
+  }
   const [active, setActive] = useState<ListId>('groceries')
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -177,10 +192,22 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     event.preventDefault()
     if (await shopping.rename(item, editingName)) { setEditingId(null); setEditingName('') }
   }
-  return <main>
-    <header><div className="app-topbar"><div className="brand">ПОКУПКИ · v0.0.1</div>{headerActions}</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
+  return <main className={`shopping-e4 content-${contentSize}`}>
+    <header><div className="app-topbar"><button type="button" className="settings-trigger" aria-label="Настройки" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(open => !open)}>☰</button><div className="brand">ПОКУПКИ · E4 (разработка)</div>{headerActions}</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
+    {settingsOpen && <section className="settings-panel" aria-label="Настройки приложения">
+      <h2>Настройки</h2>
+      <fieldset><legend>Размер карточек списков</legend>
+        <label><input type="radio" name="card-size" checked={cardSize === 'standard'} onChange={() => chooseCardSize('standard')}/> Стандартный (3 в ряд)</label>
+        <label><input type="radio" name="card-size" checked={cardSize === 'large'} onChange={() => chooseCardSize('large')}/> Крупный (2 в ряд)</label>
+      </fieldset>
+      <fieldset><legend>Размер содержимого списка покупок</legend>
+        <label><input type="radio" name="content-size" checked={contentSize === 'standard'} onChange={() => chooseContentSize('standard')}/> Стандартный</label>
+        <label><input type="radio" name="content-size" checked={contentSize === 'large'} onChange={() => chooseContentSize('large')}/> Крупный</label>
+      </fieldset>
+      <button type="button" onClick={() => setSettingsOpen(false)}>Закрыть</button>
+    </section>}
     {accountId === null && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-pressed={!showArchive} onClick={() => setShowArchive(false)}>Активные списки</button><button type="button" aria-pressed={showArchive} onClick={() => setShowArchive(true)}>Архив ({archives.length})</button></div>}
-    {!showArchive && <nav aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>}
+    {!showArchive && <nav className={`lists-grid ${cardSize}`} aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>}
     {!showArchive && accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
     {!showArchive && accountId === null && list && <div className="list-toolbar" aria-label="Управление списком"><button type="button" disabled={changingList} onClick={() => { const name = window.prompt('Новое название списка', list.name); if (name !== null) void updateLocalList('rename', list.id, name) }}>Переименовать список</button><button type="button" disabled={changingList} onClick={() => void updateLocalList('kind', list.id, ('kind' in list && list.kind === 'oneoff') ? 'permanent' : 'oneoff')}>Тип: {'kind' in list && list.kind === 'oneoff' ? 'разовый' : 'постоянный'}</button><button type="button" disabled={changingList || shopping.busy || shopping.loading || rows.length === 0} onClick={() => void completeLocalList()}>Завершить список</button></div>}
     {listError && <p role="alert" className="error">{listError}</p>}
