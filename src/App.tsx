@@ -295,8 +295,8 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       </div>)}
       {accountId===null&&<div className="list-tile create-tile"><button type="button" className="list-select create-list-tile" aria-label="Новый список" onClick={()=>{setNewListName('');setNewListKind('permanent');setNewListDialog(true)}}><span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span></button></div>}
     </nav>}
-    {accountId === null && newListDialog && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setNewListDialog(false) }}>
-      <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="new-list-title">
+    {accountId === null && newListDialog && <div className="dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setNewListDialog(false) }}>
+      <section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="new-list-title">
         <div className="account-dialog-heading"><h2 id="new-list-title">Новый список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
         <form onSubmit={event => void createLocalList(event)}>
           <label htmlFor="new-list-name">Название списка</label>
