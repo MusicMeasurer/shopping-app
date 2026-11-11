@@ -52,4 +52,22 @@ describe('profile item adapter', () => {
     await storage.close()
   })
 
+  it('atomically reorders only the selected profile and rejects mismatched list sets', async () => {
+    const storage=createStorage('e4-reorder-'+crypto.randomUUID())
+    const owner=await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    const other=crypto.randomUUID()
+    await storage.createLocalProfile(other,Date.now())
+    const a={id:crypto.randomUUID(),name:'Первый',symbol:'🛒',kind:'permanent' as const,createdAt:1,position:0}
+    const b={...a,id:crypto.randomUUID(),name:'Второй',createdAt:2,position:1}
+    await storage.saveProfileList(owner,a);await storage.saveProfileList(owner,b)
+    await storage.saveProfileList(other,{...a,id:crypto.randomUUID()})
+    await storage.reorderProfileLists(owner,[{...b,position:0},{...a,position:1}])
+    expect((await storage.readProfileLists(owner)).sort((x,y)=>(x.position??0)-(y.position??0)).map(x=>x.id)).toEqual([b.id,a.id])
+    await expect(storage.reorderProfileLists(owner,[{...a,position:0}])).rejects.toThrow('List set changed')
+    expect(await storage.readProfileLists(other)).toHaveLength(1)
+    expect((await storage.readProfileLists(owner)).find(x=>x.id===b.id)?.position).toBe(0)
+    await storage.close()
+  })
+
 })
