@@ -39,6 +39,31 @@ function setup(pending: PendingItemOperation[] = []) {
   return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, readAccountItemVersions, tombstoneRead, order, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
+  it('preserves durable pending operations when server rejects a mutation', async () => {
+    const test = setup([{ kind: 'cloud-add', operationId, localListId: 'groceries',
+      remoteListId: listId, itemId,
+      item: { id: itemId, listId: 'groceries', name: 'Молоко', purchased: false, createdAt: 1 },
+    }])
+    test.rpc.mockResolvedValueOnce({ data: null, error: { message: 'network unavailable' } } as never)
+    await expect(test.sync.flush()).rejects.toThrow()
+    expect(test.commitAccountReceipt).not.toHaveBeenCalled()
+    expect(test.acknowledgeAccountPending).not.toHaveBeenCalled()
+  })
+
+  it('does not commit a server response after the active account changes', async () => {
+    const test = setup([{ kind: 'cloud-add', operationId, localListId: 'groceries',
+      remoteListId: listId, itemId,
+      item: { id: itemId, listId: 'groceries', name: 'Молоко', purchased: false, createdAt: 1 },
+    }])
+    test.rpc.mockImplementationOnce(async () => {
+      test.deactivate()
+      return { data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }
+    })
+    await expect(test.sync.flush()).rejects.toThrow('Account changed')
+    expect(test.commitAccountReceipt).not.toHaveBeenCalled()
+    expect(test.acknowledgeAccountPending).not.toHaveBeenCalled()
+  })
+
   it('rejects a changing server snapshot without writing imported items', async () => {
     const test = setup()
     const remote = { id: crypto.randomUUID(), list_id: listId, name: 'Соль',
