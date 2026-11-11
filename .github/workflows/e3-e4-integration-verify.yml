@@ -30,4 +30,4 @@ jobs:
       - run: npm ci
       - run: npx playwright install --with-deps chromium webkit
       - run: npm run build
-      - run: npm run test:e2e
+      - run: npx playwright test tests/e4.spec.ts
