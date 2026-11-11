@@ -88,6 +88,28 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
+  it('rejects quantity and unit edits on cloud-bound lists before local writes or queueing', async () => {
+    const storage = await setup()
+    const store = cloudAwareItemStore(storage, 'account-a')
+    const item = createItem('groceries', 'Рис')
+    await expect(store.save({ ...item, quantity: 2, unit: 'кг' }))
+      .rejects.toThrow('versioned E4 server contract')
+    await expect(store.save({ ...item, unit: 'кг' }))
+      .rejects.toThrow('versioned E4 server contract')
+    expect(await storage.readAccountItems('account-a')).toEqual([])
+    expect(await storage.readAccountPending('account-a')).toEqual([])
+    await storage.close()
+  })
+
+  it('preserves quantity and unit for unbound local-only account items', async () => {
+    const storage = await setup()
+    const item = { ...createItem('household', 'Соль'), quantity: 2, unit: 'кг' }
+    await cloudAwareItemStore(storage, 'account-a').save(item)
+    expect(await storage.readAccountItems('account-a')).toEqual([item])
+    expect(await storage.readAccountPending('account-a')).toEqual([])
+    await storage.close()
+  })
+
   it('keeps unbound account lists local only', async () => {
     const storage = await setup()
     const item = createItem('household', 'Мыло')
