@@ -51,7 +51,8 @@ test('bound account queues an offline add across browser restart and syncs after
     await expect(page.getByRole('checkbox', { name: afterRestartName })).toBeVisible()
     // Reconnection must reverify server identity before uploading queued edits.
     await context.setOffline(false)
-    await page.reload()
+    // Connectivity event must reverify the account and drain the durable queue
+    // without requiring another page reload or manual cloud action.
     await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
     await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 20000 })
     await expect.poll(async () => {
