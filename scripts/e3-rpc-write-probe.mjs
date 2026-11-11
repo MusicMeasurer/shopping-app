@@ -101,11 +101,15 @@ try {
         p_item: itemId, p_name: null, p_purchased: null, p_expected_version: rows[0].version,
       })
       if (deleted.error) throw deleted.error
+      // The lab intentionally permits owners to read tombstones so offline
+      // devices can reconcile deletions. Assert the row is deleted, not hidden.
       const { data: after, error: afterError } = await owner.client.from('shopping_items')
-        .select('id').eq('id', itemId)
+        .select('id,deleted_at,version').eq('id', itemId)
       if (afterError) throw afterError
-      assert.equal(after.length, 0, 'Soft-deleted probe must be invisible')
-      console.log('PASS: versioned delete and cleanup')
+      assert.equal(after.length, 1, 'Soft-deleted probe tombstone must remain for reconciliation')
+      assert.ok(after[0].deleted_at, 'Soft-deleted probe must have a deletion marker')
+      assert.equal(after[0].version, version + 1, 'Deletion must advance item version')
+      console.log('PASS: versioned tombstone and cleanup')
     }
   }
 }
