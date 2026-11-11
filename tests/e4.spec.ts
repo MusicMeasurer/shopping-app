@@ -51,6 +51,8 @@ test('E4: list type changes both ways, preserves items, persists and controls co
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await page.getByRole('button', { name: 'Действия со списком' }).click()
   await page.getByRole('menuitemradio', { name: /Постоянный/ }).click()
+  // Wait for the durable IndexedDB update, not just the menu closing.
+  await expect(page.getByRole('button', { name: /Тип списка: Постоянный/ })).toBeVisible()
   await expect(page.getByText('Краска · 2 л')).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: 'Для ремонта', exact: true }).click()
