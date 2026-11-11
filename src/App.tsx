@@ -105,6 +105,8 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const [listError, setListError] = useState<string | null>(null)
   const [newListName, setNewListName] = useState('')
   const [creatingList, setCreatingList] = useState(false)
+  const [newListDialog, setNewListDialog] = useState(false)
+  const [newListKind, setNewListKind] = useState<'permanent' | 'oneoff'>('permanent')
   const [changingList, setChangingList] = useState(false)
   const [archives, setArchives] = useState<ArchivedListRecord[]>([])
   const [showArchive, setShowArchive] = useState(false)
@@ -163,7 +165,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if (accountId !== null || !localLists || creatingList) return
     const trimmed = newListName.trim()
     if (!trimmed || trimmed.length > 120) { setListError('Введите название списка от 1 до 120 символов.'); return }
-    const list: ShoppingListRecord = { id: crypto.randomUUID(), name: trimmed, symbol: '📝', kind: 'oneoff', createdAt: Date.now(), position: localLists.length }
+    const list: ShoppingListRecord = { id: crypto.randomUUID(), name: trimmed, symbol: '🛒', kind: newListKind, createdAt: Date.now(), position: localLists.length }
     setCreatingList(true)
     try {
       if (guestProfileId) await storage.saveProfileList(guestProfileId, list)
@@ -171,6 +173,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       setLocalLists(previous => previous ? [...previous, list] : [list])
       setActive(list.id)
       setNewListName('')
+      setNewListDialog(false)
       setListError(null)
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось создать список') }
     finally { setCreatingList(false) }
@@ -207,8 +210,25 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       <button type="button" onClick={() => setSettingsOpen(false)}>Закрыть</button>
     </section>}
     {accountId === null && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-pressed={!showArchive} onClick={() => setShowArchive(false)}>Активные списки</button><button type="button" aria-pressed={showArchive} onClick={() => setShowArchive(true)}>Архив ({archives.length})</button></div>}
-    {!showArchive && <nav className={`lists-grid ${cardSize}`} aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>}
-    {!showArchive && accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
+    {!showArchive && <nav className={`lists-grid ${cardSize}`} aria-label="Списки покупок">
+      {visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}
+      {accountId === null && <button type="button" className="create-list-tile" onClick={() => { setNewListName(''); setNewListKind('permanent'); setNewListDialog(true) }}><span aria-hidden="true">＋</span>Новый список</button>}
+    </nav>}
+    {accountId === null && newListDialog && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setNewListDialog(false) }}>
+      <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="new-list-title">
+        <div className="account-dialog-heading"><h2 id="new-list-title">Новый список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
+        <form onSubmit={event => void createLocalList(event)}>
+          <label htmlFor="new-list-name">Название списка</label>
+          <input id="new-list-name" autoFocus value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} required disabled={creatingList || localLists === null}/>
+          <label htmlFor="new-list-kind">Тип списка</label>
+          <select id="new-list-kind" value={newListKind} onChange={event => setNewListKind(event.target.value as 'permanent' | 'oneoff')}>
+            <option value="permanent">Постоянный</option><option value="oneoff">Разовый</option>
+          </select>
+          <button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button>
+          <button type="button" onClick={() => setNewListDialog(false)}>Отмена</button>
+        </form>
+      </section>
+    </div>}
     {!showArchive && accountId === null && list && <div className="list-toolbar" aria-label="Управление списком"><button type="button" disabled={changingList} onClick={() => { const name = window.prompt('Новое название списка', list.name); if (name !== null) void updateLocalList('rename', list.id, name) }}>Переименовать список</button><button type="button" disabled={changingList} onClick={() => void updateLocalList('kind', list.id, ('kind' in list && list.kind === 'oneoff') ? 'permanent' : 'oneoff')}>Тип: {'kind' in list && list.kind === 'oneoff' ? 'разовый' : 'постоянный'}</button><button type="button" disabled={changingList || shopping.busy || shopping.loading || rows.length === 0} onClick={() => void completeLocalList()}>Завершить список</button></div>}
     {listError && <p role="alert" className="error">{listError}</p>}
     {showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
