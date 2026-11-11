@@ -31,6 +31,7 @@ async function add(page: Page, name: string) {
 }
 
 test('real A → B → A isolates local purchases and preserves original guest across reload and offline restart', async ({ page, context }) => {
+  test.setTimeout(180000)
   if (process.env.VITE_SUPABASE_URL !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' ||
       !process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.startsWith('sb_publishable_')) {
     throw new Error('Only pinned disposable lab with publishable key is allowed')
