@@ -44,6 +44,17 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
         return false
       }
     },
+    // E4 full-field editing through the E3 profile/account-scoped item store.
+    edit: async (item: Item, rawName: string, quantity?: number, unit?: string) => {
+      try {
+        const name = normalizeItemName(rawName)
+        if (quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0)) throw new Error('Количество должно быть положительным.')
+        const normalizedUnit = unit?.trim() || undefined
+        const updated = { ...item, name, quantity, unit: normalizedUnit }
+        if (name === item.name && quantity === item.quantity && normalizedUnit === item.unit) return true
+        return await mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row))
+      } catch (error) { setError((error as Error).message); return false }
+    },
     toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },
     remove: (id: string) => mutate(() => storage.remove(id), current => current.filter(item => item.id !== id)),
   }
