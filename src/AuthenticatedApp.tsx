@@ -438,6 +438,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setError('')
     try {
       await controller.signOut()
+      setAccountDialogOpen(false)
+      setVerifiedEmail('')
     } catch {
       setError('Не удалось завершить выход на сервере. Проверьте подключение.')
     } finally {
