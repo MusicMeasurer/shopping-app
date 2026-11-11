@@ -1,7 +1,9 @@
 import 'fake-indexeddb/auto'
 import { it, expect } from 'vitest'
+import { openDB } from 'idb'
 import { createStorage } from './storage'
 import { createItem } from '../domain/shopping'
+
 it('persists both lists, purchases and deletion across database connections', async () => {
   const name = `test-${crypto.randomUUID()}`
   const first = createStorage(name)
@@ -14,4 +16,122 @@ it('persists both lists, purchases and deletion across database connections', as
   const third = createStorage(name)
   expect(await third.read()).toEqual([{ ...food, purchased: true }])
   await third.close()
+})
+
+it('upgrades a v1 database without losing local items', async () => {
+  const name = `migration-${crypto.randomUUID()}`
+  const item = createItem('groceries', 'Хлеб')
+  const legacy = await openDB(name, 1, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+  })
+  await legacy.put('items', item)
+  legacy.close()
+  const upgraded = createStorage(name)
+  expect(await upgraded.read()).toEqual([item])
+  expect(await upgraded.readPending()).toEqual([])
+  await upgraded.close()
+})
+
+it('persists queued operations across restart and acknowledges one at a time', async () => {
+  const name = `queue-${crypto.randomUUID()}`
+  const first = createStorage(name)
+  const item = createItem('groceries', 'Молоко')
+  const add = { operationId: 'op-1', kind: 'upsert' as const, item }
+  const remove = { operationId: 'op-2', kind: 'delete' as const, itemId: item.id }
+  await first.enqueuePending(add)
+  await first.enqueuePending(remove)
+  await first.enqueuePending(add)
+  await expect(first.enqueuePending({ ...add, item: { ...item, purchased: true } })).rejects.toThrow()
+  await first.close()
+
+  const second = createStorage(name)
+  expect(await second.readPending()).toEqual([add, remove])
+  await second.acknowledgePending('op-1')
+  expect(await second.readPending()).toEqual([remove])
+  await second.close()
+})
+
+it('applies a reviewed server deletion only with unchanged item and confirmed version', async () => {
+  const storage = createStorage('delete-review-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Молоко')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account))[0].version).toBe(3)
+  await storage.close()
+})
+
+it('rolls back all reviewed deletions if a later item changed locally', async () => {
+  const storage = createStorage('delete-rollback-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const first = createItem('groceries', 'Соль')
+  const second = createItem('groceries', 'Перец')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  for (const item of [first, second]) {
+    await storage.saveAccountItem(account, item)
+    await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  }
+  await storage.saveAccountItem(account, { ...second, purchased: true })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item: first, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+    { item: second, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toHaveLength(2)
+  await storage.close()
+})
+
+it('rejects reviewed deletion when the item has a pending edit', async () => {
+  const storage = createStorage('delete-pending-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сахар')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 1)
+  await storage.enqueueAccountPending(account, { operationId: crypto.randomUUID(), kind: 'upsert', item })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 1, serverDeletedVersion: 2 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  await storage.close()
+})
+
+it('refuses a repeated deletion after its local item was already removed', async () => {
+  const storage = createStorage('delete-repeat-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Яйца')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  const reviewed = [{ item, expectedLocalVersion: 2, serverDeletedVersion: 3 }]
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed))
+    .rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(3)
+  await storage.close()
+})
+
+it('rejects a stale reviewed deletion when a newer server version was recorded', async () => {
+  const storage = createStorage('delete-stale-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сыр')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 4)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(4)
+  await storage.close()
 })

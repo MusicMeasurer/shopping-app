@@ -1,0 +1,6 @@
+# Siri uses an independently scoped, revocable bearer token in its handler.
+# Supabase account JWT validation must be disabled for this function only.
+# The handler must still authenticate every request against the hashed
+# credential in Postgres. Do not deploy before lab integration/security tests.
+[functions.siri-add]
+verify_jwt = false

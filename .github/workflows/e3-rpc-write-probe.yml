@@ -1,0 +1,31 @@
+name: E3 disposable RPC write integration
+on:
+  push:
+    branches: [feature/e3-cloud-auth]
+    paths:
+      - 'scripts/e3-rpc-write-probe.mjs'
+      - '.github/workflows/e3-rpc-write-probe.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  rpc-write-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: e3-lab
+    env:
+      E3_LAB_URL: ${{ secrets.E3_LAB_URL }}
+      E3_LAB_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+      E3_USER_A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      E3_USER_A_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+      E3_USER_B_EMAIL: ${{ secrets.E3_USER_B_EMAIL }}
+      E3_USER_B_PASSWORD: ${{ secrets.E3_USER_B_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Verify real RPC writes in disposable lab
+        run: node scripts/e3-rpc-write-probe.mjs
