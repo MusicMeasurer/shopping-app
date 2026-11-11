@@ -257,3 +257,26 @@ Following user-approved PWA-first release strategy, resumed E4 instead of native
 - three Vitest cases for trimming, validation and item-identity preservation (`f803be1`).
 
 **Verification status:** source commits completed; automated Vitest/build and physical iPhone checks **NOT YET RUN**, so FR-003-03 remains **implemented, not verified**. Existing cloud queue may block consecutive edits pending sync; this is not silently bypassed. No production deployment, no main/docs changes. Next: CI/build regression and actual guest/account persistence tests before marking accepted.
+
+
+## 2026-11-11 · E4→E3 integration incident — source audit and corrective gate
+
+**Incident status: CONFIRMED; correction NOT YET VERIFIED.** Read-only comparison of `snapshot/e4-ui-v1.0`, `feature/e4-functional-acceptance`, `feature/e3-e4-integration`, and `feature/local-profiles-foundation`. This entry is recorded before further integration changes, at the user's explicit request. Neither `main` nor published PWA is modified.
+
+### Confirmed errors and evidence
+
+1. **Wrong integration source / loss of accepted baseline.** The accepted E4 `src/App.tsx` has blob SHA `9760df0b10719d6078056d8c900a332a0124ef66` in both `snapshot/e4-ui-v1.0` and `feature/e4-functional-acceptance` (18,825 characters). The first E3/E4 integration uses different `src/App.tsx` blob `c143f286357a37c224b60dfa3a53de7c6e14aa5d` (10,870 characters), not the accepted E4 component. The subsequent local-profile branch uses another partial rewrite `1deb38594220e28fd674949a37b00d89e95805d4` (20,603 characters). This establishes baseline mismatch; it does not establish the original author's intention.
+2. **E4 functionality omitted.** E4 swipe archive navigation (`startSwipe`/`endSwipe`), long-press drag (`startPress`/`movePress`/`finishPress`), full list tile/menu with portal and dismiss, compact two-dot navigation, rename dialog, item quantity/unit editing and cancellation/validation semantics are not present as equivalent implementations in the integration UI. `src/domain/ordering.ts` (E4 blob `d842a746c7482932214428ce67bb77ad72616897`, including `placeList`) is absent from both integration branches. The first integration CSS (3,149 characters) omits E4 menu/tile/editor/dialog styles (E4 CSS 14,805 characters). Current CSS (6,833 characters) has only some restored tile/settings styles. The current item hook is a different, smaller implementation (2,608 vs E4 5,702 characters), and item rename does not restore optional quantity/unit editing.
+3. **Partial work reported without an E4 parity gate.** Subsequent integration commits restored settings, sizing and new-list tile/dialog, but not all E4 behavior. Current integration has no `tests/e4.spec.ts` at all; accepted E4 has 18 Playwright acceptance cases. Passing E3/profile CI therefore does not establish E4 completeness or regression freedom.
+4. **Guest/account mismatch.** Current UI gates local list management and archive behind `accountId === null`; account mode uses predefined lists and cloud-aware item store. Arbitrary E4 list/archive operations are not proven supported by account/cloud synchronization. Do not represent local E4 completion as cloud feature parity.
+5. **Branch provenance not controlled as a release gate.** Comparison confirms `feature/e3-e4-integration` is not a descendant of the accepted E4 snapshot (diverged), and `feature/local-profiles-foundation` is 89 commits ahead of the former. Branch proliferation itself is not a defect; failure to pin the E4 acceptance ref and run parity checks before reporting integration success is the process defect.
+6. **Overstated progress and unsupported estimate.** Prior reports emphasized green CI for implemented fragments without distinguishing E4 acceptance. A prior 24–40-hour estimate was not derived from an audited reuse plan and must not be treated as a validated remaining-work estimate.
+
+### Corrective contract / acceptance gate
+
+- **Authoritative E4:** `feature/e4-functional-acceptance` (same app source as `snapshot/e4-ui-v1.0`, plus 18 acceptance tests). Preserve E4 behavior and presentation, not an intermediate approximation.
+- **Authoritative E3 data/security base:** current `feature/local-profiles-foundation` until an explicit reviewed change. Preserve guest-profile isolation, account isolation, auth, offline queue, recovery and existing E3 tests.
+- **Integration method:** adapt accepted E4 UI/handlers to E3 storage interfaces; reuse proven E4 code and tests. Do not overwrite E3 auth/storage with old E4 files. Distinguish local E4 integration from cloud list/archive synchronization, which requires separate design and tests.
+- **Verification before claiming done:** port and run all 18 accepted E4 cases against the integration branch; run existing E3/profile/auth/offline/hosted A/B CI; test guest and authenticated modes and negative isolation/cancellation/reload cases. Verify final branch commit and CI conclusions. Record every unsupported case explicitly. No main merge or production deployment without authorization.
+
+**Current status:** audit complete for the listed source files, no integration repair yet in this entry. Next step: implement on a dedicated integration branch, starting with a parity-preserving E4 UI adapter while protecting E3 data boundaries.
