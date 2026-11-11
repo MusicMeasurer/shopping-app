@@ -33,12 +33,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const currentAccount = view.status === 'account' ? view.accountId : null
+  const offlineAccount = view.status === 'offline-account' ? view.accountId : null
+  const workspaceAccount = currentAccount ?? offlineAccount
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
   // The account ID is only trusted after a fresh server verification. Keep
   // account-scoped UI unmounted until its local profile exists durably.
   useEffect(() => {
-    if (!currentAccount || !client) { setReadyAccount(null); setProfileError(''); return }
+    if (!workspaceAccount || !client) { setReadyAccount(null); setProfileError(''); return }
+    if (offlineAccount) {
+      let cancelled = false
+      setReadyAccount(null)
+      setProfileError('')
+      void storage.readLocalProfiles().then(registry => {
+        if (cancelled) return
+        if (!registry?.profiles.some(p => p.cloudAccountId === offlineAccount)) throw new Error('No verified local binding')
+        setReadyAccount(offlineAccount)
+      }).catch(() => { if (!cancelled) setProfileError('Локальный профиль не подтверждён. Доступ заблокирован.') })
+      return () => { cancelled = true }
+    }
     let cancelled = false
     setReadyAccount(null)
     setProfileError('')
@@ -55,7 +68,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
     return () => { cancelled = true }
-  }, [client, currentAccount, storage])
+  }, [client, currentAccount, offlineAccount, workspaceAccount, storage])
   const activeAccount = useRef<string | null>(null)
   // A verified session is not enough: the account workspace must have a
   // durable local profile before any background sync or refresh may run.
@@ -127,14 +140,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
-    }, setView, guard, async () => verifiedAccountId(client))
+    }, setView, guard, async () => verifiedAccountId(client), async session => {
+      if (navigator.onLine || guard.isPending()) return null
+      const id = session.user?.id?.toLowerCase()
+      const registry = await storage.readLocalProfiles()
+      return registry?.profiles.some(profile => profile.cloudAccountId === id) ? id : null
+    })
     setController(next)
     void next.initialize()
     return () => {
       next.dispose()
       setController(null)
     }
-  }, [client])
+  }, [client, storage])
+
+  // On reconnect, revalidate the server identity before allowing cloud access.
+  useEffect(() => {
+    if (!offlineAccount || !controller) return
+    const recheck = () => {
+      if (navigator.onLine) {
+        setView({ status: 'checking' })
+        void controller.initialize()
+      }
+    }
+    window.addEventListener('online', recheck)
+    return () => window.removeEventListener('online', recheck)
+  }, [offlineAccount, controller])
 
   // Account changes invalidate all cloud discovery and selection state.
   useEffect(() => {
@@ -399,7 +430,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
-  if (currentAccount && (readyAccount !== currentAccount || profileError)) return <main>
+  if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
     {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
   </main>
@@ -409,7 +440,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   </main>
   return <>
     {client && <aside aria-label="Аккаунт">
-      {view.status === 'account' ? <div><span>Вы вошли в аккаунт</span> <button disabled={busy} onClick={() => void signOut()}>Выйти</button></div> :
+      {view.status === 'offline-account' ? <div role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</div> : view.status === 'account' ? <div><span>Вы вошли в аккаунт</span> <button disabled={busy} onClick={() => void signOut()}>Выйти</button></div> :
         <form onSubmit={signIn}>
           <label htmlFor="auth-email">Email</label>
           <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
@@ -460,6 +491,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
-    <App storage={storage} accountId={currentAccount} onQueued={onQueued} refreshRevision={workspaceRevision} />
+    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision} />
   </>
 }
