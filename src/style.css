@@ -113,3 +113,22 @@ nav.lists-grid.standard .create-list-tile .list-name{font-size:10px}
 .create-dialog form{display:grid;gap:10px}
 .create-dialog form>label{margin:4px 0 0}
 .create-dialog input,.create-dialog select{width:100%;min-width:0;border:1px solid #d8dfd6;border-radius:12px;padding:12px;background:#fafbf8;color:#203b30;font-size:16px}
+
+/* E4: compact section navigation above cards */
+.section-switch{margin:6px 0 8px;gap:4px;height:22px}
+.section-switch button{min-height:22px;min-width:24px;width:24px;font-size:10px}
+.section-switch button.current{font-size:14px}
+nav.lists-grid{margin-top:8px}
+.list-heading-copy{min-width:0;flex:1;display:flex;flex-direction:column;align-items:flex-start;gap:5px}
+.list-heading-copy h2{overflow-wrap:anywhere}
+.list-toolbar{display:flex;align-items:center;gap:2px;flex-shrink:0}
+.list-toolbar button{display:grid;place-items:center;width:34px;height:38px;min-width:34px;padding:0;border:0;background:#eef3eb;color:#25634c;border-radius:9px;font-size:21px;line-height:1;-webkit-tap-highlight-color:transparent}
+.list-toolbar button.danger{color:#b33333;background:#fff1f0}
+.app-shell.standard section[aria-labelledby="list-title"]{line-height:1.2}
+.app-shell.standard section[aria-labelledby="list-title"] .item span{line-height:1.2}
+.app-shell.standard section[aria-labelledby="list-title"] li{min-height:54px}
+.app-shell.standard section[aria-labelledby="list-title"] .item{padding:8px 0}
+.app-shell.large section[aria-labelledby="list-title"]{font-size:1.2em}
+.app-shell.large section[aria-labelledby="list-title"] h2{font-size:24px}
+.app-shell.large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
+@media(max-width:380px){.list-toolbar button{width:30px;min-width:30px;height:36px;font-size:19px}.section-heading{gap:5px}}

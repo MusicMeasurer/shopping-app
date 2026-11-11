@@ -185,3 +185,39 @@ test('E4: two-dot indicator switches archive and main view', async ({ page }) =>
   await page.getByRole('button', { name: 'Основные списки' }).click()
   await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
 })
+
+test('E4: archive hides cards, compact dots return to lists', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await expect(page.locator('nav.lists-grid')).toBeVisible()
+  await page.getByRole('button', { name: /Архив,/ }).click()
+  await expect(page.locator('nav.lists-grid')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
+  await page.getByRole('button', { name: 'Основные списки' }).click()
+  await expect(page.locator('nav.lists-grid')).toBeVisible()
+})
+test('E4: quick actions toggle type and complete list', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: /Тип списка: Постоянный/ }).click()
+  await expect(page.getByRole('button', { name: /Тип списка: Разовый/ })).toBeVisible()
+  await page.getByRole('button', { name: /Тип списка: Разовый/ }).click()
+  await expect(page.getByRole('button', { name: /Тип списка: Постоянный/ })).toBeVisible()
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
+})
+test('E4: swipe from list card area opens archive', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await page.evaluate(() => {
+    const target = document.querySelector('nav .list-select')!
+    const make = (type: string, x: number, y: number) => {
+      const touch = { identifier: 1, target, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 }
+      const event = new Event(type, { bubbles: true, cancelable: true })
+      Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [touch] })
+      Object.defineProperty(event, 'changedTouches', { value: [touch] })
+      target.dispatchEvent(event)
+    }
+    make('touchstart', 60, 120)
+    make('touchend', 170, 125)
+  })
+  await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
+})
