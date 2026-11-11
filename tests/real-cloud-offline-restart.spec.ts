@@ -21,6 +21,8 @@ test('bound account queues an offline add across browser restart and syncs after
   const listId = lists![0].id as string
   const name = 'OFFLINE_BROWSER_' + crypto.randomUUID()
   let itemId: string | null = null
+  let afterRestartId: string | null = null
+  const afterRestartName = 'OFFLINE_AFTER_RESTART_' + crypto.randomUUID()
   try {
     await page.goto('/shopping-app/')
     await page.getByLabel('Email').fill(email)
@@ -42,8 +44,12 @@ test('bound account queues an offline add across browser restart and syncs after
     if (beforeError) throw beforeError
     expect(before).toHaveLength(0)
     await page.reload()
-    // Reconnection must not discard the locally durable edit, even if offline
-    // account restoration is separately blocked by identity verification.
+    await expect(page.getByText('Локальный профиль: нет сети.', { exact: false })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByRole('checkbox', { name })).toBeVisible()
+    await page.getByLabel('Что нужно купить?', { exact: false }).fill(afterRestartName)
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
+    await expect(page.getByRole('checkbox', { name: afterRestartName })).toBeVisible()
+    // Reconnection must reverify server identity before uploading queued edits.
     await context.setOffline(false)
     await page.reload()
     await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
@@ -54,17 +60,24 @@ test('bound account queues an offline add across browser restart and syncs after
       itemId = data?.[0]?.id ?? null
       return data?.length ?? 0
     }, { timeout: 30000 }).toBe(1)
+    await expect.poll(async () => {
+      const { data, error } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', afterRestartName).is('deleted_at', null)
+      if (error) throw error
+      afterRestartId = data?.[0]?.id ?? null
+      return data?.length ?? 0
+    }, { timeout: 30000 }).toBe(1)
   } finally {
     await context.setOffline(false)
     if (!itemId) {
       const { data } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
       itemId = data?.[0]?.id ?? null
     }
-    if (itemId) {
-      const { data: row } = await api.from('shopping_items').select('version').eq('id', itemId).single()
+    for (const cleanupId of [itemId, afterRestartId]) {
+      if (!cleanupId) continue
+      const { data: row } = await api.from('shopping_items').select('version').eq('id', cleanupId).single()
       if (row) {
         const { error } = await api.rpc('apply_item_change', {
-          p_operation: crypto.randomUUID(), p_list: listId, p_action: 'delete', p_item: itemId,
+          p_operation: crypto.randomUUID(), p_list: listId, p_action: 'delete', p_item: cleanupId,
           p_name: null, p_purchased: null, p_expected_version: row.version,
         })
         if (error) throw error
