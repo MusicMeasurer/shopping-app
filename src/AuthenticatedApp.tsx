@@ -20,6 +20,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [controller, setController] = useState<Controller | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false)
+  const [verifiedEmail, setVerifiedEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
@@ -35,6 +37,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const currentAccount = view.status === 'account' ? view.accountId : null
   const offlineAccount = view.status === 'offline-account' ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
+  useEffect(() => {
+    if (!currentAccount || !client) { setVerifiedEmail(''); return }
+    let cancelled = false
+    void client.auth.getUser().then(({ data, error }) => {
+      if (!cancelled && !error && data.user?.id === currentAccount) setVerifiedEmail(data.user.email ?? '')
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [currentAccount, client])
+  useEffect(() => {
+    if (view.status === 'account') { setAccountDialogOpen(false); setPassword('') }
+  }, [view.status])
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
   // The account ID is only trusted after a fresh server verification. Keep
@@ -440,18 +453,23 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
   return <>
-    {client && <aside aria-label="Аккаунт">
-      {view.status === 'offline-account' ? <div role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</div> : view.status === 'account' ? <div><span>Вы вошли в аккаунт</span> <button disabled={busy} onClick={() => void signOut()}>Выйти</button></div> :
-        <form onSubmit={signIn}>
-          <label htmlFor="auth-email">Email</label>
-          <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
-          <label htmlFor="auth-password">Пароль</label>
-          <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
-          <button disabled={busy || !controller}>Войти</button>
-          <p>Без входа покупки сохраняются только на этом устройстве.</p>
-        </form>}
-      {error && <p role="alert">{error}</p>}
-    </aside>}
+    {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
+    {client && accountDialogOpen && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setAccountDialogOpen(false) }}>
+      <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+        <div className="account-dialog-heading"><h2 id="account-dialog-title">{view.status === 'account' || view.status === 'offline-account' ? 'Мой аккаунт' : 'Вход в аккаунт'}</h2><button type="button" aria-label="Закрыть окно аккаунта" onClick={() => setAccountDialogOpen(false)}>×</button></div>
+        {view.status === 'account' ? <><p className="account-full-email">{verifiedEmail || 'Аккаунт подтверждён'}</p><button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
+          view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
+          <form onSubmit={signIn}>
+            <label htmlFor="auth-email">Email</label>
+            <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
+            <label htmlFor="auth-password">Пароль</label>
+            <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
+            <button disabled={busy || !controller}>Войти</button>
+            <p>Без входа покупки сохраняются только на этом устройстве.</p>
+          </form>}
+        {error && <p role="alert">{error}</p>}
+      </section>
+    </div>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
       {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
@@ -492,6 +510,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
-    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision} />
+    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      headerActions={client ? <div className="account-header-control">
+        {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
+        <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
+          <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
+        </button>
+      </div> : undefined} />
   </>
 }
