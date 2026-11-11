@@ -34,3 +34,9 @@ C. Wire authenticated UI to verified cloud lists while preserving guest profile 
 D. Run isolated hosted A/B, offline, regression and security checks; report remaining user acceptance gates.
 
 **Stop condition:** do not execute schema-changing SQL against existing `shoppingapp-migration-lab` or `shoppingapp-security-lab` as if either were disposable; they contain historical test state. No production resources or billing changes without separate permission.
+
+## Security advisor checkpoint
+
+Read-only Supabase security advisor reported informational RLS-without-policy notices for internal operation tables and warnings for authenticated-executable SECURITY DEFINER functions (including `apply_item_change`). These are **audit findings**, not proof of exploitable flaws: the current RPC checks `auth.uid()`, locks the target list and calls `can_access_list`. Each function's grants, authorization path and least-privilege role must be reviewed against hosted A/B tests before changing ACL. Advisor reference: https://supabase.com/docs/guides/database/database-linter?lint=0029_authenticated_security_definer_function_executable .
+
+**Additional verified RPC detail:** `apply_item_change` uses a payload hash for replay protection, list-level locking, item version checks, and a `list_changes` snapshot that currently includes name/purchased/version/deleted but **not quantity/unit**. Extending only the SQL columns or the client JSON would be insufficient: mutation hashing, list-change snapshots, remote pull/import and conflict signatures must be extended together.
