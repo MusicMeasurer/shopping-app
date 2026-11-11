@@ -40,6 +40,8 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
+  const blockedListeners = new Set<() => void>()
+  let upgradeBlocked = false
   const database = openDB<ShoppingDB>(name, 10, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
@@ -82,6 +84,10 @@ export function createStorage(name = 'shopping-app') {
     // cannot reopen after the upgrade. Uncooperative older connections block
     // the upgrade, so cutover cannot start while they still hold the database.
     blocking() { void database.then(db => db.close()) },
+    blocked() {
+      upgradeBlocked = true
+      for (const listener of blockedListeners) listener()
+    },
   })
   /** The fence is checked inside the SAME readwrite transaction as a legacy mutation.
    * New clients cannot race the cutover marker. Already-open older builds
@@ -108,6 +114,12 @@ export function createStorage(name = 'shopping-app') {
     }
   }
   return {
+    /** Immediately notifies late subscribers if an older open tab blocks schema upgrade. */
+    subscribeUpgradeBlocked(listener: () => void): () => void {
+      blockedListeners.add(listener)
+      if (upgradeBlocked) listener()
+      return () => { blockedListeners.delete(listener) }
+    },
     /** Atomic first-use initialization; preserves legacy stores and stable identity across restarts. */
     async ensureLocalProfiles(): Promise<LocalProfileRegistry> {
       const tx = (await database).transaction('localProfileRegistry', 'readwrite')
