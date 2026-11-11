@@ -16,9 +16,10 @@ export function itemStoreForAccount(storage: Storage, accountId: string | null) 
     save: (item: Item): Promise<void> => accountId === null
       ? storage.save(item)
       : storage.saveAccountItem(accountId, item),
+    saveMany: accountId === null ? (items: Item[]): Promise<void> => storage.saveItems(items) : undefined,
     remove: (id: string): Promise<void> => accountId === null
       ? storage.remove(id)
       : storage.removeAccountItem(accountId, id),
   }
 }
-export type ItemStore = ReturnType<typeof itemStoreForAccount>
+export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'save' | 'remove'> & { saveMany?: (items: Item[]) => Promise<void> }

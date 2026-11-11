@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createItem, normalizeItemName, type Item, type ListId } from '../domain/shopping'
+import { createItem, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
 import type { ItemStore } from '../data/account-item-store'
 export function useShopping(storage: ItemStore, refreshRevision = 0) {
   const [items, setItems] = useState<Item[]>([])
@@ -23,7 +23,14 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
   }
   return { items, loading, busy, error, reload,
     add: async (listId: ListId, name: string) => {
-      try { const item = createItem(listId, name); return await mutate(() => storage.save(item), current => [...current, item]) }
+      try {
+        if (!storage.saveMany) {
+          const item = createItem(listId, name)
+          return await mutate(() => storage.save(item), current => [...current, item])
+        }
+        const next = parseItems(name).map(entry => ({ ...createItem(listId, entry.name), quantity: entry.quantity, unit: entry.unit }))
+        return await mutate(() => storage.saveMany!(next), current => [...current, ...next])
+      }
       catch (error) { setError((error as Error).message); return false }
     },
     rename: async (item: Item, rawName: string) => {

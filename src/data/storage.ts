@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import type { Item } from '../domain/shopping'
+import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
 interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string }
@@ -10,7 +10,15 @@ interface ScopedOperation {
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
+export interface ShoppingListRecord {
+  id: string; name: string; symbol: string; kind: 'permanent' | 'oneoff'; createdAt: number; position?: number
+}
+export interface ArchivedListRecord {
+  id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
+}
 interface ShoppingDB extends DBSchema {
+  lists: { key: string; value: ShoppingListRecord }
+  archives: { key: string; value: ArchivedListRecord }
   items: { key: string; value: Item }
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
@@ -23,30 +31,86 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
-  const database = openDB<ShoppingDB>(name, 6, {
-    upgrade(db, oldVersion) {
-      if (oldVersion < 1) db.createObjectStore('items', { keyPath: 'id' })
-      if (oldVersion < 2) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
-      if (oldVersion < 3) {
+  const database = openDB<ShoppingDB>(name, 7, {
+    upgrade(db, oldVersion, _newVersion, tx) {
+      if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
+      if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      if (!db.objectStoreNames.contains('accountOperations')) {
         const store = db.createObjectStore('accountOperations', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 4) {
+      if (!db.objectStoreNames.contains('accountItems')) {
         const store = db.createObjectStore('accountItems', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 5) {
+      if (!db.objectStoreNames.contains('accountListMappings')) {
         const store = db.createObjectStore('accountListMappings', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
-      if (oldVersion < 6) {
+      if (!db.objectStoreNames.contains('accountItemVersions')) {
         const store = db.createObjectStore('accountItemVersions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
       }
+      // Additive upgrade from E3 v6 and from E4 v3. Never delete or overwrite data.
+      if (!db.objectStoreNames.contains('lists')) {
+        db.createObjectStore('lists', { keyPath: 'id' })
+        for (const list of defaultLists) void tx.objectStore('lists').put({ ...list, kind: 'permanent', createdAt: 0 })
+      }
+      if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
+
     },
     blocking() { void database.then(db => db.close()) },
   })
   return {
+    async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
+    async saveList(list: ShoppingListRecord): Promise<void> { await (await database).put('lists', list) },
+    async renameList(listId: string, name: string): Promise<void> {
+      const trimmed = name.trim()
+      if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+      const tx = (await database).transaction('lists', 'readwrite')
+      const list = await tx.store.get(listId)
+      if (!list) { await tx.done; throw new Error('Список не найден') }
+      await tx.store.put({ ...list, name: trimmed })
+      await tx.done
+    },
+    async changeListKind(listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
+      if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
+      const tx = (await database).transaction('lists', 'readwrite')
+      const list = await tx.store.get(listId)
+      if (!list) { await tx.done; throw new Error('Список не найден') }
+      await tx.store.put({ ...list, kind })
+      await tx.done
+    },
+    async reorderLists(records: ShoppingListRecord[]): Promise<void> {
+      const tx = (await database).transaction('lists', 'readwrite')
+      for (const record of records) await tx.store.put(record)
+      await tx.done
+    },
+    async saveItems(items: Item[]): Promise<void> {
+      const tx = (await database).transaction('items', 'readwrite')
+      for (const item of items) await tx.store.put(item)
+      await tx.done
+    },
+    async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
+    async deleteList(listId: string): Promise<void> {
+      const tx = (await database).transaction(['lists', 'items'], 'readwrite')
+      const items = await tx.objectStore('items').getAll()
+      for (const item of items) if (item.listId === listId) await tx.objectStore('items').delete(item.id)
+      await tx.objectStore('lists').delete(listId)
+      await tx.done
+    },
+    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
+      const tx = (await database).transaction(['lists', 'items', 'archives'], 'readwrite')
+      // Observe transaction rejection before abort; otherwise idb tx.done can become unhandled.
+      const completion = tx.done
+      void completion.catch(() => {})
+      const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
+      if (!items.length) { tx.abort(); await completion.catch(() => {}); throw new Error('Cannot archive an empty list') }
+      await tx.objectStore('archives').add({ id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items })
+      for (const item of items) await tx.objectStore('items').delete(item.id)
+      if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
+      await completion
+    },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
     async save(item: Item) { await (await database).put('items', item) },
     async remove(id: string) { await (await database).delete('items', id) },
