@@ -59,7 +59,9 @@ describe('account-scoped sync binding', () => {
       test.deactivate()
       return { data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }
     })
-    await expect(test.sync.flush()).rejects.toThrow('Account changed')
+    // The queue deliberately stops without throwing when sign-out occurs
+    // during a remote request; its unacknowledged operation is retried later.
+    await expect(test.sync.flush()).resolves.toBe(0)
     expect(test.commitAccountReceipt).not.toHaveBeenCalled()
     expect(test.acknowledgeAccountPending).not.toHaveBeenCalled()
   })
