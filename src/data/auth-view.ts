@@ -7,6 +7,7 @@ import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-sco
 export type AuthView =
   | { status: 'checking' }
   | { status: 'guest' }
+  | { status: 'offline-account'; accountId: string }
   | { status: 'account'; accountId: string }
 
 export type AuthEvent =
