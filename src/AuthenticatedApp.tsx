@@ -52,6 +52,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       }).catch(() => { if (!cancelled) setProfileError('Локальный профиль не подтверждён. Доступ заблокирован.') })
       return () => { cancelled = true }
     }
+    if (!currentAccount) return
     let cancelled = false
     setReadyAccount(null)
     setProfileError('')
