@@ -58,15 +58,18 @@ describe('profile item adapter', () => {
     await storage.markGuestCutoverReady()
     const other=crypto.randomUUID()
     await storage.createLocalProfile(other,Date.now())
-    const a={id:crypto.randomUUID(),name:'Первый',symbol:'🛒',kind:'permanent' as const,createdAt:1,position:0}
-    const b={...a,id:crypto.randomUUID(),name:'Второй',createdAt:2,position:1}
+    const original=await storage.readProfileLists(owner)
+    const a={id:crypto.randomUUID(),name:'Первый',symbol:'🛒',kind:'permanent' as const,createdAt:Date.now(),position:original.length}
+    const b={...a,id:crypto.randomUUID(),name:'Второй',createdAt:Date.now()+1,position:original.length+1}
     await storage.saveProfileList(owner,a);await storage.saveProfileList(owner,b)
-    await storage.saveProfileList(other,{...a,id:crypto.randomUUID()})
-    await storage.reorderProfileLists(owner,[{...b,position:0},{...a,position:1}])
-    expect((await storage.readProfileLists(owner)).sort((x,y)=>(x.position??0)-(y.position??0)).map(x=>x.id)).toEqual([b.id,a.id])
-    await expect(storage.reorderProfileLists(owner,[{...a,position:0}])).rejects.toThrow('List set changed')
-    expect(await storage.readProfileLists(other)).toHaveLength(1)
-    expect((await storage.readProfileLists(owner)).find(x=>x.id===b.id)?.position).toBe(0)
+    const otherBefore=await storage.readProfileLists(other)
+    const before=await storage.readProfileLists(owner)
+    const reordered=[...before.filter(x=>x.id!==a.id&&x.id!==b.id),b,a].map((x,i)=>({...x,position:i}))
+    await storage.reorderProfileLists(owner,reordered)
+    expect((await storage.readProfileLists(owner)).sort((x,y)=>(x.position??0)-(y.position??0)).map(x=>x.id)).toEqual(reordered.map(x=>x.id))
+    await expect(storage.reorderProfileLists(owner,[a])).rejects.toThrow('List set changed')
+    expect(await storage.readProfileLists(other)).toEqual(otherBefore)
+    expect((await storage.readProfileLists(owner)).find(x=>x.id===b.id)?.position).toBe(reordered.length-2)
     await storage.close()
   })
 
