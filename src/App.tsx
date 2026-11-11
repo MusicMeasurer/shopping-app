@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
 import { lists, itemsForList, type ListId } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
 import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
@@ -6,7 +6,7 @@ import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import { profileItemStore } from './data/profile-item-store'
 import type { LocalProfileRegistry } from './data/local-profiles'
-export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number }) {
+export function App({ storage, accountId = null, onQueued, refreshRevision = 0, headerActions }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -80,11 +80,11 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
   return <>
     {accountId === null && guestProfile && registry && <section aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.filter(p => p.cloudAccountId === null).map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</section>}
-    <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} />
+    <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={headerActions} />
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number }) {
+function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision, headerActions }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode }) {
   const [active, setActive] = useState<ListId>('groceries')
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
@@ -178,7 +178,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if (await shopping.rename(item, editingName)) { setEditingId(null); setEditingName('') }
   }
   return <main>
-    <header><div className="brand">ПОКУПКИ · v0.0.1</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
+    <header><div className="app-topbar"><div className="brand">ПОКУПКИ · v0.0.1</div>{headerActions}</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
     {accountId === null && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-pressed={!showArchive} onClick={() => setShowArchive(false)}>Активные списки</button><button type="button" aria-pressed={showArchive} onClick={() => setShowArchive(true)}>Архив ({archives.length})</button></div>}
     {!showArchive && <nav aria-label="Списки покупок">{visibleLists.map(list => <button key={list.id} aria-pressed={active === list.id} onClick={() => { setActive(list.id); setName('') }}><span aria-hidden="true">{list.symbol}</span>{list.name}</button>)}</nav>}
     {!showArchive && accountId === null && <form onSubmit={event => void createLocalList(event)}><label htmlFor="new-list-name">Новый разовый список</label><div className="input-row"><input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} disabled={creatingList || localLists === null}/><button disabled={creatingList || localLists === null || !newListName.trim()}>Создать</button></div></form>}
