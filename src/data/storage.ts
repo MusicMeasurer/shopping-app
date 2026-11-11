@@ -549,6 +549,24 @@ export function createStorage(name = 'shopping-app') {
       })
       await tx.done
     },
+    /** Atomic E4 drag reorder within one verified local profile. */
+    async reorderProfileLists(profileId: string, records: ShoppingListRecord[]): Promise<void> {
+      if (!profileId.trim()) throw new Error('Profile ID required')
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileLists'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+        if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+        const store = tx.objectStore('profileLists')
+        const current = await store.index('byProfile').getAll(profileId)
+        if (current.length !== records.length || new Set(records.map(row => row.id)).size !== records.length ||
+          records.some(row => !current.some(saved => saved.record.id === row.id))) throw new Error('List set changed during reorder')
+        for (const row of records) await store.put({key: JSON.stringify([profileId,row.id]),profileId,record:row})
+        await done
+      } catch (error) {tx.abort();await done.catch(()=>{});throw error}
+    },
     async renameProfileList(profileId: string, listId: string, name: string): Promise<void> {
       const trimmed = name.trim()
       if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
