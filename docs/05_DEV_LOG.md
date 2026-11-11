@@ -703,3 +703,8 @@ Following user-approved PWA-first release strategy, resumed E4 instead of native
 - **Verification before claiming done:** port and run all 18 accepted E4 cases against the integration branch; run existing E3/profile/auth/offline/hosted A/B CI; test guest and authenticated modes and negative isolation/cancellation/reload cases. Verify final branch commit and CI conclusions. Record every unsupported case explicitly. No main merge or production deployment without authorization.
 
 **Current status:** audit complete for the listed source files, no integration repair yet in this entry. Next step: implement on a dedicated integration branch, starting with a parity-preserving E4 UI adapter while protecting E3 data boundaries.
+
+
+## 2026-11-11 · Отложенная задача после завершения интеграции E3/E4
+
+**Решение пользователя:** после завершения интеграции E3/E4 провести ревизию и упорядочивание репозиториев и веток проекта, а также разработать и зафиксировать единые правила ведения версий (назначение и жизненный цикл веток, обозначение эталонных/рабочих/выпускных версий, критерии создания и закрытия веток, маркировка релизов и сохранение истории). До завершения интеграции это отдельная **запланированная, не выполненная** задача; не отвлекать на неё текущую интеграцию. При уборке не удалять исходники, историю, эталонные снимки или рабочие данные без предварительной проверки и отдельного согласования конкретных удалений. Единственный канонический журнал — `main/docs/05_DEV_LOG.md`.
