@@ -207,6 +207,7 @@ test('E4: quick actions toggle type and complete list', async ({ page }) => {
 })
 test('E4: swipe from list card area opens archive', async ({ page }) => {
   await page.goto('/shopping-app/')
+  await expect(page.locator('nav .list-select').first()).toBeVisible()
   await page.evaluate(() => {
     const target = document.querySelector('nav .list-select')!
     const make = (type: string, x: number, y: number) => {
@@ -304,6 +305,10 @@ test('E4 acceptance: offline reload preserves local lists and items', async ({ p
   await page.goto('/shopping-app/')
   await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Офлайн покупка')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Офлайн покупка' })).toBeVisible()
+  // The service worker must be installed and controlling the document before an offline navigation.
+  await page.evaluate(async () => { await navigator.serviceWorker.ready })
+  await page.reload()
   await expect(page.getByRole('checkbox', { name: 'Офлайн покупка' })).toBeVisible()
   await context.setOffline(true)
   try {
