@@ -13,15 +13,17 @@ async function signIn(page: Page, which: 0 | 1) {
   const email = process.env[emailKey]
   const password = process.env[passwordKey]
   if (!email || !password) throw new Error('Missing existing disposable A/B credentials')
+  await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
+  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
 }
 
 async function signOut(page: Page) {
+  await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   await page.getByRole('button', { name: 'Выйти' }).click()
-  await expect(page.getByRole('button', { name: 'Войти', exact: true })).toBeVisible({ timeout: 30000 })
+  await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
 }
 
 async function add(page: Page, name: string) {
@@ -52,7 +54,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
   await add(page, itemB)
   await page.reload()
-  await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
+  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
   await expect(page.getByRole('checkbox', { name: itemB })).toBeVisible()
   await signOut(page)
   await signIn(page, 0)
