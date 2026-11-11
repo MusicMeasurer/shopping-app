@@ -15,7 +15,7 @@ export interface AuthClient {
  * Adapter around Supabase Auth. No user ID may be supplied by the UI.
  * An auth event is only a local UI signal; Supabase RLS remains authoritative.
  */
-export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard, verifyIdentity?: (session: SessionCandidate) => Promise<string | null>) {
+export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard, verifyIdentity?: (session: SessionCandidate) => Promise<string | null>, restoreOffline?: (session: SessionCandidate) => Promise<string | null>) {
   let active = true
   let generation = 0
   let signingOut = false
@@ -38,10 +38,21 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       if (verifiedId && verifiedId === accountIdFromSessionCandidate(session)) {
         emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
       } else {
-        emit({ status: 'guest' })
+        if (restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
+          const offlineId = await restoreOffline(session).catch(() => null)
+          if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+          emit(offlineId && offlineId === accountIdFromSessionCandidate(session)
+            ? { status: 'offline-account', accountId: offlineId } : { status: 'guest' })
+        } else emit({ status: 'guest' })
       }
     } catch {
-      if (active && !signingOut && !guard?.isPending() && generation === startedAt) emit({ status: 'guest' })
+      if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+      if (session && restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
+        const offlineId = await restoreOffline(session).catch(() => null)
+        if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+        emit(offlineId && offlineId === accountIdFromSessionCandidate(session)
+          ? { status: 'offline-account', accountId: offlineId } : { status: 'guest' })
+      } else emit({ status: 'guest' })
     }
   }
   const subscription = client.onAuthStateChange((event, session) => {
