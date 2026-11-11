@@ -56,12 +56,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })
     return () => { cancelled = true }
   }, [client, currentAccount, storage])
-  const activeAccount = useRef(currentAccount)
-  activeAccount.current = currentAccount
+  const activeAccount = useRef<string | null>(null)
+  // A verified session is not enough: the account workspace must have a
+  // durable local profile before any background sync or refresh may run.
+  activeAccount.current = readyAccount === currentAccount ? currentAccount : null
   const automaticFlushRunning = useRef(false)
   const flushRequested = useRef(false)
   const onQueued = useCallback(() => {
-    if (!client || !currentAccount) return
+    if (!client || !currentAccount || readyAccount !== currentAccount) return
     flushRequested.current = true
     if (automaticFlushRunning.current) return
     const accountId = currentAccount
@@ -89,22 +91,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (activeAccount.current !== accountId) flushRequested.current = false
       }
     })()
-  }, [client, currentAccount, storage])
+  }, [client, currentAccount, readyAccount, storage])
 
   // A browser restart can leave durable operations queued without a new edit.
   // Resume only after the account becomes active; onQueued verifies the server
   // identity before accessing account-scoped mappings and pending operations.
   useEffect(() => {
-    if (currentAccount && client) onQueued()
-  }, [currentAccount, client, onQueued])
+    if (currentAccount && readyAccount === currentAccount && client) onQueued()
+  }, [currentAccount, readyAccount, client, onQueued])
 
   // Retry durable account edits when connectivity returns; never sync guest data.
   useEffect(() => {
-    if (!currentAccount || !client) return
+    if (!currentAccount || readyAccount !== currentAccount || !client) return
     const retry = () => onQueued()
     window.addEventListener('online', retry)
     return () => window.removeEventListener('online', retry)
-  }, [client, currentAccount, onQueued])
+  }, [client, currentAccount, readyAccount, onQueued])
 
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
@@ -147,7 +149,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // Read-only cloud refresh for verified, bound lists. Never apply remote
   // deletions or overwrite local edits without explicit user review.
   useEffect(() => {
-    if (!client || !currentAccount) return
+    if (!client || !currentAccount || readyAccount !== currentAccount) return
     const accountId = currentAccount
     let disposed = false
     let running = false
@@ -200,7 +202,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [client, currentAccount, storage, cloudMappingRevision])
+  }, [client, currentAccount, readyAccount, storage, cloudMappingRevision])
 
   async function loadCloudLists() {
     if (!client || view.status !== 'account' || cloudLoading) return
