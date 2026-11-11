@@ -186,7 +186,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     setChangingList(true)
     try {
       if (guestProfileId) {
-        for (const row of next) await storage.saveProfileList(guestProfileId,row)
+        await storage.reorderProfileLists(guestProfileId,next)
       } else await storage.reorderLists(next)
       setLocalLists(next); setListError(null)
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить порядок списков') }
