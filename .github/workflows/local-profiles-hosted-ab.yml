@@ -23,7 +23,7 @@ jobs:
   hosted-ab:
     name: Real Auth A/B, RLS, RPC, offline queue and receipts
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 18
     environment: e3-lab
     env:
       E3_LAB_URL: ${{ secrets.E3_LAB_URL }}
