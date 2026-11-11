@@ -5,6 +5,7 @@ on:
     branches: [feature/local-profiles-foundation]
     paths:
       - 'src/data/**'
+      - 'src/AuthenticatedApp.tsx'
       - 'src/e3-local-cloud.integration.test.ts'
       - 'tests/real-ab-lifecycle.spec.ts'
       - 'tests/real-cloud-offline-restart.spec.ts'
