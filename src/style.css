@@ -14,3 +14,24 @@
 .account-dialog input{min-width:0;width:100%;box-sizing:border-box}
 .account-full-email{overflow-wrap:anywhere}
 @media(max-width:380px){.account-header-email{max-width:105px}.account-header-button{padding:8px}}
+
+/* E4 appearance and persistent display preferences; scope all overrides. */
+.shopping-e4 .app-topbar{display:grid;grid-template-columns:44px minmax(0,1fr) auto;gap:10px;align-items:center}
+.shopping-e4 .brand{font-size:clamp(9px,2.5vw,13px);letter-spacing:.14em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.shopping-e4 .settings-trigger{width:44px;height:44px;display:grid;place-items:center;background:transparent;color:#25634c;border:0;font-size:28px;padding:0}
+.shopping-e4 .settings-panel{margin-top:18px}
+.shopping-e4 .settings-panel fieldset{border:0;border-top:1px solid #d8dfd6;padding:12px 0;margin:12px 0}
+.shopping-e4 .settings-panel legend{font-weight:650;padding-right:12px}
+.shopping-e4 .settings-panel label{display:block;margin:12px 0;line-height:1.5}
+.shopping-e4 .settings-panel input{margin-right:8px;accent-color:#25634c}
+.shopping-e4 nav.lists-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.shopping-e4 nav.lists-grid.standard{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+.shopping-e4 nav.lists-grid button{min-width:0;min-height:100px;text-align:left;overflow-wrap:anywhere}
+.shopping-e4 nav.lists-grid.standard button{font-size:11px;min-height:84px;padding:9px 6px}
+.shopping-e4 nav.lists-grid.standard span{font-size:18px}
+.shopping-e4.content-large .item{font-size:19px;line-height:1.5}
+.shopping-e4.content-large .item input[type="checkbox"]{width:24px;height:24px}
+.shopping-e4.content-large .section-heading h2{font-size:25px}
+.shopping-e4.content-large .input-row textarea,.shopping-e4.content-large .input-row input{font-size:19px}
+.shopping-e4.content-standard .item{font-size:15px}
+@media(max-width:390px){.shopping-e4 .app-topbar{grid-template-columns:38px minmax(0,1fr) auto;gap:5px}.shopping-e4 .settings-trigger{width:38px}.shopping-e4 .account-header-email{max-width:76px}.shopping-e4 .account-header-button{font-size:12px;padding:8px 6px}}
