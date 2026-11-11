@@ -11,12 +11,17 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
   const [startupError, setStartupError] = useState('')
+  const [upgradeBlocked, setUpgradeBlocked] = useState(false)
   const [registry, setRegistry] = useState<LocalProfileRegistry | null>(null)
   const [profileBusy, setProfileBusy] = useState(false)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
     setGuestProfile(undefined)
+    setUpgradeBlocked(false)
+    const unsubscribe = storage.subscribeUpgradeBlocked(() => {
+      if (!cancelled) setUpgradeBlocked(true)
+    })
     void (async () => {
       // IndexedDB v10 upgrades only after older open connections have closed.
       // Never activate cutover while an older build can still write legacy data.
@@ -36,7 +41,7 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
     }).catch(() => {
       if (!cancelled) setStartupError('Не удалось определить хранилище покупок. Изменения заблокированы.')
     })
-    return () => { cancelled = true }
+    return () => { cancelled = true; unsubscribe() }
   }, [storage, accountId])
   async function createGuestProfile() {
     if (profileBusy || !registry || !guestProfile) return
@@ -71,6 +76,7 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0 }
     finally { setProfileBusy(false) }
   }
   if (accountId === null && startupError) return <main><p role="alert">{startupError}</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
+  if (accountId === null && guestProfile === undefined && upgradeBlocked) return <main><p role="alert">Другая открытая вкладка использует старую версию покупок и не даёт безопасно обновить хранилище. Закройте другие вкладки приложения, затем повторите открытие. Ваши покупки не удалены.</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
   return <>
     {accountId === null && guestProfile && registry && <section aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.filter(p => p.cloudAccountId === null).map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</section>}
