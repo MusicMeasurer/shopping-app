@@ -37,4 +37,19 @@ describe('profile item adapter', () => {
     expect(() => profileItemStore(storage, '')).toThrow('Profile ID required')
     await storage.close()
   })
+  it('preserves E4 quantity, unit, identity and purchased state in a scoped profile edit', async () => {
+    const storage = createStorage('profile-e4-edit-' + crypto.randomUUID())
+    const owner = await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    const other = crypto.randomUUID()
+    await storage.createLocalProfile(other, Date.now())
+    const store = profileItemStore(storage, owner)
+    const item = { ...createItem('groceries', 'Молоко'), purchased: true, quantity: 2, unit: 'л' }
+    await store.save(item)
+    await store.save({ ...item, name: 'Молоко безлактозное', quantity: undefined, unit: undefined })
+    expect(await store.read()).toEqual([{ ...item, name: 'Молоко безлактозное', quantity: undefined, unit: undefined }])
+    expect(await profileItemStore(storage, other).read()).toEqual([])
+    await storage.close()
+  })
+
 })
