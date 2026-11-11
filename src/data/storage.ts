@@ -1,5 +1,5 @@
 import { openDB, type DBSchema } from 'idb'
-import { addProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
+import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
@@ -309,6 +309,33 @@ export function createStorage(name = 'shopping-app') {
         if (!cutover) throw new Error('Profile cutover is not active')
         if (current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover owner mismatch')
         const registry = addProfile(current.registry, { id, cloudAccountId: null, createdAt })
+        await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
+        await done
+        return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    /** Bind an existing secondary local profile to an independently verified account.
+     * Never claim the original guest: its offline lists must survive sign-out.
+     * The caller must verify the live server identity before calling this method.
+     */
+    async bindVerifiedLocalProfile(profileId: string, verifiedAccountId: string): Promise<LocalProfileRegistry> {
+      if (!profileId.trim() || !verifiedAccountId.trim()) throw new Error('Verified profile and account required')
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.objectStore('localProfileRegistry').get('device')
+        const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) {
+          throw new Error('Profile cutover is not active')
+        }
+        if (profileId === cutover.profileId) throw new Error('Original guest profile must remain unbound')
+        const registry = bindProfile(current.registry, profileId, verifiedAccountId)
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
