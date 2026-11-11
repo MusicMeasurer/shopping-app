@@ -1,4 +1,6 @@
-import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
+import { createPortal } from 'react-dom'
+import { placeList, orderLists, orderArchives } from './domain/ordering'
 import { lists, itemsForList, type ListId } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
 import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
@@ -110,13 +112,22 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const [changingList, setChangingList] = useState(false)
   const [archives, setArchives] = useState<ArchivedListRecord[]>([])
   const [showArchive, setShowArchive] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuPosition, setMenuPosition] = useState({top:0,left:0})
+  const [renaming, setRenaming] = useState(false)
+  const [renameName, setRenameName] = useState('')
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const [overId, setOverId] = useState<string | null>(null)
+  const drag = useRef<{timer: ReturnType<typeof setTimeout> | null,id:string|null,target:string|null,started:boolean,x:number,y:number}>({timer:null,id:null,target:null,started:false,x:0,y:0})
+  const suppressClick = useRef(false)
+  const swipe = useRef<{x:number,y:number}|null>(null)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
     void Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()]).then(([rows, snapshots]) => {
       if (!cancelled) {
-        setLocalLists(rows.sort((a, b) => (a.position ?? a.createdAt) - (b.position ?? b.createdAt)))
-        setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
+        setLocalLists(orderLists(rows))
+        setArchives(orderArchives(snapshots))
       }
     }).catch(error => {
       if (!cancelled) setListError(error instanceof Error ? error.message : 'Не удалось загрузить списки')
@@ -155,6 +166,69 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       if ('kind' in list && list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
+  }
+  async function deleteLocalList() {
+    if (accountId !== null || !list || changingList || !window.confirm('Удалить список и активные товары? Архив сохранится.')) return
+    setChangingList(true)
+    try {
+      if (guestProfileId) await storage.deleteProfileList(guestProfileId, list.id)
+      else await storage.deleteList(list.id)
+      const next = guestProfileId ? await storage.readProfileLists(guestProfileId) : await storage.readLists()
+      setLocalLists(orderLists(next)); setActive(next[0]?.id ?? ''); setMenuOpen(false)
+      await shopping.reload(); setListError(null)
+    } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось удалить список') }
+    finally { setChangingList(false) }
+  }
+  async function placeLocalList(id: string, target: string) {
+    if (accountId !== null || !localLists || changingList) return
+    const next = placeList(localLists,id,target)
+    if (next.every((row,i)=>row.id===localLists[i]?.id)) return
+    setChangingList(true)
+    try {
+      if (guestProfileId) {
+        for (const row of next) await storage.saveProfileList(guestProfileId,row)
+      } else await storage.reorderLists(next)
+      setLocalLists(next); setListError(null)
+    } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить порядок списков') }
+    finally { setChangingList(false) }
+  }
+  function startPress(event: ReactPointerEvent<HTMLDivElement>, id: string) {
+    if (accountId !== null || changingList || event.button !== 0 || (event.target as HTMLElement).closest('.menu-anchor')) return
+    if (drag.current.timer) clearTimeout(drag.current.timer)
+    drag.current={timer:null,id,target:id,started:false,x:event.clientX,y:event.clientY}
+    const element=event.currentTarget,pointerId=event.pointerId
+    drag.current.timer=setTimeout(()=>{
+      if (drag.current.id!==id) return
+      try {element.setPointerCapture(pointerId)} catch {/* pointer ended */}
+      drag.current.started=true;setDraggingId(id);setOverId(id);setMenuOpen(false)
+      if(navigator.vibrate) navigator.vibrate(15)
+    },380)
+  }
+  function movePress(event: ReactPointerEvent<HTMLDivElement>) {
+    const state=drag.current
+    if(!state.id)return
+    if(!state.started){if(Math.hypot(event.clientX-state.x,event.clientY-state.y)>12){if(state.timer)clearTimeout(state.timer);drag.current.id=null}return}
+    const target=document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>('[data-list-id]')?.dataset.listId
+    if(target){state.target=target;setOverId(target)}
+  }
+  function finishPress(){
+    const state=drag.current
+    if(state.timer)clearTimeout(state.timer)
+    if(state.started&&state.id){suppressClick.current=true;if(state.target&&state.target!==state.id)void placeLocalList(state.id,state.target);window.setTimeout(()=>{suppressClick.current=false},0)}
+    drag.current={timer:null,id:null,target:null,started:false,x:0,y:0};setDraggingId(null);setOverId(null)
+  }
+  function startSwipe(event:ReactTouchEvent<HTMLElement>){
+    const target=event.target as HTMLElement
+    if(accountId!==null||event.touches.length!==1||target.closest('input,textarea,select,[role="dialog"],.list-menu,.menu-anchor,.settings-panel,.dialog-backdrop')||menuOpen||settingsOpen||newListDialog||renaming||editingId){swipe.current=null;return}
+    swipe.current={x:event.touches[0].clientX,y:event.touches[0].clientY}
+  }
+  function endSwipe(event:ReactTouchEvent<HTMLElement>){
+    const origin=swipe.current;swipe.current=null
+    if(!origin||event.changedTouches.length!==1||draggingId)return
+    const dx=event.changedTouches[0].clientX-origin.x,dy=event.changedTouches[0].clientY-origin.y
+    if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.2)return
+    if(dx<0&&!showArchive){setShowArchive(true);setMenuOpen(false)}
+    if(dx>0&&showArchive)setShowArchive(false)
   }
   const visibleLists = accountId === null && localLists !== null ? localLists : lists
   useEffect(() => {
@@ -199,7 +273,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
     }
   }
-  return <main className={`shopping-e4 content-${contentSize}`}>
+  return <main className={`shopping-e4 content-${contentSize}`} onTouchStart={startSwipe} onTouchEnd={endSwipe}>
     <header><div className="app-topbar"><button type="button" className="settings-trigger" aria-label="Настройки" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(open => !open)}>☰</button><div className="brand">ПОКУПКИ · E4 (разработка)</div>{headerActions}</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></header>
     {settingsOpen && <section className="settings-panel" aria-label="Настройки приложения">
       <h2>Настройки</h2>
