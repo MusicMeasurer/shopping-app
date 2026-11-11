@@ -15,6 +15,11 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         await storage.saveAccountItem(accountId, item)
         return
       }
+      // The current apply_item_change RPC accepts only name/purchased.
+      // Never acknowledge a local quantity/unit edit that cloud sync would silently drop.
+      if (item.quantity !== undefined || (item.unit !== undefined && item.unit.trim() !== '')) {
+        throw new Error('Cloud-bound quantity/unit edits require the versioned E4 server contract')
+      }
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)
       if (known && known.remoteListId !== binding.remoteListId) {
