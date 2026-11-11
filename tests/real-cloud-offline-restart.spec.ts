@@ -25,10 +25,11 @@ test('bound account queues an offline add across browser restart and syncs after
   const afterRestartName = 'OFFLINE_AFTER_RESTART_' + crypto.randomUUID()
   try {
     await page.goto('/shopping-app/')
-    await page.getByLabel('Email').fill(email)
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+  await page.getByLabel('Email').fill(email)
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
-    await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
     await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
     await expect(page.getByRole('option', { name: 'SHOPPINGAPP_HTTP_TEST_A' })).toBeAttached()
     await page.getByLabel('Локальный список').selectOption('groceries')
@@ -53,7 +54,7 @@ test('bound account queues an offline add across browser restart and syncs after
     await context.setOffline(false)
     // Connectivity event must reverify the account and drain the durable queue
     // without requiring another page reload or manual cloud action.
-    await expect(page.getByText('Вы вошли в аккаунт')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
     await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 20000 })
     await expect.poll(async () => {
       const { data, error } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
