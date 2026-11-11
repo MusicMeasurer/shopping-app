@@ -502,3 +502,27 @@ it('waits for an uncooperative old v9 connection before upgrading or cutover', a
   expect(await current.readProfileItems(owner)).toEqual([item])
   await current.close()
 })
+
+it('notifies subscribers when an old connection blocks the upgrade and keeps data intact', async () => {
+  const name = 'upgrade-notice-' + crypto.randomUUID()
+  const old = await openDB(name, 9, { upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) } })
+  const item = createItem('groceries', 'Мои покупки')
+  await old.put('items', item)
+  const storage = createStorage(name)
+  let notices = 0
+  const unsubscribe = storage.subscribeUpgradeBlocked(() => { notices++ })
+  const opening = storage.read()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  expect(notices).toBe(1)
+  let lateNotices = 0
+  const stopLate = storage.subscribeUpgradeBlocked(() => { lateNotices++ })
+  expect(lateNotices).toBe(1)
+  unsubscribe()
+  stopLate()
+  old.close()
+  expect(await opening).toEqual([item])
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  expect(await storage.readProfileItems(owner)).toEqual([item])
+  await storage.close()
+})
