@@ -20,6 +20,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [controller, setController] = useState<Controller | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [accountDialogOpen, setAccountDialogOpen] = useState(false)
+  const [verifiedEmail, setVerifiedEmail] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
@@ -33,12 +35,62 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const currentAccount = view.status === 'account' ? view.accountId : null
-  const activeAccount = useRef(currentAccount)
-  activeAccount.current = currentAccount
+  const offlineAccount = view.status === 'offline-account' ? view.accountId : null
+  const workspaceAccount = currentAccount ?? offlineAccount
+  useEffect(() => {
+    if (!currentAccount || !client) { setVerifiedEmail(''); return }
+    let cancelled = false
+    void client.auth.getUser().then(({ data, error }) => {
+      if (!cancelled && !error && data.user?.id === currentAccount) setVerifiedEmail(data.user.email ?? '')
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [currentAccount, client])
+  useEffect(() => {
+    if (view.status === 'account') { setAccountDialogOpen(false); setPassword('') }
+  }, [view.status])
+  const [readyAccount, setReadyAccount] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState('')
+  // The account ID is only trusted after a fresh server verification. Keep
+  // account-scoped UI unmounted until its local profile exists durably.
+  useEffect(() => {
+    if (!workspaceAccount || !client) { setReadyAccount(null); setProfileError(''); return }
+    if (offlineAccount) {
+      let cancelled = false
+      setReadyAccount(null)
+      setProfileError('')
+      void storage.readLocalProfiles().then(registry => {
+        if (cancelled) return
+        if (!registry?.profiles.some(p => p.cloudAccountId === offlineAccount)) throw new Error('No verified local binding')
+        setReadyAccount(offlineAccount)
+      }).catch(() => { if (!cancelled) setProfileError('Локальный профиль не подтверждён. Доступ заблокирован.') })
+      return () => { cancelled = true }
+    }
+    if (!currentAccount) return
+    let cancelled = false
+    setReadyAccount(null)
+    setProfileError('')
+    void (async () => {
+      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      if (!await storage.readGuestCutoverOwner()) {
+        await storage.migrateLegacyGuestToProfile()
+        await storage.markGuestCutoverReady()
+      }
+      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      await storage.ensureVerifiedAccountProfile(currentAccount)
+      if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
+    })().catch(() => {
+      if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
+    })
+    return () => { cancelled = true }
+  }, [client, currentAccount, offlineAccount, workspaceAccount, storage])
+  const activeAccount = useRef<string | null>(null)
+  // A verified session is not enough: the account workspace must have a
+  // durable local profile before any background sync or refresh may run.
+  activeAccount.current = readyAccount === currentAccount ? currentAccount : null
   const automaticFlushRunning = useRef(false)
   const flushRequested = useRef(false)
   const onQueued = useCallback(() => {
-    if (!client || !currentAccount) return
+    if (!client || !currentAccount || readyAccount !== currentAccount) return
     flushRequested.current = true
     if (automaticFlushRunning.current) return
     const accountId = currentAccount
@@ -66,22 +118,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (activeAccount.current !== accountId) flushRequested.current = false
       }
     })()
-  }, [client, currentAccount, storage])
+  }, [client, currentAccount, readyAccount, storage])
 
   // A browser restart can leave durable operations queued without a new edit.
   // Resume only after the account becomes active; onQueued verifies the server
   // identity before accessing account-scoped mappings and pending operations.
   useEffect(() => {
-    if (currentAccount && client) onQueued()
-  }, [currentAccount, client, onQueued])
+    if (currentAccount && readyAccount === currentAccount && client) onQueued()
+  }, [currentAccount, readyAccount, client, onQueued])
 
   // Retry durable account edits when connectivity returns; never sync guest data.
   useEffect(() => {
-    if (!currentAccount || !client) return
+    if (!currentAccount || readyAccount !== currentAccount || !client) return
     const retry = () => onQueued()
     window.addEventListener('online', retry)
     return () => window.removeEventListener('online', retry)
-  }, [client, currentAccount, onQueued])
+  }, [client, currentAccount, readyAccount, onQueued])
 
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
@@ -102,14 +154,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
-    }, setView, guard, async () => verifiedAccountId(client))
+    }, setView, guard, async () => verifiedAccountId(client), async session => {
+      if (navigator.onLine || guard.isPending()) return null
+      const id = session.user?.id?.toLowerCase()
+      const registry = await storage.readLocalProfiles()
+      return registry?.profiles.some(profile => profile.cloudAccountId === id) ? id : null
+    })
     setController(next)
     void next.initialize()
     return () => {
       next.dispose()
       setController(null)
     }
-  }, [client])
+  }, [client, storage])
+
+  // On reconnect, revalidate the server identity before allowing cloud access.
+  useEffect(() => {
+    if (!offlineAccount || !controller) return
+    const recheck = () => {
+      if (navigator.onLine) {
+        setView({ status: 'checking' })
+        void controller.initialize()
+      }
+    }
+    window.addEventListener('online', recheck)
+    return () => window.removeEventListener('online', recheck)
+  }, [offlineAccount, controller])
 
   // Account changes invalidate all cloud discovery and selection state.
   useEffect(() => {
@@ -124,7 +194,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // Read-only cloud refresh for verified, bound lists. Never apply remote
   // deletions or overwrite local edits without explicit user review.
   useEffect(() => {
-    if (!client || !currentAccount) return
+    if (!client || !currentAccount || readyAccount !== currentAccount) return
     const accountId = currentAccount
     let disposed = false
     let running = false
@@ -177,7 +247,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [client, currentAccount, storage, cloudMappingRevision])
+  }, [client, currentAccount, readyAccount, storage, cloudMappingRevision])
 
   async function loadCloudLists() {
     if (!client || view.status !== 'account' || cloudLoading) return
@@ -368,29 +438,40 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setError('')
     try {
       await controller.signOut()
+      setAccountDialogOpen(false)
+      setVerifiedEmail('')
     } catch {
       setError('Не удалось завершить выход на сервере. Проверьте подключение.')
     } finally {
       setBusy(false)
     }
   }
+  if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
+    {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
+    {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
+  </main>
   if (view.status === 'checking') return <main>
     <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : 'Проверяем аккаунт…'}</p>
     {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
   return <>
-    {client && <aside aria-label="Аккаунт">
-      {view.status === 'account' ? <div><span>Вы вошли в аккаунт</span> <button disabled={busy} onClick={() => void signOut()}>Выйти</button></div> :
-        <form onSubmit={signIn}>
-          <label htmlFor="auth-email">Email</label>
-          <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
-          <label htmlFor="auth-password">Пароль</label>
-          <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
-          <button disabled={busy || !controller}>Войти</button>
-          <p>Без входа покупки сохраняются только на этом устройстве.</p>
-        </form>}
-      {error && <p role="alert">{error}</p>}
-    </aside>}
+    {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
+    {client && accountDialogOpen && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setAccountDialogOpen(false) }}>
+      <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
+        <div className="account-dialog-heading"><h2 id="account-dialog-title">{view.status === 'account' || view.status === 'offline-account' ? 'Мой аккаунт' : 'Вход в аккаунт'}</h2><button type="button" aria-label="Закрыть окно аккаунта" onClick={() => setAccountDialogOpen(false)}>×</button></div>
+        {view.status === 'account' ? <><p className="account-full-email">{verifiedEmail || 'Аккаунт подтверждён'}</p><button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
+          view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
+          <form onSubmit={signIn}>
+            <label htmlFor="auth-email">Email</label>
+            <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
+            <label htmlFor="auth-password">Пароль</label>
+            <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
+            <button disabled={busy || !controller}>Войти</button>
+            <p>Без входа покупки сохраняются только на этом устройстве.</p>
+          </form>}
+        {error && <p role="alert">{error}</p>}
+      </section>
+    </div>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
       {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
@@ -431,6 +512,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
-    <App storage={storage} accountId={currentAccount} onQueued={onQueued} refreshRevision={workspaceRevision} />
+    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      headerActions={client ? <div className="account-header-control">
+        {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
+        <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
+          <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
+        </button>
+      </div> : undefined} />
   </>
 }

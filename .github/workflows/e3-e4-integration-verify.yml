@@ -1,9 +1,9 @@
 name: E3 E4 integration checks
 on:
   push:
-    branches: [feature/e3-e4-integration]
+    branches: [feature/e3-e4-integration, feature/local-profiles-foundation]
   pull_request:
-    branches: [feature/e3-cloud-auth]
+    branches: [feature/e3-cloud-auth, feature/e3-e4-integration]
   workflow_dispatch:
 permissions:
   contents: read
