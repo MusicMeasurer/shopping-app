@@ -16,11 +16,11 @@ describe('versioned mutation conversion', () => {
     })
   })
   it('refuses previously queued E4 quantity/unit edits without losing operation identity', () => {
-    for (const kind of ['cloud-add', 'cloud-update'] as const) {
-      const op = { ...base, kind, item: { ...item, quantity: 2, unit: 'кг' },
-        ...(kind === 'cloud-update' ? { expectedVersion: 1 } : {}) }
-      expect(() => resolveVersionedMutation(op)).toThrow('Queued E4 quantity/unit edit')
-    }
+    const extended = { ...item, quantity: 2, unit: 'кг' }
+    expect(() => resolveVersionedMutation({ ...base, kind: 'cloud-add', item: extended }))
+      .toThrow('Queued E4 quantity/unit edit')
+    expect(() => resolveVersionedMutation({ ...base, kind: 'cloud-update', expectedVersion: 1, item: extended }))
+      .toThrow('Queued E4 quantity/unit edit')
   })
   it('refuses ambiguous legacy operations', () => {
     expect(() => resolveVersionedMutation({ kind: 'upsert', operationId: 'old', item })).toThrow('Legacy operation')
