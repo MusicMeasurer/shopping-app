@@ -7,6 +7,7 @@ on:
       - 'src/data/**'
       - 'src/e3-local-cloud.integration.test.ts'
       - 'tests/real-ab-lifecycle.spec.ts'
+      - 'tests/real-cloud-offline-restart.spec.ts'
       - 'scripts/e3-real-session-gate.mjs'
       - 'scripts/e3-rpc-write-probe.mjs'
       - '.github/workflows/local-profiles-hosted-ab.yml'
@@ -59,7 +60,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
-        run: npx playwright test tests/real-ab-lifecycle.spec.ts --workers=1
+        run: npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --workers=1
       - name: Real A/B authentication and forbidden cross-account access
         run: node scripts/e3-real-session-gate.mjs
       - name: Real RPC idempotency, version conflicts and cleanup
