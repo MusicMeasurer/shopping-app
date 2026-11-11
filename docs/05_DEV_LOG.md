@@ -744,3 +744,12 @@ Following user instruction to maintain `cloud/drafts/E4_CLOUD_CONTRACT_PREFLIGHT
 
 
 **CI confirmation for cloud-contract draft iteration:** branch tip `10a173fdf933f5cd2d0c4bfa633a042f926c5102`, run https://github.com/MusicMeasurer/shopping-app/actions/runs/43117284992 — `unit-and-build` **success**, `e4-acceptance` **success** (existing 18 E4 scenarios in two mobile projects). These tests verify TypeScript changes and local E4 regression only; SQL drafts 022/023 are **unexecuted** and hosted E3/E4 integration remains unverified. Snapshot unchanged.
+
+
+## 2026-11-12 · Решения пользователя: история покупок и резервирование лаборатории (Инструкция 2)
+
+**Согласовано:** (1) FR-002-03 — удаление списка не удаляет историю покупок или завершённый архив; история принадлежит пользователю и остаётся доступной без исходного списка. Историческое имя может храниться как метаданные, совпадение названия нового списка не связывает истории. Удаление самой истории требует отдельного явного подтверждения. (2) Продолжать предпочтительно в существующей тестовой Supabase `shoppingapp-migration-lab`, предварительно подготовив проверяемый комплект резервирования/восстановления; не создавать новые платные ресурсы без разрешения. Разделять PostgreSQL схему/роли/данные, функции и миграции, настройки сервиса и секреты; SQL dump не покрывает всё. Восстановление считать подтверждённым только после изолированной проверки.
+
+**Уточнения открыты:** момент записи покупки в историю относительно `purchased`/завершения FR-005; судьба незавершённых позиций удаляемого списка; физическая модель истории, каскады/RLS, миграция и способ проверки восстановления без риска для исторических данных. Предыдущая блокировка SQL draft 022/023 по неутверждённой семантике удаления теперь частично снята решением о сохранении истории, но сама миграция и безопасность ещё не приняты.
+
+**Проверено при обсуждении:** Supabase connector показал обе лаборатории `shoppingapp-migration-lab` и `shoppingapp-security-lab` в статусе `ACTIVE_HEALTHY`; официальная документация Supabase описывает CLI backup/restore PostgreSQL: https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore . Это не является проверкой резервной копии. **Никаких изменений Supabase, бэкапа, восстановления, миграций, приложения или production в рамках этой инструкции не выполнялось.** Документированы только согласованные решения.
