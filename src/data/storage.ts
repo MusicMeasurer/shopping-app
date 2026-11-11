@@ -345,6 +345,35 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    /** Idempotently find or create a profile for a verified cloud identity.
+     * The original offline guest is never rebound or deleted. All metadata
+     * changes are serialized in one transaction across simultaneous tabs.
+     */
+    async ensureVerifiedAccountProfile(verifiedAccountId: string): Promise<LocalProfileRegistry> {
+      if (!verifiedAccountId.trim()) throw new Error('Verified account required')
+      const db = await database
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.objectStore('localProfileRegistry').get('device')
+        const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+        if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) {
+          throw new Error('Profile cutover is not active')
+        }
+        const existing = current.registry.profiles.find(p => p.cloudAccountId === verifiedAccountId)
+        const registry = existing
+          ? { ...current.registry, activeProfileId: existing.id }
+          : addProfile(current.registry, { id: crypto.randomUUID(), cloudAccountId: verifiedAccountId, createdAt: Date.now() })
+        await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
+        await done
+        return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
     /** Persist the active local profile. Does not authenticate or rebind cloud accounts. */
     async switchLocalProfile(profileId: string): Promise<LocalProfileRegistry> {
       if (!profileId.trim()) throw new Error('Profile ID required')
