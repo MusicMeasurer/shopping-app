@@ -48,3 +48,9 @@ Read-only Supabase security advisor reported informational RLS-without-policy no
 - **Not implemented:** E4 migration, list/archive mutation RPC, archive retention after list deletion, cloud operation queue, end-to-end account UI, cross-device integration.
 - **Unresolved product decision from FR-002-03:** fate of archived versions and items after deleting a list. Do not silently choose cascading deletion or retention; this must be reconciled before final destructive-operation contract.
 - **Test gate:** CI unit/build and mobile E4 regression are required for branch changes. No server schema changes were applied to existing Supabase labs.
+
+### Schema draft checkpoint
+
+- `cloud/drafts/022_e4_list_metadata_REVIEW_ONLY.sql` is an **unapplied review draft**, not a migration history entry: additive kind/position columns, deterministic backfill for pre-E4 lists, constraints and owner-order index. Does not alter list identity or guess type from display names.
+- This draft **does not make E4 cloud writes safe**. Current direct UPDATE RLS must be reviewed and restricted so revision checks cannot be bypassed; a versioned owner-scoped RPC, grants, idempotency and negative hosted A/B tests are prerequisites.
+- Draft is intentionally not executed on either historical lab. Archive retention and destructive semantics remain unresolved under FR-002-03. No migration is marked verified.
