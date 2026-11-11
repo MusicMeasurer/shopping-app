@@ -6,6 +6,7 @@ on:
     paths:
       - 'src/data/**'
       - 'src/e3-local-cloud.integration.test.ts'
+      - 'tests/real-ab-lifecycle.spec.ts'
       - 'scripts/e3-real-session-gate.mjs'
       - 'scripts/e3-rpc-write-probe.mjs'
       - '.github/workflows/local-profiles-hosted-ab.yml'
@@ -47,6 +48,18 @@ jobs:
           [[ "$E3_LAB_URL" == "https://gmrqeubhotjpmtwokfeq.supabase.co" ]] || { echo "::error::Refusing non-lab target"; exit 1; }
           [[ "$E3_LAB_PUBLISHABLE_KEY" == sb_publishable_* ]] || { echo "::error::Publishable key required"; exit 1; }
       - run: npm ci
+      - name: Install mobile browsers
+        run: npx playwright install --with-deps chromium webkit
+      - name: Build PWA against pinned disposable lab
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+        run: npm run build
+      - name: Real mobile browser A/B switch, guest isolation and offline reload
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+        run: npx playwright test tests/real-ab-lifecycle.spec.ts --workers=1
       - name: Real A/B authentication and forbidden cross-account access
         run: node scripts/e3-real-session-gate.mjs
       - name: Real RPC idempotency, version conflicts and cleanup
