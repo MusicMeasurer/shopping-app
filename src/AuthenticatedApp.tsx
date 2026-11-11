@@ -33,6 +33,29 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const currentAccount = view.status === 'account' ? view.accountId : null
+  const [readyAccount, setReadyAccount] = useState<string | null>(null)
+  const [profileError, setProfileError] = useState('')
+  // The account ID is only trusted after a fresh server verification. Keep
+  // account-scoped UI unmounted until its local profile exists durably.
+  useEffect(() => {
+    if (!currentAccount || !client) { setReadyAccount(null); setProfileError(''); return }
+    let cancelled = false
+    setReadyAccount(null)
+    setProfileError('')
+    void (async () => {
+      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      if (!await storage.readGuestCutoverOwner()) {
+        await storage.migrateLegacyGuestToProfile()
+        await storage.markGuestCutoverReady()
+      }
+      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      await storage.ensureVerifiedAccountProfile(currentAccount)
+      if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
+    })().catch(() => {
+      if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
+    })
+    return () => { cancelled = true }
+  }, [client, currentAccount, storage])
   const activeAccount = useRef(currentAccount)
   activeAccount.current = currentAccount
   const automaticFlushRunning = useRef(false)
@@ -374,6 +397,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
+  if (currentAccount && (readyAccount !== currentAccount || profileError)) return <main>
+    {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
+    {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
+  </main>
   if (view.status === 'checking') return <main>
     <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : 'Проверяем аккаунт…'}</p>
     {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
