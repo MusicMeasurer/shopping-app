@@ -166,24 +166,24 @@ nav.lists-grid{margin-top:8px}
 .list-toolbar{display:flex;align-items:center;gap:2px;flex-shrink:0}
 .list-toolbar button{display:grid;place-items:center;width:34px;height:38px;min-width:34px;padding:0;border:0;background:#eef3eb;color:#25634c;border-radius:9px;font-size:21px;line-height:1;-webkit-tap-highlight-color:transparent}
 .list-toolbar button.danger{color:#b33333;background:#fff1f0}
-.app-shell.standard section[aria-labelledby="list-title"]{line-height:1.2}
-.app-shell.standard section[aria-labelledby="list-title"] .item span{line-height:1.2}
-.app-shell.standard section[aria-labelledby="list-title"] li{min-height:54px}
-.app-shell.standard section[aria-labelledby="list-title"] .item{padding:8px 0}
-.app-shell.large section[aria-labelledby="list-title"]{font-size:1.2em}
-.app-shell.large section[aria-labelledby="list-title"] h2{font-size:24px}
-.app-shell.large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
+.shopping-e4.standard section[aria-labelledby="list-title"]{line-height:1.2}
+.shopping-e4.standard section[aria-labelledby="list-title"] .item span{line-height:1.2}
+.shopping-e4.standard section[aria-labelledby="list-title"] li{min-height:54px}
+.shopping-e4.standard section[aria-labelledby="list-title"] .item{padding:8px 0}
+.shopping-e4.large section[aria-labelledby="list-title"]{font-size:1.2em}
+.shopping-e4.large section[aria-labelledby="list-title"] h2{font-size:24px}
+.shopping-e4.large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
 @media(max-width:380px){.list-toolbar button{width:30px;min-width:30px;height:36px;font-size:19px}.section-heading{gap:5px}}
 
 /* E4: independent content accessibility setting */
-.app-shell.content-standard section[aria-labelledby="list-title"]{line-height:1.2}
-.app-shell.content-standard section[aria-labelledby="list-title"] .item span{line-height:1.2;font-size:1em}
-.app-shell.content-standard section[aria-labelledby="list-title"] li{min-height:54px}
-.app-shell.content-standard section[aria-labelledby="list-title"] .item{padding:8px 0}
-.app-shell.content-standard section[aria-labelledby="list-title"] h2{font-size:20px}
-.app-shell.content-large section[aria-labelledby="list-title"]{font-size:1.2em}
-.app-shell.content-large section[aria-labelledby="list-title"] h2{font-size:24px}
-.app-shell.content-large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
+.shopping-e4.content-standard section[aria-labelledby="list-title"]{line-height:1.2}
+.shopping-e4.content-standard section[aria-labelledby="list-title"] .item span{line-height:1.2;font-size:1em}
+.shopping-e4.content-standard section[aria-labelledby="list-title"] li{min-height:54px}
+.shopping-e4.content-standard section[aria-labelledby="list-title"] .item{padding:8px 0}
+.shopping-e4.content-standard section[aria-labelledby="list-title"] h2{font-size:20px}
+.shopping-e4.content-large section[aria-labelledby="list-title"]{font-size:1.2em}
+.shopping-e4.content-large section[aria-labelledby="list-title"] h2{font-size:24px}
+.shopping-e4.content-large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
 nav.lists-grid .list-select:not(.create-list-tile){display:grid;grid-template-rows:auto minmax(0,1fr);align-items:stretch}
 nav.lists-grid .list-name-wrap{display:flex;align-items:center;min-height:0;min-width:0;overflow:hidden}
 nav.lists-grid .list-name-wrap .list-name{margin:0}
