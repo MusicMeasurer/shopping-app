@@ -35,3 +35,7 @@
 .shopping-e4.content-large .input-row textarea,.shopping-e4.content-large .input-row input{font-size:19px}
 .shopping-e4.content-standard .item{font-size:15px}
 @media(max-width:390px){.shopping-e4 .app-topbar{grid-template-columns:38px minmax(0,1fr) auto;gap:5px}.shopping-e4 .settings-trigger{width:38px}.shopping-e4 .account-header-email{max-width:76px}.shopping-e4 .account-header-button{font-size:12px;padding:8px 6px}}
+
+.shopping-e4 nav.lists-grid .create-list-tile{border:2px dashed #9ebfae;background:#eef4ed;color:#25634c;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-weight:700}
+.shopping-e4 nav.lists-grid .create-list-tile span{font-size:30px;line-height:1}
+.shopping-e4 .account-dialog select{min-height:42px;width:100%;border:1px solid #d8dfd6;border-radius:10px;background:white;color:#203b30;padding:8px}
