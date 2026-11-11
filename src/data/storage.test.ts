@@ -526,3 +526,54 @@ it('notifies subscribers when an old connection blocks the upgrade and keeps dat
   expect(await storage.readProfileItems(owner)).toEqual([item])
   await storage.close()
 })
+
+
+it('registers verified accounts idempotently without assigning the original guest to another person', async () => {
+  const storage = createStorage('verified-profiles-' + crypto.randomUUID())
+  const ownerItem = createItem('groceries', 'Покупки владельца')
+  await storage.save(ownerItem)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const alice = await storage.ensureVerifiedAccountProfile('verified-alice')
+  const aliceId = alice.activeProfileId
+  expect(aliceId).not.toBe(owner)
+  expect(alice.profiles.find(p => p.id === owner)?.cloudAccountId).toBeNull()
+  expect(alice.profiles.find(p => p.id === aliceId)?.cloudAccountId).toBe('verified-alice')
+  const bob = await storage.ensureVerifiedAccountProfile('verified-bob')
+  expect(bob.activeProfileId).not.toBe(aliceId)
+  expect(bob.profiles).toHaveLength(3)
+  const again = await storage.ensureVerifiedAccountProfile('verified-alice')
+  expect(again.activeProfileId).toBe(aliceId)
+  expect(again.profiles).toHaveLength(3)
+  expect(await storage.readProfileItems(owner)).toEqual([ownerItem])
+  expect(await storage.readProfileItems(aliceId)).toEqual([])
+  await storage.close()
+})
+
+it('rejects unsafe binding of the original guest and cross-account profile reassignment', async () => {
+  const storage = createStorage('verified-rejection-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await expect(storage.ensureVerifiedAccountProfile('account-a')).rejects.toThrow('cutover is not active')
+  await storage.markGuestCutoverReady()
+  const secondary = crypto.randomUUID()
+  await storage.createLocalProfile(secondary, Date.now())
+  await expect(storage.bindVerifiedLocalProfile(owner, 'account-a')).rejects.toThrow('must remain unbound')
+  await storage.bindVerifiedLocalProfile(secondary, 'account-a')
+  await expect(storage.bindVerifiedLocalProfile(secondary, 'account-b')).rejects.toThrow('another account')
+  await expect(storage.switchLocalProfile(secondary)).rejects.toThrow('requires verified account')
+  expect((await storage.readLocalProfiles())?.profiles[0].cloudAccountId).toBeNull()
+  await storage.close()
+})
+
+it('serializes simultaneous account registration without duplicate profiles', async () => {
+  const storage = createStorage('verified-race-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const [a, b] = await Promise.all([
+    storage.ensureVerifiedAccountProfile('same-account'),
+    storage.ensureVerifiedAccountProfile('same-account'),
+  ])
+  expect(a.activeProfileId).toBe(b.activeProfileId)
+  expect((await storage.readLocalProfiles())?.profiles).toHaveLength(2)
+  await storage.close()
+})
