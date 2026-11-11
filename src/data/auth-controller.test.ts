@@ -23,6 +23,38 @@ function fakeClient(initial: SessionCandidate | null = null) {
 }
 
 describe('auth controller', () => {
+  it('restores a previously verified local account only while offline and never claims cloud identity', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const original = Object.getOwnPropertyDescriptor(navigator, 'onLine')
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+    try {
+      const controller = createAuthController(fake.client, view => views.push(view), undefined,
+        async () => null, async candidate => candidate.user.id)
+      await controller.initialize()
+      expect(views.at(-1)).toEqual({ status: 'offline-account', accountId: id })
+      controller.dispose()
+    } finally {
+      if (original) Object.defineProperty(navigator, 'onLine', original)
+      else delete (navigator as { onLine?: boolean }).onLine
+    }
+  })
+  it('rejects an unbound local account even when offline', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const original = Object.getOwnPropertyDescriptor(navigator, 'onLine')
+    Object.defineProperty(navigator, 'onLine', { configurable: true, value: false })
+    try {
+      const controller = createAuthController(fake.client, view => views.push(view), undefined,
+        async () => null, async () => secondId)
+      await controller.initialize()
+      expect(views.at(-1)).toEqual({ status: 'guest' })
+      controller.dispose()
+    } finally {
+      if (original) Object.defineProperty(navigator, 'onLine', original)
+      else delete (navigator as { onLine?: boolean }).onLine
+    }
+  })
   it('restores a session and hides it on signout', async () => {
     const fake = fakeClient(session)
     const views: AuthView[] = []
