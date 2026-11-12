@@ -44,11 +44,51 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByLabel('Что нужно купить?').fill(prefix)
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
+  // Diagnostic only: account-scoped IndexedDB state and sanitized RPC status.
+  const rpcEvents: { status: number; code: string; message: string }[] = []
+  page.on('response', async response => {
+    if (!response.url().includes('/rest/v1/rpc/apply_item_change')) return
+    const body = await response.json().catch(() => ({})) as { code?: string; message?: string }
+    rpcEvents.push({ status: response.status(), code: body.code ?? '', message: (body.message ?? '').slice(0, 180) })
+  })
+  const localDiagnostic = async () => page.evaluate(async ({ ownerId, listId, prefix }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('shopping-app')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const read = (name: string) => new Promise<any[]>((resolve, reject) => {
+      const tx = db.transaction(name, 'readonly')
+      const request = tx.objectStore(name).getAll()
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      const [mappings, operations, items] = await Promise.all([
+        read('accountListMappings'), read('accountOperations'), read('accountItems'),
+      ])
+      return {
+        mappings: mappings.filter(row => row.accountId === ownerId).map(row => ({
+          localListId: row.localListId, matchesRemote: row.remoteListId === listId,
+        })),
+        operations: operations.filter(row => row.accountId === ownerId).map(row => ({
+          kind: row.operation?.kind, localListId: row.operation?.localListId ?? row.operation?.item?.listId,
+          matchesRemote: row.operation?.remoteListId === listId,
+        })),
+        testItems: items.filter(row => row.accountId === ownerId && row.item?.name === prefix).map(row => ({
+          localListId: row.item.listId, purchased: row.item.purchased,
+        })),
+      }
+    } finally { db.close() }
+  }, { ownerId, listId, prefix })
+  console.log('E3E4 local diagnostic after add:', JSON.stringify(await localDiagnostic()))
   // Observe manual retry status if auto-flush failed, without assuming a positive count.
   await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
   await expect(page.getByRole('button', { name: 'Отправить подготовленные изменения' })).toBeEnabled()
   const syncMessage = (await page.locator('body').innerText()).match(/Отправлено изменений: \\d+|Нет подготовленных изменений\\.|Отправка не завершена\\.[^\\n]*/)?.[0] ?? 'No visible sync result'
   console.log('E3E4 sync diagnostic:', syncMessage)
+  console.log('E3E4 local diagnostic after retry:', JSON.stringify(await localDiagnostic()))
+  console.log('E3E4 RPC diagnostic:', JSON.stringify(rpcEvents))
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('id').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
     if (error) throw error
