@@ -66,7 +66,7 @@ END $$;
 -- Active-list removal must not destroy completed purchase history.
 DELETE FROM public.shopping_lists
  WHERE id IN ('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111');
-DO $
+DO $test$
 BEGIN
  IF (SELECT count(*) FROM public.e4_archive_completions)<>2
  OR (SELECT count(*) FROM public.e4_archive_items)<>2
@@ -77,10 +77,10 @@ BEGIN
  OR has_table_privilege('authenticated','public.e4_archive_items','INSERT')
  OR has_table_privilege('authenticated','public.e4_archive_completions','DELETE')
  THEN RAISE EXCEPTION 'Unsafe completion or archive privileges'; END IF;
-END $;
+END $test$;
 SET ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',false);
-DO $
+DO $test$
 DECLARE r jsonb;
 BEGIN
  r := public.complete_e4_list(
@@ -88,14 +88,14 @@ BEGIN
  '11111111-1111-4111-8111-111111111111',0,'marked_only');
  IF r->>'archive_id' IS NULL THEN
   RAISE EXCEPTION 'Replay failed after source list deletion'; END IF;
-END $;
+END $test$;
 SELECT set_config('request.jwt.claim.sub','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',false);
-DO $
+DO $test$
 BEGIN
  IF EXISTS (SELECT 1 FROM public.e4_archive_completions)
  OR EXISTS (SELECT 1 FROM public.e4_archive_items)
  THEN RAISE EXCEPTION 'Foreign user can see archives after deletion'; END IF;
-END $;
+END $test$;
 RESET ROLE;
 DELETE FROM public.e4_completion_receipts;
 DELETE FROM public.e4_archive_completions;
