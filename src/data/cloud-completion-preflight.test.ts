@@ -52,11 +52,11 @@ describe('E4 completion preflight', () => {
     }
   })
   it('blocks cloud-only items and divergent purchase flags', async () => {
-    expect((await check(fixture({ local: [] })).ready).toBe(false)
-    expect((await check(fixture({ local: [{ id: itemId, listId: localListId, name: 'Молоко', purchased: false }] })).ready).toBe(false)
+    expect((await check(fixture({ local: [] }))).ready).toBe(false)
+    expect((await check(fixture({ local: [{ id: itemId, listId: localListId, name: 'Молоко', purchased: false }] }))).ready).toBe(false)
   })
   it('blocks an empty server list and account change', async () => {
-    expect((await check(fixture({ remote: [] })).ready).toBe(false)
+    expect((await check(fixture({ remote: [] }))).ready).toBe(false)
     const f = fixture({ active: false })
     expect((await check(f)).ready).toBe(false)
     expect(f.from).not.toHaveBeenCalled()
