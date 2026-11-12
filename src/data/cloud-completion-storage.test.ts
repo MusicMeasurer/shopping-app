@@ -26,6 +26,16 @@ describe('durable E4 completion IndexedDB v11', () => {
       kind: 'cloud-update', operationId: crypto.randomUUID(), itemId: item.id,
       localListId: 'groceries', remoteListId, expectedVersion: 1, item: { ...item, purchased: true },
     })).rejects.toThrow('Completion pending')
+    await expect(second.saveAccountItem(accountId, { ...item, purchased: true }))
+      .rejects.toThrow('Completion pending')
+    await expect(second.removeAccountItem(accountId, item.id))
+      .rejects.toThrow('Completion pending')
+    await expect(second.importRemoteOnlyBatch(accountId, remoteListId, [{
+      item: { ...item, id: crypto.randomUUID() }, version: 1,
+    }])).rejects.toThrow('Completion pending')
+    await expect(second.applyReviewedRemoteDeletions(accountId, remoteListId, [{
+      item, expectedLocalVersion: 1, serverDeletedVersion: 2,
+    }])).rejects.toThrow('Completion pending')
     await expect(second.commitAccountCompletion({ ...saved, expectedRevision: 9 }, 3)).rejects.toThrow()
     expect(await second.readAccountItems(accountId)).toEqual([item])
     await second.commitAccountCompletion(saved, 3)
