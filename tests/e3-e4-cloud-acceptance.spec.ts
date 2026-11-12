@@ -44,23 +44,20 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByLabel('Что нужно купить?').fill(prefix)
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
-  await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
-  await expect(page.getByText(/Отправлено изменений: [1-9]/), 'Cloud sync status: ' + await page.locator('body').innerText()).toBeVisible()
-  // Require an actual remote sync before completion; no mocked RPC or optimistic-only assertions.
+  // Account edits auto-flush. A manual flush can legitimately report zero after an automatic send.
+  // Assert server state instead of assuming a positive manual-flush receipt.
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('id').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
     if (error) throw error
     return data?.length ?? 0
-  }).toBe(1)
+  }, { timeout: 20000, message: 'Item not synchronized after automatic account flush' }).toBe(1)
   await page.getByRole('checkbox', { name: prefix }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeChecked()
-  await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
-  await expect(page.getByText(/Отправлено изменений: [1-9]/), 'Cloud sync status: ' + await page.locator('body').innerText()).toBeVisible()
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('purchased').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
     if (error) throw error
     return data?.[0]?.purchased
-  }).toBe(true)
+  }, { timeout: 20000, message: 'Purchase flag not synchronized after automatic account flush' }).toBe(true)
   const completion = page.getByRole('button', { name: 'Завершить: отмеченные' })
   page.once('dialog', dialog => dialog.dismiss())
   await completion.click()
