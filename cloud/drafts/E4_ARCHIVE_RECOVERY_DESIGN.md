@@ -39,3 +39,11 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Test list deletion after completion, duplicate replay, stale version, A/B isolation, offline/restart/online, no-purchase and partial-purchase dialogs, all 36 accepted E4 local regression cases and physical iPhone acceptance.
 - Existing `022/023` drafts omit completion/archive; do not execute them as an integrated solution.
 - Do not claim a completed backup, verified recovery, SQL migration or E3/E4 cloud acceptance.
+
+
+## Completion RPC CI checkpoint · 2026-11-12
+
+- Added `025_e4_completion_RPC_CI_ONLY.sql`: owner-scoped transactional `complete_e4_list`, operation UUID receipts, revision gate, archive snapshots, soft-deletion tombstones and permanent/oneoff branch (oneoff depends on E4 metadata schema).
+- Added `tests/recovery/test_e4_completion_rpc.sql`: marked-only, none-purchased, no-marks, replay, payload mismatch, stale revision, foreign owner, archived item count, revision/tombstones.
+- [GitHub Actions run #23](https://github.com/MusicMeasurer/shopping-app/actions/runs/43207740279) **success** at commit `c38cc725660e0fd1d6bc31c7ca2c28e3c754f010`; temporary PostgreSQL only.
+- **Not yet done:** end-to-end oneoff flow with metadata 022, all-purchased snapshot assertion, empty-list negative test, race/concurrency test, hosted A/B tests, browser offline queue, archive UI wiring and physical iPhone acceptance. Existing lab was not changed. Do not deploy these CI-only drafts as-is; review auth/permissions, compatibility with E3 pull cursors and list deletion semantics first.
