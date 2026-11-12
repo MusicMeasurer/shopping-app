@@ -44,6 +44,7 @@ describe('durable E4 completion IndexedDB v11', () => {
     await second.commitAccountCompletion(saved, 3, [{ id: item.id, version: 2 }])
     expect(await second.readAccountItems(accountId)).toEqual([])
     expect(await second.readAccountCompletions(accountId)).toEqual([])
+    expect((await second.readAccountItemVersions(accountId)).find(row => row.itemId === item.id)?.version).toBe(2)
     await second.close()
   })
   it('refuses to create an intent while writes are queued', async () => {
