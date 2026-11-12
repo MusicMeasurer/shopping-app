@@ -41,6 +41,9 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
   await page.locator('#remote-cloud-list').selectOption(listId)
   await page.getByRole('button', { name: 'Привязать', exact: true }).click()
+  // Binding is asynchronous. Do not add an item until IndexedDB mapping is committed
+  // and the cloud completion toolbar confirms the account list is bound.
+  await expect(page.getByRole('button', { name: 'Завершить: отмеченные' })).toBeVisible()
   const rpcEvents: { status: number; code: string; message: string }[] = []
   page.on('response', async response => {
     if (!response.url().includes('/rest/v1/rpc/apply_item_change')) return
