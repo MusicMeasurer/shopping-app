@@ -26,16 +26,11 @@
 - No archive table should expose rows across accounts. For public-schema tables: RLS on, owner-scoped SELECT and no arbitrary client INSERT/UPDATE/DELETE; reviewed transactional RPC must validate `auth.uid()`, authorization, expected revision, replay payload and atomicity. Audit SECURITY DEFINER and EXECUTE grants.
 - Account deletion and explicit archive deletion are separate future retention decisions; do not implement implicit destruction by dropping a list.
 
-## Recovery checkpoint before any lab schema mutation
+## Updated environment decision (approved 2026-11-12)
 
-**Not done.** A SQL schema inspection, Git snapshot or migration draft is not a database backup.
+The previous full-backup/restore gate below was superseded by the user's explicit decision: continue additive E3→E4 migrations in the **existing** `shoppingapp-migration-lab` without clearing it. Do not require a complete database backup, third Supabase project, or paid tooling. Preserve reproducible SQL/code/security rules in GitHub; historical test records need not be retained. The `shoppingapp-security-lab` is reserved as the future main environment **after** E3↔E4 integration acceptance; do not modify it now.
 
-1. Inventory PostgreSQL schema, roles, data, migration history, extensions, functions, RLS/GRANT, Auth configuration, Storage object bytes and service settings. Exclude credentials/secrets from repository and logs.
-2. Export roles, schema and data using documented Supabase CLI `db dump`; preserve migration history separately if used. Record checksums, timestamp, tool versions, project ref and coverage/gaps. Storage objects and dashboard configuration need separate handling.
-3. Validate restore to an **isolated non-production environment**, with table counts, functions, ACL/RLS, auth and representative tests. Never overwrite either historical lab as a restore test. Do not provision paid services without approval.
-4. Only after a verified restore gate: draft additive SQL migrations and rollback/forward-recovery plan; perform isolated A/B security and idempotency tests, then consider controlled lab execution.
-
-Supabase reference: https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
+Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4_archive_schema.sql` establish durable owner-scoped read-only snapshot tables in isolated PostgreSQL CI. This is not a completion RPC or hosted deployment. Continue with atomic, version-checked, idempotent completion/reset and client integration before declaring cloud archive ready.
 
 ## Open implementation gates
 
