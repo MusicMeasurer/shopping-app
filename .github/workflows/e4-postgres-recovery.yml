@@ -5,6 +5,8 @@ on:
     paths:
       - 'cloud/drafts/**'
       - 'tests/recovery/**'
+      - 'src/data/cloud-archive.ts'
+      - 'src/data/cloud-archive.test.ts'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
 permissions:
@@ -35,6 +37,16 @@ jobs:
       PGDATABASE: shoppingapp_recovery_ci
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install frontend dependencies
+        run: npm ci
+      - name: Run frontend unit regression
+        run: npm test -- --run
+      - name: Typecheck and build PWA
+        run: npm run build
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
