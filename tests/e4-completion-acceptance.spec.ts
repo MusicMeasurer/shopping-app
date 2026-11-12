@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test'
 test('browser E4: cancelled completion leaves items unchanged, permanent list persists with archive after reload', async ({ page }) => {
   await page.goto('/shopping-app/')
   const input = page.getByLabel('Что нужно купить? (можно несколько строк)')
-  await input.fill('Молоко\\nХлеб')
+  await input.fill('Молоко\nХлеб')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()
   await page.getByRole('checkbox', { name: 'Молоко' }).check()
