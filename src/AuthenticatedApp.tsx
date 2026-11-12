@@ -5,6 +5,7 @@ import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
+import { inspectCloudCompletion } from './data/cloud-completion-preflight'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import { createAccountSync } from './data/account-sync'
 import type { Storage } from './data/storage'
@@ -29,6 +30,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
+  const [completionPreflight, setCompletionPreflight] = useState('')
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
   const [cloudLoading, setCloudLoading] = useState(false)
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
@@ -436,6 +438,31 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
+  async function previewCloudCompletion() {
+    if (!client || !currentAccount || cloudLoading) return
+    const remoteListId = cloudBindings[selectedLocal]
+    if (!remoteListId) {
+      setCompletionPreflight('Сначала привяжите локальный список к облачному.')
+      return
+    }
+    setCloudLoading(true)
+    setCompletionPreflight('')
+    const accountId = currentAccount
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      const result = await inspectCloudCompletion(
+        storage, client, accountId, selectedLocal, remoteListId,
+        () => activeAccount.current === accountId,
+      )
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      setCompletionPreflight(result.ready
+        ? 'Список согласован с облаком (ревизия ' + result.revision + '). Завершение пока недоступно: требуется безопасная синхронизация архива и удалений.'
+        : 'Завершение пока небезопасно: ' + result.reason)
+    } catch {
+      setCompletionPreflight('Проверка завершения не удалась. Изменения не выполнялись.')
+    } finally { setCloudLoading(false) }
+  }
+
   async function loadCloudArchive() {
     if (!client || !currentAccount || cloudArchiveBusy) return
     setCloudArchiveBusy(true)
@@ -456,6 +483,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     setCloudArchives(null)
     setCloudArchiveError('')
+    setCompletionPreflight('')
   }, [workspaceAccount])
 
   async function signOut() {
@@ -502,6 +530,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       <h2>Облачные списки</h2>
       <section aria-label="Облачный архив">
         <h3>Облачный архив покупок</h3>
+        <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void previewCloudCompletion()}>
+          Проверить готовность облачного списка к завершению
+        </button>
+        {completionPreflight && <p role="status">{completionPreflight}</p>}
         <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
           {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
         </button>
