@@ -6,6 +6,8 @@ import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
 import { inspectCloudCompletion } from './data/cloud-completion-preflight'
+import { createCloudCompletionCoordinator } from './data/cloud-completion-coordinator'
+import type { CompletionMode } from './data/cloud-completion-rpc'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import { createAccountSync } from './data/account-sync'
 import type { Storage } from './data/storage'
@@ -31,6 +33,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
   const [completionPreflight, setCompletionPreflight] = useState('')
+  const [completionBusy, setCompletionBusy] = useState(false)
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
   const [cloudLoading, setCloudLoading] = useState(false)
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
@@ -463,6 +466,50 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCloudLoading(false) }
   }
 
+  async function completeCloudList(mode: CompletionMode) {
+    if (!client || !currentAccount || completionBusy || cloudLoading) return
+    const accountId = currentAccount
+    const localListId = selectedLocal
+    const remoteListId = cloudBindings[localListId]
+    if (!remoteListId) { setCompletionPreflight('Сначала привяжите список к облаку.'); return }
+    if (!window.confirm('Завершить облачный список? Подтверждённые покупки попадут в архив, активные товары будут очищены.')) return
+    setCompletionBusy(true)
+    setCompletionPreflight('')
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      const coordinator = createCloudCompletionCoordinator(storage, client, accountId,
+        () => activeAccount.current === accountId)
+      const receipt = await coordinator.begin(localListId, remoteListId, mode)
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      setCompletionPreflight('Список завершён. Сервер подтвердил операцию ' + receipt.operationId)
+      setCloudArchives(null)
+      setWorkspaceRevision(value => value + 1)
+      void loadCloudLists()
+    } catch (cause) {
+      setCompletionPreflight('Не удалось завершить: ' + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
+        '. Если операция уже отправлена, её идентификатор сохранён для безопасного повтора.')
+    } finally { setCompletionBusy(false) }
+  }
+  async function recoverCloudCompletions() {
+    if (!client || !currentAccount || completionBusy) return
+    const accountId = currentAccount
+    setCompletionBusy(true)
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      const receipts = await createCloudCompletionCoordinator(storage, client, accountId,
+        () => activeAccount.current === accountId).recoverAll()
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      setCompletionPreflight(receipts.length
+        ? 'Восстановлено завершений: ' + receipts.length
+        : 'Незавершённых операций нет.')
+      setCloudArchives(null)
+      setWorkspaceRevision(value => value + 1)
+    } catch (cause) {
+      setCompletionPreflight('Восстановление приостановлено: ' +
+        (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
+        '. Сохранённые операции не удалены.')
+    } finally { setCompletionBusy(false) }
+  }
   async function loadCloudArchive() {
     if (!client || !currentAccount || cloudArchiveBusy) return
     setCloudArchiveBusy(true)
@@ -534,6 +581,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           Проверить готовность облачного списка к завершению
         </button>
         {completionPreflight && <p role="status">{completionPreflight}</p>}
+        {cloudBindings[selectedLocal] && <div aria-label="Завершение облачного списка">
+          <p>Завершить выбранный облачный список:</p>
+          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('marked_purchased')}>Только отмеченные покупки</button>
+          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('all_purchased')}>Все товары куплены</button>
+          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('none_purchased')}>Ничего не куплено</button>
+        </div>}
+        <button type="button" disabled={completionBusy} onClick={() => void recoverCloudCompletions()}>
+          {completionBusy ? 'Проверяем завершение…' : 'Восстановить незавершённое завершение'}
+        </button>
         <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
           {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
         </button>
