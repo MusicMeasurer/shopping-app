@@ -730,11 +730,29 @@ export function createStorage(name = 'shopping-app') {
       return rows.map(row => row.item)
     },
     async saveAccountItem(accountId: string, item: Item): Promise<void> {
-      const key = accountKey(accountId, item.id)
-      await (await database).put('accountItems', { key, accountId, item })
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountCompletions'], 'readwrite')
+      try {
+        const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (intents.some(row => row.intent.localListId === item.listId))
+          throw new Error('Completion pending; list edits are temporarily locked')
+        await tx.objectStore('accountItems').put({ key: accountKey(accountId, item.id), accountId, item })
+        await tx.done
+      } catch (error) { try { tx.abort() } catch { /* closed */ }; await tx.done.catch(() => {}); throw error }
     },
     async removeAccountItem(accountId: string, itemId: string): Promise<void> {
-      await (await database).delete('accountItems', accountKey(accountId, itemId))
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountCompletions'], 'readwrite')
+      try {
+        const key = accountKey(accountId, itemId)
+        const existing = await tx.objectStore('accountItems').get(key)
+        const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        // Unknown item ownership is ambiguous while completion is pending: fail closed.
+        if (intents.some(row => !existing || row.intent.localListId === existing.item.listId))
+          throw new Error('Completion pending; list edits are temporarily locked')
+        await tx.objectStore('accountItems').delete(key)
+        await tx.done
+      } catch (error) { try { tx.abort() } catch { /* closed */ }; await tx.done.catch(() => {}); throw error }
     },
     // Unassigned operations remain local until an explicit guest-data migration.
     async readPending(): Promise<PendingItemOperation[]> {
@@ -964,8 +982,10 @@ export function createStorage(name = 'shopping-app') {
       if (ids.size !== entries.length || entries.some(entry =>
         !Number.isSafeInteger(entry.version) || entry.version < 0)) throw new Error('Invalid import batch')
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
       try {
+        const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (inFlight.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion pending; import/review blocked')
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, entries[0].item.listId))
         const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
         if (!mapping || mapping.remoteListId !== remoteListId ||
@@ -1007,8 +1027,10 @@ export function createStorage(name = 'shopping-app') {
         throw new Error('Invalid reviewed deletion batch')
       }
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
       try {
+        const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (inFlight.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion pending; import/review blocked')
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, entries[0].item.listId))
         const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
         if (!mapping || mapping.remoteListId !== remoteListId ||
