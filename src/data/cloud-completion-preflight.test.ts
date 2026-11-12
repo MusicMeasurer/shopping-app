@@ -55,6 +55,10 @@ describe('E4 completion preflight', () => {
     expect((await check(fixture({ local: [] }))).ready).toBe(false)
     expect((await check(fixture({ local: [{ id: itemId, listId: localListId, name: 'Молоко', purchased: false }] }))).ready).toBe(false)
   })
+  it('refuses to archive unverified local quantity and units', async () => {
+    const f = fixture({ local: [{ id: itemId, listId: localListId, name: 'Молоко', purchased: true, quantity: 2, unit: 'л' }] })
+    expect((await check(f)).ready).toBe(false)
+  })
   it('blocks an empty server list and account change', async () => {
     expect((await check(fixture({ remote: [] }))).ready).toBe(false)
     const f = fixture({ active: false })
