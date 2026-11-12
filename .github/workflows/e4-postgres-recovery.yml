@@ -96,6 +96,8 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_archive_schema.sql
       - name: Apply E4 list metadata schema in isolated PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/022_e4_list_metadata_REVIEW_ONLY.sql
+      - name: Verify E4 direct update privileges are closed
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_metadata_acl.sql
       - name: Create E4 atomic completion RPC in isolated PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/025_e4_completion_RPC_CI_ONLY.sql
       - name: Test E4 completion, idempotency, isolation and sync tombstones
