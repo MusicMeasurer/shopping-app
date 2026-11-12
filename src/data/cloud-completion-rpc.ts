@@ -39,7 +39,9 @@ export async function sendCloudCompletion(
       row.mode !== mode || (row.kind !== 'permanent' && row.kind !== 'oneoff') ||
       !Number.isSafeInteger(row.revision) || (row.revision as number) <= expectedRevision ||
       !Number.isSafeInteger(row.item_count) || (row.item_count as number) < 1 ||
-      (row.archive_id !== null && (typeof row.archive_id !== 'string' || !uuid.test(row.archive_id))))
+      (row.archive_id !== null && (typeof row.archive_id !== 'string' || !uuid.test(row.archive_id))) ||
+      (mode === 'all_purchased' && row.archive_id === null) ||
+      (mode === 'none_purchased' && row.archive_id !== null))
     throw new Error('Неподтверждённый результат завершения')
   return {
     operationId, listId, mode, kind: row.kind,
