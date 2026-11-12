@@ -81,6 +81,10 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql
       - name: Verify E4 archive RLS and snapshot durability
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_archive_schema.sql
+      - name: Create E4 atomic completion RPC in isolated PostgreSQL
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/025_e4_completion_RPC_CI_ONLY.sql
+      - name: Test E4 completion, idempotency, isolation and sync tombstones
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_completion_rpc.sql
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
