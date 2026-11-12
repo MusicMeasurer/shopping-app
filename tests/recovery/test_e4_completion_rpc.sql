@@ -63,6 +63,28 @@ BEGIN
  OR (select count(*) from public.shopping_items where list_id='11111111-1111-4111-8111-111111111111' and deleted_at is null)<>0
  THEN RAISE EXCEPTION 'Completion persistence or tombstones failed'; END IF;
 END $$;
+-- Acceptance matrix (cases 2-6): server-side durable outcomes, not merely RPC success.
+DO $acceptance$
+BEGIN
+ IF (SELECT count(*) FROM public.e4_archive_items WHERE name='Milk')<>1
+ OR (SELECT count(*) FROM public.e4_archive_items WHERE name='Bread')<>0
+ THEN RAISE EXCEPTION 'Marked-only archive contains incorrect purchased selection'; END IF;
+ IF (SELECT count(*) FROM public.e4_archive_items WHERE name='Cheese')<>1
+ THEN RAISE EXCEPTION 'All-purchased oneoff archive missing item'; END IF;
+ IF (SELECT count(*) FROM public.e4_archive_completions WHERE source_list_id='33333333-3333-4333-8333-333333333333')<>0
+ OR (SELECT count(*) FROM public.e4_archive_completions WHERE source_list_id='44444444-4444-4444-8444-444444444444')<>0
+ THEN RAISE EXCEPTION 'No-purchase completion created an archive'; END IF;
+ IF (SELECT count(*) FROM public.shopping_items WHERE list_id IN
+  ('33333333-3333-4333-8333-333333333333','44444444-4444-4444-8444-444444444444')
+  AND deleted_at IS NULL)<>0
+ THEN RAISE EXCEPTION 'No-purchase or unmarked completion left active items'; END IF;
+ IF (SELECT count(*) FROM public.shopping_lists WHERE id='11111111-1111-4111-8111-111111111111'
+  AND deleted_at IS NULL AND kind='permanent')<>1
+ THEN RAISE EXCEPTION 'Permanent list disappeared after completion'; END IF;
+ IF (SELECT count(*) FROM public.shopping_lists WHERE id='aaaaaaaa-1111-4111-8111-111111111111'
+  AND deleted_at IS NOT NULL AND kind='oneoff')<>1
+ THEN RAISE EXCEPTION 'Oneoff list remained active after completion'; END IF;
+END $acceptance$;
 -- Active-list removal must not destroy completed purchase history.
 DELETE FROM public.shopping_lists
  WHERE id IN ('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111');
