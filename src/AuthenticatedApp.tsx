@@ -486,7 +486,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     const accountId = currentAccount
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) { setCompletionPreflight('Сначала привяжите список к облаку.'); return }
-    if (!window.confirm('Завершить облачный список? Подтверждённые покупки попадут в архив, активные товары будут очищены.')) return
+    if (!window.confirm(mode === 'none_purchased'
+      ? 'Завершить список без покупок? Товары будут очищены, архив покупок не пополнится.'
+      : 'Завершить облачный список? Купленные товары попадут в архив, активные товары будут очищены.')) return
     setCompletionBusy(true)
     setCompletionPreflight('')
     try {
@@ -652,7 +654,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
     <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
-      cloudBoundLists={currentAccount ? cloudBindings : {}} onCompleteCloudList={currentAccount ? (listId, mode) => { void completeCloudList(listId, mode) } : undefined}
+      cloudBoundLists={currentAccount ? cloudBindings : {}} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode) => { void completeCloudList(listId, mode) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
         <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
