@@ -9,6 +9,8 @@ on:
       - 'src/data/cloud-archive.test.ts'
       - 'src/data/cloud-completion-preflight.ts'
       - 'src/data/cloud-completion-preflight.test.ts'
+      - 'src/data/cloud-completion-rpc.ts'
+      - 'src/data/cloud-completion-rpc.test.ts'
       - 'src/AuthenticatedApp.tsx'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
