@@ -1,6 +1,6 @@
 # Lab reuse decision gate — 2026-11-12
 
-Status: **NOT YET CLEARED FOR RESET OR DELETION**. No hosted changes made.
+Status: **NOT YET CLEARED FOR RESET OR DELETION**. No hosted changes made. Agreed scope is a low-cost, best-effort preservation of development structure and rerunnable tests, **not a full backup**.
 
 ## Verified
 - Two existing free Supabase projects are active and healthy: `shoppingapp-migration-lab` (`gmrqeubhotjpmtwokfeq`) and `shoppingapp-security-lab` (`tdcrtwpewbngoermckmx`), both PostgreSQL 17, eu-west-3.
@@ -10,7 +10,7 @@ Status: **NOT YET CLEARED FOR RESET OR DELETION**. No hosted changes made.
 - User confirmed expanded CI green, but no verified full Supabase restore.
 - Historical test records need not be preserved per agreed scope.
 
-## Backup coverage and limitations
+## Agreed best-effort preservation coverage and limitations
 | Component | Evidence | Status |
 |---|---|---|
 | Public schema metadata, SQL function definitions, RLS, grants, triggers | GitHub inventory snapshots | Captured, not proven exact reproducible |
@@ -25,8 +25,8 @@ Status: **NOT YET CLEARED FOR RESET OR DELETION**. No hosted changes made.
 ## Decision and minimum remaining work
 1. Inventory `shoppingapp-security-lab` read-only (tables, functions, migration history, roles, RLS, and test dependencies) and compare both candidates.
 2. Select the lower-cost-to-reconstruct lab based on evidence, not on name alone.
-3. Capture a full schema/roles dump and any necessary configuration with supported Supabase CLI or database tooling where access is available; protect credentials and verify artifact integrity. No direct full dump capability is exposed by the currently connected Supabase tools.
+3. Preserve only the development-critical structure, functions, ACL/RLS, deployment instructions and repeatable tests available through existing free tools. Do **not** require or pursue a full database backup, full schema/roles dump, historical data export, or a new paid environment.
 4. Prove that the **specific app dependencies being discarded** can be redeployed and exercised in an isolated environment, or explicitly accept residual loss. PostgreSQL-only CI does not verify Supabase Auth, PostgREST, Edge, or dashboard configuration.
 5. Only after a documented gate and explicit user authorization perform any reset, deletion, or destructive migration. Do not provision a paid third project.
 
-This is a preparation checkpoint, **not** a declaration that backup or reset is complete.
+This is a preparation checkpoint, **not** a claim of full backup or permission to reset. Evaluate sufficient reproducibility for the agreed development scope, not full infrastructure parity.
