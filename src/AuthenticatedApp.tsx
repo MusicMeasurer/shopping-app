@@ -350,7 +350,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function compareCloudDeletions() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
-    const localListId = selectedLocal
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) return
     setCloudLoading(true)
@@ -483,7 +482,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCompletionPreflight('Список завершён. Сервер подтвердил операцию ' + receipt.operationId)
       setCloudArchives(null)
       setWorkspaceRevision(value => value + 1)
-      await loadCloudArchive()
+      void loadCloudArchive()
     } catch (cause) {
       setCompletionPreflight('Не удалось завершить: ' + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
         '. Если операция уже отправлена, её идентификатор сохранён для безопасного повтора.')
@@ -503,6 +502,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         : 'Незавершённых операций нет.')
       setCloudArchives(null)
       setWorkspaceRevision(value => value + 1)
+      void loadCloudArchive()
     } catch (cause) {
       setCompletionPreflight('Восстановление приостановлено: ' +
         (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
