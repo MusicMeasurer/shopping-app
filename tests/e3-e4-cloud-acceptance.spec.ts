@@ -41,16 +41,16 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
   await page.locator('#remote-cloud-list').selectOption(listId)
   await page.getByRole('button', { name: 'Привязать', exact: true }).click()
-  await page.getByLabel('Что нужно купить?').fill(prefix)
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
-  await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
-  // Diagnostic only: account-scoped IndexedDB state and sanitized RPC status.
   const rpcEvents: { status: number; code: string; message: string }[] = []
   page.on('response', async response => {
     if (!response.url().includes('/rest/v1/rpc/apply_item_change')) return
     const body = await response.json().catch(() => ({})) as { code?: string; message?: string }
     rpcEvents.push({ status: response.status(), code: body.code ?? '', message: (body.message ?? '').slice(0, 180) })
   })
+  await page.getByLabel('Что нужно купить?').fill(prefix)
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
+  // Diagnostic only: account-scoped IndexedDB state and sanitized RPC status.
   const localDiagnostic = async () => page.evaluate(async ({ ownerId, listId, prefix }) => {
     const db = await new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open('shopping-app')
