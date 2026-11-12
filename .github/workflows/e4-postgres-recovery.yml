@@ -87,6 +87,8 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/025_e4_completion_RPC_CI_ONLY.sql
       - name: Test E4 completion, idempotency, isolation and sync tombstones
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_completion_rpc.sql
+      - name: Concurrent E4 completion requests must serialize safely
+        run: python tests/recovery/test_e4_completion_concurrency.py
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
