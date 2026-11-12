@@ -111,3 +111,10 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Added `src/data/cloud-completion-preflight.test.ts` for positive, unverified mapping, queued writes, divergence, empty list and account-change cases. Corrected initial test syntax and mock Supabase field naming after CI failures; run [43215684483](https://github.com/MusicMeasurer/shopping-app/actions/runs/43215684483) passed.
 - Added a **read-only** 'Проверить готовность облачного списка к завершению' action to account UI. It never calls `complete_e4_list` or deletes local data, and explicitly states completion is unavailable until safe durable reconciliation is implemented.
 - **Unresolved:** preflight cannot alone make completion safe against concurrent local edits, offline restarts, or crash between RPC commit and local tombstone application. Need a durable completion intent/receipt state machine and recovery tests before enabling actual cloud completion. No accepted behavior changed.
+
+
+## Strict cloud completion RPC client adapter · 2026-11-12
+
+- Added `src/data/cloud-completion-rpc.ts` and tests: validates UUIDs, expected revision, mode, server operation/list identity, revision advancement, item count and archive UUID; propagates server errors without inventing a success receipt.
+- The adapter is **intentionally not connected to the UI**. A verified read-only preflight cannot replace a durable completion-intent/receipt queue, local tombstone reconciliation or crash/restart recovery. Cloud completion remains disabled until that coordinator is implemented and regression-tested.
+- Frontend UI now exposes only a read-only readiness check; E4 guest/local completion and accepted E3 sync are unchanged. No further hosted schema changes.
