@@ -200,6 +200,21 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setDeletionReview(null)
   }, [view.status === 'account' ? view.accountId : null])
 
+  // Restore existing bindings for the active verified account so completion
+  // actions are available after a restart without a manual cloud-list lookup.
+  useEffect(() => {
+    if (!currentAccount || readyAccount !== currentAccount) return
+    const accountId = currentAccount
+    let cancelled = false
+    void storage.readAccountListMappings(accountId).then(mappings => {
+      if (!cancelled && activeAccount.current === accountId)
+        setCloudBindings(Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])))
+    }).catch(() => {
+      if (!cancelled) setCloudRefreshStatus('Не удалось восстановить привязки облачных списков.')
+    })
+    return () => { cancelled = true }
+  }, [currentAccount, readyAccount, storage])
+
   // Read-only cloud refresh for verified, bound lists. Never apply remote
   // deletions or overwrite local edits without explicit user review.
   useEffect(() => {
