@@ -583,7 +583,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         {completionPreflight && <p role="status">{completionPreflight}</p>}
         {cloudBindings[selectedLocal] && <div aria-label="Завершение облачного списка">
           <p>Завершить выбранный облачный список:</p>
-          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('marked_purchased')}>Только отмеченные покупки</button>
+          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('marked_only')}>Только отмеченные покупки</button>
           <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('all_purchased')}>Все товары куплены</button>
           <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('none_purchased')}>Ничего не куплено</button>
         </div>}
