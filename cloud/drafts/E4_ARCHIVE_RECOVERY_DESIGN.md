@@ -79,3 +79,11 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Added an explicit account-only cloud archive viewer in `src/AuthenticatedApp.tsx`, including identity verification before and after fetch, account-change state clearing, and error handling. No client archive writes are enabled. It is not yet an E4 parity replacement for the local archive UI.
 - E4 workflow now runs frontend unit tests and TypeScript/Vite build alongside isolated PostgreSQL regression; triggers on archive client/UI changes.
 - **Deployment gate:** archive tables/RPC are CI-only and not installed on hosted Supabase. Until additive hosted migration and A/B verification, the cloud archive viewer will report an unavailable-query error; do not claim end-to-end readiness. Cloud completion action, offline queue, account archive migration, and physical device acceptance remain open.
+
+
+## Hosted migration and rollback-only functional probe · 2026-11-12
+
+- **Applied to existing `shoppingapp-migration-lab` only** through Supabase migrations, sequentially: `e4_list_metadata` (022), `e4_archive_snapshot` (024), `e4_atomic_completion` (025). No wipe, no third lab, no deployment to `shoppingapp-security-lab`.
+- Hosted read-back: zero invalid kind/position metadata; `authenticated` has no direct `shopping_lists UPDATE`; authenticated can EXECUTE `complete_e4_list` and SELECT archive, cannot INSERT archive; both owner-scoped archive RLS policies exist; existing active permanent list remains.
+- Executed hosted **transactional rollback-only** functional test using an existing account ID, newly generated temporary list/item/operation UUIDs, `SET LOCAL ROLE authenticated` and the owner's JWT claim. Tested `oneoff`, `marked_only`, quantity/unit snapshot and idempotent replay. First probe incorrectly checked the soft-deleted list through authenticated RLS (which intentionally hides deleted rows); fixed probe to reset role before asserting tombstone. Corrected probe passed; explicit `ROLLBACK` returned zero temporary list rows and zero archive rows. No persistent test records.
+- **Not yet done:** independent hosted A/B negative tests, hosted API HTTP auth tests, UI cloud completion, offline queue, profile migration and iPhone acceptance. Do not promote to main.
