@@ -766,7 +766,7 @@ export function createStorage(name = 'shopping-app') {
         const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
         if (queued.some(row => row.operation.kind === 'delete' ||
             (row.operation.kind === 'upsert' && row.operation.item.listId === localListId) ||
-            (row.operation.kind !== 'delete' && row.operation.kind !== 'upsert' && row.operation.remoteListId === remoteListId)))
+            (row.operation.kind !== 'upsert' && row.operation.remoteListId === remoteListId)))
           throw new Error('Unsent operations block completion')
         const items = (await tx.objectStore('accountItems').index('byAccount').getAll(accountId))
           .filter(row => row.item.listId === localListId)
@@ -795,7 +795,7 @@ export function createStorage(name = 'shopping-app') {
         const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(intent.accountId)
         if (queued.some(row => row.operation.kind === 'delete' ||
             (row.operation.kind === 'upsert' && row.operation.item.listId === intent.localListId) ||
-            (row.operation.kind !== 'delete' && row.operation.kind !== 'upsert' && row.operation.remoteListId === intent.remoteListId)))
+            (row.operation.kind !== 'upsert' && row.operation.remoteListId === intent.remoteListId)))
           throw new Error('Local edits must be reconciled before completion')
         const rows = (await tx.objectStore('accountItems').index('byAccount').getAll(intent.accountId))
           .filter(row => row.item.listId === intent.localListId)
