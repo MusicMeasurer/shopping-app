@@ -63,6 +63,40 @@ BEGIN
  OR (select count(*) from public.shopping_items where list_id='11111111-1111-4111-8111-111111111111' and deleted_at is null)<>0
  THEN RAISE EXCEPTION 'Completion persistence or tombstones failed'; END IF;
 END $$;
+-- Active-list removal must not destroy completed purchase history.
+DELETE FROM public.shopping_lists
+ WHERE id IN ('11111111-1111-4111-8111-111111111111','aaaaaaaa-1111-4111-8111-111111111111');
+DO $
+BEGIN
+ IF (SELECT count(*) FROM public.e4_archive_completions)<>2
+ OR (SELECT count(*) FROM public.e4_archive_items)<>2
+ THEN RAISE EXCEPTION 'Archive lost when active list deleted'; END IF;
+ IF (SELECT count(*) FROM public.e4_completion_receipts)<>4
+ THEN RAISE EXCEPTION 'Replay receipts lost after list deletion'; END IF;
+ IF has_table_privilege('authenticated','public.e4_completion_receipts','SELECT')
+ OR has_table_privilege('authenticated','public.e4_archive_items','INSERT')
+ OR has_table_privilege('authenticated','public.e4_archive_completions','DELETE')
+ THEN RAISE EXCEPTION 'Unsafe completion or archive privileges'; END IF;
+END $;
+SET ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub','aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',false);
+DO $
+DECLARE r jsonb;
+BEGIN
+ r := public.complete_e4_list(
+ 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+ '11111111-1111-4111-8111-111111111111',0,'marked_only');
+ IF r->>'archive_id' IS NULL THEN
+  RAISE EXCEPTION 'Replay failed after source list deletion'; END IF;
+END $;
+SELECT set_config('request.jwt.claim.sub','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',false);
+DO $
+BEGIN
+ IF EXISTS (SELECT 1 FROM public.e4_archive_completions)
+ OR EXISTS (SELECT 1 FROM public.e4_archive_items)
+ THEN RAISE EXCEPTION 'Foreign user can see archives after deletion'; END IF;
+END $;
+RESET ROLE;
 DELETE FROM public.e4_completion_receipts;
 DELETE FROM public.e4_archive_completions;
 DELETE FROM public.shopping_lists;
