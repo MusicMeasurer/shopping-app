@@ -31,11 +31,12 @@ function fixture() {
     readAccountListMappings: vi.fn(async () => [{ localListId: 'groceries', remoteListId }]),
   }
   const rpc = vi.fn(async () => ({ data: receipt, error: null }))
-  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ not: async () => ({ data: [{
+  let tombstones: unknown[] = [{
     id: itemId, list_id: remoteListId, version: 2, deleted_at: '2026-11-12T12:00:00Z',
-  }], error: null }) }) }) }))
+  }]
+  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ not: async () => ({ data: tombstones, error: null }) }) }) }))
   return {
-    storage, rpc, setCrash: (v: boolean) => { crash = v },
+    storage, rpc, setTombstones: (rows: unknown[]) => { tombstones = rows }, setCrash: (v: boolean) => { crash = v },
     getIntents: () => intents,
     coordinator: createCloudCompletionCoordinator(storage as never, { rpc, from } as never, accountId, () => true),
   }
@@ -52,6 +53,14 @@ describe('durable E4 cloud completion coordinator', () => {
     expect(f.getIntents()).toEqual([])
     expect(f.rpc).toHaveBeenCalledTimes(2)
     expect(f.rpc.mock.calls[0]).toEqual(f.rpc.mock.calls[1])
+  })
+  it('does not acknowledge completion when server tombstones are incomplete', async () => {
+    const f = fixture()
+    await f.storage.beginAccountCompletion(intent)
+    f.setTombstones([])
+    await expect(f.coordinator.resume(intent)).rejects.toThrow('tombstones incomplete')
+    expect(f.getIntents()).toEqual([intent])
+    expect(f.storage.commitAccountCompletion).not.toHaveBeenCalled()
   })
   it('does not call RPC for missing or foreign-account intent', async () => {
     const f = fixture()
