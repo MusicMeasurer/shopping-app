@@ -7,6 +7,8 @@ on:
       - 'tests/recovery/**'
       - 'src/data/cloud-archive.ts'
       - 'src/data/cloud-archive.test.ts'
+      - 'src/data/cloud-completion-preflight.ts'
+      - 'src/data/cloud-completion-preflight.test.ts'
       - 'src/AuthenticatedApp.tsx'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
