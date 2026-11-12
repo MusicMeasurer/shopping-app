@@ -14,12 +14,12 @@ jobs:
     timeout-minutes: 12
     env:
       E3E4_LAB_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
-      E3E4_LAB_PUBLISHABLE_KEY: ${{ secrets.E3E4_LAB_PUBLISHABLE_KEY }}
+      E3E4_LAB_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
       E3E4_LAB_TEST_EMAIL: ${{ secrets.E3E4_LAB_TEST_EMAIL }}
       E3E4_LAB_TEST_PASSWORD: ${{ secrets.E3E4_LAB_TEST_PASSWORD }}
       E3E4_LAB_TEST_LIST_ID: ${{ vars.E3E4_LAB_TEST_LIST_ID }}
       VITE_SUPABASE_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
-      VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3E4_LAB_PUBLISHABLE_KEY }}
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
