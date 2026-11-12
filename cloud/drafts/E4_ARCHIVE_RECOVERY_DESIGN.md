@@ -56,3 +56,10 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Added isolated PostgreSQL tests for oneoff soft-removal, `all_purchased` with quantity/unit snapshot, empty-list rejection, alongside prior marked-only, no-purchase, replay, stale revision and foreign owner.
 - [GitHub Actions run](https://github.com/MusicMeasurer/shopping-app/actions/runs/43208871411) completed **success** for commit `4f6df36f58c579b095cb78aa06ec6e4af4228917`.
 - **Still open:** hosted lab deployment and A/B tests, full concurrency stress, cross-device synchronization and browser integration/offline queue, physical iPhone acceptance. This is not E3+E4 acceptance and the main Supabase environment remains unchanged.
+
+
+## Archive deletion and replay regression · 2026-11-12
+
+- Extended `tests/recovery/test_e4_completion_rpc.sql` with actual deletion of the original active lists after completion, archive count preservation, receipt persistence and replay after deletion, foreign-account read denial and negative table privilege checks.
+- First CI run [#43209369420](https://github.com/MusicMeasurer/shopping-app/actions/runs/43209369420) failed because new test used invalid `DO $` delimiter; job logs identified syntax error at test line 73. Corrected delimiters to `$test$` without changing application SQL.
+- Re-run [#43209626592](https://github.com/MusicMeasurer/shopping-app/actions/runs/43209626592) **success**, commit `c58ad218dd207db71ab29c0dcd1fcf6fb7054fc9`. This verifies isolated PostgreSQL behavior only; hosted Supabase deployment, browser integration and real iPhone acceptance remain open.
