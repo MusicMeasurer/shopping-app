@@ -87,3 +87,11 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Hosted read-back: zero invalid kind/position metadata; `authenticated` has no direct `shopping_lists UPDATE`; authenticated can EXECUTE `complete_e4_list` and SELECT archive, cannot INSERT archive; both owner-scoped archive RLS policies exist; existing active permanent list remains.
 - Executed hosted **transactional rollback-only** functional test using an existing account ID, newly generated temporary list/item/operation UUIDs, `SET LOCAL ROLE authenticated` and the owner's JWT claim. Tested `oneoff`, `marked_only`, quantity/unit snapshot and idempotent replay. First probe incorrectly checked the soft-deleted list through authenticated RLS (which intentionally hides deleted rows); fixed probe to reset role before asserting tombstone. Corrected probe passed; explicit `ROLLBACK` returned zero temporary list rows and zero archive rows. No persistent test records.
 - **Not yet done:** independent hosted A/B negative tests, hosted API HTTP auth tests, UI cloud completion, offline queue, profile migration and iPhone acceptance. Do not promote to main.
+
+
+## Hosted A/B authorization probe · 2026-11-12
+
+- Executed rollback-only two-account negative/positive probe on `shoppingapp-migration-lab` with two existing Auth IDs, temporary generated list/item/operation UUIDs and real `authenticated` PostgreSQL role with distinct `request.jwt.claim.sub` values.
+- B could not SELECT A's active list, invoke `complete_e4_list` on it, or read A's completion or archive items. A could complete and read the resulting archive. The transaction was explicitly rolled back; zero temporary lists persisted.
+- This verifies PostgreSQL role/JWT-claim simulation, **not** a real HTTP/PostgREST request with independently issued signed access tokens. HTTP A/B remains open.
+- **Integration hazard:** account client currently maintains durable item operations and explicit versioned remote-deletion review. Direct completion of a cloud-bound list before pending operations drain and tombstones are reconciled can cause stale local items to reappear or pending edits to conflict. Do not expose an unguarded 'complete cloud list' button until the client has a safe completion queue/reconciliation protocol. Local guest E4 remains unchanged.
