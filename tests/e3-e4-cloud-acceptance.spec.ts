@@ -44,6 +44,7 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByLabel('Что нужно купить?').fill(prefix)
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
+  await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
   // Require an actual remote sync before completion; no mocked RPC or optimistic-only assertions.
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('id').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
@@ -52,6 +53,7 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   }).toBe(1)
   await page.getByRole('checkbox', { name: prefix }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeChecked()
+  await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('purchased').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
     if (error) throw error
