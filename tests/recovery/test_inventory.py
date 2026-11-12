@@ -57,6 +57,22 @@ class RecoveryInventoryTests(unittest.TestCase):
         self.assertTrue((DRAFTS / "020_siri_add_REVIEW_ONLY.sql").exists())
         self.assertIn("not a complete pg_dump", self.text.lower())
 
+    def test_schema_metadata_snapshot_is_complete_enough_for_comparison(self):
+        schema = (DRAFTS / "E4_LAB_SCHEMA_METADATA_2026-11-12.md").read_text(encoding="utf-8")
+        columns = section(schema, "columns")
+        constraints = section(schema, "constraints")
+        indexes = section(schema, "indexes")
+        extensions = section(schema, "extensions")
+        self.assertGreaterEqual(len(columns), 60)
+        self.assertGreaterEqual(len(constraints), 30)
+        self.assertGreaterEqual(len(indexes), 15)
+        self.assertGreaterEqual(len(extensions), 3)
+        names = {(c["table_name"], c["column_name"]) for c in columns}
+        for key in (("shopping_lists", "revision"), ("shopping_items", "quantity"),
+                    ("shopping_items", "unit"), ("item_operations", "operation_id")):
+            self.assertIn(key, names)
+        self.assertFalse(any(c["table_name"].startswith("archive_") for c in columns))
+
     def test_recovery_inventory_has_no_known_token_patterns(self):
         self.assertNotRegex(self.text, r"(?i)(?:service_role|supabase_service_role_key)\s*[:=]\s*['\"][A-Za-z0-9._-]{25,}")
         self.assertNotRegex(self.text, r"postgres(?:ql)?://[^\s]+:[^\s]+@")
