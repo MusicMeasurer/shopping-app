@@ -832,13 +832,26 @@ export function createStorage(name = 'shopping-app') {
     async enqueueAccountPending(accountId: string, operation: PendingItemOperation): Promise<void> {
       const key = accountKey(accountId, operation.operationId)
       const db = await database
-      const tx = db.transaction('accountOperations', 'readwrite')
-      const existing = await tx.store.get(key)
+      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountListMappings', 'accountItems'], 'readwrite')
+      const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+      const affected = operation.kind === 'upsert'
+        ? operation.item.listId
+        : operation.kind === 'delete'
+          ? (await tx.objectStore('accountItems').get(accountKey(accountId, operation.itemId)))?.item.listId
+          : (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+              .find(row => row.remoteListId === operation.remoteListId)?.localListId
+      if (inFlight.some(row => !affected || row.intent.localListId === affected)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Completion pending; cannot queue list edits')
+      }
+      const operations = tx.objectStore('accountOperations')
+      const existing = await operations.get(key)
       if (existing && JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
         await tx.done
         throw new Error('Operation ID collision with different payload')
       }
-      if (!existing) await tx.store.add({ key, accountId, operation })
+      if (!existing) await operations.add({ key, accountId, operation })
       await tx.done
     },
     async acknowledgeAccountPending(accountId: string, operationId: string): Promise<void> {
