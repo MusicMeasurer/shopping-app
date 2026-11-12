@@ -31,6 +31,12 @@ describe('cloud completion RPC adapter', () => {
       await expect(sendCloudCompletion(client(value) as never, request)).rejects.toThrow()
     }
   })
+  it('rejects inconsistent archive presence for all/none purchased', async () => {
+    await expect(sendCloudCompletion(client({ ...valid, mode: 'all_purchased', archive_id: null }) as never,
+      { ...request, mode: 'all_purchased' })).rejects.toThrow('Неподтверждённый')
+    await expect(sendCloudCompletion(client({ ...valid, mode: 'none_purchased' }) as never,
+      { ...request, mode: 'none_purchased' })).rejects.toThrow('Неподтверждённый')
+  })
   it('propagates server conflicts rather than fabricating a receipt', async () => {
     await expect(sendCloudCompletion(client(null, new Error('List revision conflict')) as never, request))
       .rejects.toThrow('List revision conflict')
