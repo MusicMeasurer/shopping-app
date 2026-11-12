@@ -39,9 +39,9 @@ describe('durable E4 completion IndexedDB v11', () => {
     await expect(second.applyReviewedRemoteDeletions(accountId, remoteListId, [{
       item, expectedLocalVersion: 1, serverDeletedVersion: 2,
     }])).rejects.toThrow('Completion pending')
-    await expect(second.commitAccountCompletion({ ...saved, expectedRevision: 9 }, 3)).rejects.toThrow()
+    await expect(second.commitAccountCompletion({ ...saved, expectedRevision: 9 }, 3, [{ id: item.id, version: 2 }])).rejects.toThrow()
     expect(await second.readAccountItems(accountId)).toEqual([item])
-    await second.commitAccountCompletion(saved, 3)
+    await second.commitAccountCompletion(saved, 3, [{ id: item.id, version: 2 }])
     expect(await second.readAccountItems(accountId)).toEqual([])
     expect(await second.readAccountCompletions(accountId)).toEqual([])
     await second.close()
