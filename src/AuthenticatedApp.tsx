@@ -341,6 +341,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function compareCloudList() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
+    const localListId = selectedLocal
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) return
     setCloudLoading(true)
@@ -365,6 +366,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function compareCloudDeletions() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
+    const localListId = selectedLocal
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) return
     setCloudLoading(true)
@@ -482,7 +484,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function completeCloudList(localListId: ListId, mode: CompletionMode) {
     if (!client || !currentAccount || completionBusy || cloudLoading) return
     const accountId = currentAccount
-    const localListId = selectedLocal
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) { setCompletionPreflight('Сначала привяжите список к облаку.'); return }
     if (!window.confirm('Завершить облачный список? Подтверждённые покупки попадут в архив, активные товары будут очищены.')) return
