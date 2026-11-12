@@ -103,3 +103,11 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Probe was corrected to use the existing item version default (minimum 1), and to inspect `list_changes` after resetting from `authenticated` to the migration/admin role; direct client SELECT on `list_changes` is intentionally not granted. These were probe errors, not server migration failures.
 - Added reproducible two-account owner/foreign RLS test `tests/recovery/test_e4_hosted_ab_rls.sql` and wired it into isolated PostgreSQL CI. [Run 43214437566](https://github.com/MusicMeasurer/shopping-app/actions/runs/43214437566) **success** (including frontend tests/build and SQL regressions).
 - Still pending: real signed-token HTTP A/B, offline-to-online completion and safe E3 client queue/tombstone reconciliation, hosted browser/device acceptance. Do not expose unguarded cloud completion or promote to accepted environment.
+
+
+## E4 completion preflight · 2026-11-12
+
+- Implemented `src/data/cloud-completion-preflight.ts`: read-only, fail-closed check for verified account mapping, outstanding legacy/cloud operations, empty/divergent server list, purchase/name mismatch, server list revision stability and account switching. This is **not** a completion authorization; the server RPC still owns revision checks.
+- Added `src/data/cloud-completion-preflight.test.ts` for positive, unverified mapping, queued writes, divergence, empty list and account-change cases. Corrected initial test syntax and mock Supabase field naming after CI failures; run [43215684483](https://github.com/MusicMeasurer/shopping-app/actions/runs/43215684483) passed.
+- Added a **read-only** 'Проверить готовность облачного списка к завершению' action to account UI. It never calls `complete_e4_list` or deletes local data, and explicitly states completion is unavailable until safe durable reconciliation is implemented.
+- **Unresolved:** preflight cannot alone make completion safe against concurrent local edits, offline restarts, or crash between RPC commit and local tombstone application. Need a durable completion intent/receipt state machine and recovery tests before enabling actual cloud completion. No accepted behavior changed.
