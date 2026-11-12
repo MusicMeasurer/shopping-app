@@ -56,6 +56,14 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/020_siri_add_REVIEW_ONLY.sql
       - name: Verify E3 RLS and scoped Siri execution rights
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_restored_e3.sql
+      - name: Restore later E3 Siri pairing schema in isolated database
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/e3_pairing_schema_ci.sql
+      - name: Restore five captured E3 app functions
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/e3_pairing_functions_ci.sql
+      - name: Apply reviewed E3 pairing RPC grants
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/e3_pairing_acl_ci.sql
+      - name: Verify later E3 pairing security and indefinite credentials
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_restored_e3_pairing.sql
       - name: Check restored baseline structure and security
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_restored_baseline.sql
       - name: Verify effective permissions
