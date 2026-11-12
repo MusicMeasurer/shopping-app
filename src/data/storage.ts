@@ -3,6 +3,12 @@ import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfi
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
+export interface CloudCompletionIntent {
+  operationId: string; accountId: string; localListId: string; remoteListId: string;
+  expectedRevision: number; mode: 'marked_only' | 'all_purchased' | 'none_purchased';
+  itemIds: string[]; createdAt: number
+}
+interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
 interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string }
 interface ScopedOperation {
   key: string
@@ -32,6 +38,7 @@ interface ShoppingDB extends DBSchema {
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
+  accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
   accountItemVersions: { key: string; value: ScopedVersion; indexes: { byAccount: string } }
 }
@@ -42,10 +49,14 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 10, {
+  const database = openDB<ShoppingDB>(name, 11, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      if (!db.objectStoreNames.contains('accountCompletions')) {
+        const store = db.createObjectStore('accountCompletions', { keyPath: 'key' })
+        store.createIndex('byAccount', 'accountId')
+      }
       if (!db.objectStoreNames.contains('accountOperations')) {
         const store = db.createObjectStore('accountOperations', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
@@ -738,6 +749,62 @@ export function createStorage(name = 'shopping-app') {
     },
     async acknowledgePending(operationId: string): Promise<void> {
       await legacyMutation(['pendingOperations'], async tx => { await tx.objectStore('pendingOperations').delete(operationId) })
+    },
+    /** Durable intent is written before RPC; account edits are fenced by the same transaction. */
+    async beginAccountCompletion(intent: CloudCompletionIntent): Promise<void> {
+      const { accountId, operationId, localListId, remoteListId, itemIds } = intent
+      if (!accountId || !operationId || !localListId || !remoteListId ||
+          !Number.isSafeInteger(intent.expectedRevision) || intent.expectedRevision < 0 ||
+          !itemIds.length || new Set(itemIds).size !== itemIds.length) throw new Error('Invalid completion intent')
+      const db = await database
+      const tx = db.transaction(['accountCompletions', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      try {
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, localListId))
+        if (!mapping || mapping.remoteListId !== remoteListId) throw new Error('Unverified list mapping')
+        const existing = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (existing.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion already pending')
+        const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+        if (queued.some(row => row.operation.kind === 'delete' ||
+            (row.operation.kind === 'upsert' && row.operation.item.listId === localListId) ||
+            (row.operation.kind !== 'delete' && row.operation.kind !== 'upsert' && row.operation.remoteListId === remoteListId)))
+          throw new Error('Unsent operations block completion')
+        const items = (await tx.objectStore('accountItems').index('byAccount').getAll(accountId))
+          .filter(row => row.item.listId === localListId)
+        if (items.length !== itemIds.length ||
+            items.some(row => !itemIds.includes(row.item.id))) throw new Error('Local list changed before completion')
+        await tx.objectStore('accountCompletions').add({ key: accountKey(accountId, operationId), accountId, intent })
+        await tx.done
+      } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
+    },
+    async readAccountCompletions(accountId: string): Promise<CloudCompletionIntent[]> {
+      accountKey(accountId, 'check')
+      const rows = await (await database).getAllFromIndex('accountCompletions', 'byAccount', accountId)
+      return rows.map(row => row.intent)
+    },
+    /** Atomically commit a confirmed receipt and remove exactly the intended local items. */
+    async commitAccountCompletion(intent: CloudCompletionIntent, revision: number): Promise<void> {
+      if (!Number.isSafeInteger(revision) || revision <= intent.expectedRevision) throw new Error('Invalid completion revision')
+      const db = await database
+      const tx = db.transaction(['accountCompletions', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      try {
+        const key = accountKey(intent.accountId, intent.operationId)
+        const stored = await tx.objectStore('accountCompletions').get(key)
+        if (!stored || JSON.stringify(stored.intent) !== JSON.stringify(intent)) throw new Error('Completion intent changed')
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(intent.accountId, intent.localListId))
+        if (!mapping || mapping.remoteListId !== intent.remoteListId) throw new Error('List mapping changed')
+        const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(intent.accountId)
+        if (queued.some(row => row.operation.kind === 'delete' ||
+            (row.operation.kind === 'upsert' && row.operation.item.listId === intent.localListId) ||
+            (row.operation.kind !== 'delete' && row.operation.kind !== 'upsert' && row.operation.remoteListId === intent.remoteListId)))
+          throw new Error('Local edits must be reconciled before completion')
+        const rows = (await tx.objectStore('accountItems').index('byAccount').getAll(intent.accountId))
+          .filter(row => row.item.listId === intent.localListId)
+        if (rows.length !== intent.itemIds.length || rows.some(row => !intent.itemIds.includes(row.item.id)))
+          throw new Error('Local items changed since completion request')
+        for (const row of rows) await tx.objectStore('accountItems').delete(row.key)
+        await tx.objectStore('accountCompletions').delete(key)
+        await tx.done
+      } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
     },
     async readAccountPending(accountId: string): Promise<PendingItemOperation[]> {
       accountKey(accountId, 'check')
