@@ -95,3 +95,11 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - B could not SELECT A's active list, invoke `complete_e4_list` on it, or read A's completion or archive items. A could complete and read the resulting archive. The transaction was explicitly rolled back; zero temporary lists persisted.
 - This verifies PostgreSQL role/JWT-claim simulation, **not** a real HTTP/PostgREST request with independently issued signed access tokens. HTTP A/B remains open.
 - **Integration hazard:** account client currently maintains durable item operations and explicit versioned remote-deletion review. Direct completion of a cloud-bound list before pending operations drain and tombstones are reconciled can cause stale local items to reappear or pending edits to conflict. Do not expose an unguarded 'complete cloud list' button until the client has a safe completion queue/reconciliation protocol. Local guest E4 remains unchanged.
+
+
+## Hosted E3 tombstone compatibility and CI A/B gate · 2026-11-12
+
+- Hosted rollback-only `none_purchased` completion on temporary permanent list produced **no archive**, a deleted item with incremented version, a corresponding `list_changes` delete event and monotonic list revision; zero probe rows remained after rollback.
+- Probe was corrected to use the existing item version default (minimum 1), and to inspect `list_changes` after resetting from `authenticated` to the migration/admin role; direct client SELECT on `list_changes` is intentionally not granted. These were probe errors, not server migration failures.
+- Added reproducible two-account owner/foreign RLS test `tests/recovery/test_e4_hosted_ab_rls.sql` and wired it into isolated PostgreSQL CI. [Run 43214437566](https://github.com/MusicMeasurer/shopping-app/actions/runs/43214437566) **success** (including frontend tests/build and SQL regressions).
+- Still pending: real signed-token HTTP A/B, offline-to-online completion and safe E3 client queue/tombstone reconciliation, hosted browser/device acceptance. Do not expose unguarded cloud completion or promote to accepted environment.
