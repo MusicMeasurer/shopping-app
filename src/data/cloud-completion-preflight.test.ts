@@ -9,7 +9,7 @@ function fixture(options: { pending?: unknown[]; local?: unknown[]; remote?: unk
   const mappings = options.mappings ?? [{ localListId, remoteListId: remoteId }]
   const pending = options.pending ?? []
   const local = options.local ?? [{ id: itemId, listId: localListId, name: 'Молоко', purchased: true }]
-  const remote = options.remote ?? [{ id: itemId, listId: remoteId, name: 'Молоко', purchased: true, created_at: '2026-11-12T12:00:00Z', version: 1 }]
+  const remote = options.remote ?? [{ id: itemId, list_id: remoteId, name: 'Молоко', purchased: true, created_at: '2026-11-12T12:00:00Z', version: 1 }]
   const revision = options.revision ?? 1
   const storage = {
     readAccountListMappings: vi.fn().mockResolvedValue(mappings),
