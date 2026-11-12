@@ -13,6 +13,8 @@ on:
       - 'src/data/cloud-completion-rpc.test.ts'
       - 'src/data/cloud-completion-coordinator.ts'
       - 'src/data/cloud-completion-coordinator.test.ts'
+      - 'src/data/cloud-completion-failure.ts'
+      - 'src/data/cloud-completion-failure.test.ts'
       - 'src/data/cloud-completion-storage.test.ts'
       - 'src/data/storage.ts'
       - 'src/AuthenticatedApp.tsx'
