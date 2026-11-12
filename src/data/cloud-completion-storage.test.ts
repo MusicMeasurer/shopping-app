@@ -26,6 +26,9 @@ describe('durable E4 completion IndexedDB v11', () => {
       kind: 'cloud-update', operationId: crypto.randomUUID(), itemId: item.id,
       localListId: 'groceries', remoteListId, expectedVersion: 1, item: { ...item, purchased: true },
     })).rejects.toThrow('Completion pending')
+    await expect(second.enqueueAccountPending(accountId, {
+      kind: 'upsert', operationId: crypto.randomUUID(), item,
+    })).rejects.toThrow('Completion pending')
     await expect(second.saveAccountItem(accountId, { ...item, purchased: true }))
       .rejects.toThrow('Completion pending')
     await expect(second.removeAccountItem(accountId, item.id))
