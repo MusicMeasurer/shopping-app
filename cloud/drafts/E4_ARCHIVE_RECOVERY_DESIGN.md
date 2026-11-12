@@ -70,3 +70,12 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Added `tests/recovery/test_e4_completion_concurrency.py` using two genuinely parallel PostgreSQL sessions, distinct operation UUIDs and the same expected list revision. Asserted exactly one success, one conflict, one archive completion/item/receipt, and a single list revision/change entry.
 - Wired test into `e4-postgres-recovery.yml`. [GitHub Actions run](https://github.com/MusicMeasurer/shopping-app/actions/runs/43210101078) **success**, commit `98d769003baf6a7ef8a31ed29e811facddf14604`.
 - Coverage remains limited to ephemeral PostgreSQL, not hosted Supabase Auth, two-device offline synchronization or UI. The existing migration polygon and main environment were not changed.
+
+
+## Client archive read integration checkpoint · 2026-11-12
+
+- Added `src/data/cloud-archive.ts`: read-only authenticated Supabase archive adapter, RLS-scoped by current JWT, snapshot/item grouping, no user-supplied owner filter and fail-closed errors.
+- Added `src/data/cloud-archive.test.ts`: grouped snapshots, empty archive, denied completion query, denied item query.
+- Added an explicit account-only cloud archive viewer in `src/AuthenticatedApp.tsx`, including identity verification before and after fetch, account-change state clearing, and error handling. No client archive writes are enabled. It is not yet an E4 parity replacement for the local archive UI.
+- E4 workflow now runs frontend unit tests and TypeScript/Vite build alongside isolated PostgreSQL regression; triggers on archive client/UI changes.
+- **Deployment gate:** archive tables/RPC are CI-only and not installed on hosted Supabase. Until additive hosted migration and A/B verification, the cloud archive viewer will report an unavailable-query error; do not claim end-to-end readiness. Cloud completion action, offline queue, account archive migration, and physical device acceptance remain open.
