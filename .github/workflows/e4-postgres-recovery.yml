@@ -40,6 +40,8 @@ jobs:
           python-version: '3.12'
       - name: Check captured recovery inventories
         run: python -m unittest discover -s tests/recovery -p 'test_*.py' -v
+      - name: Audit live function source coverage and known gaps
+        run: python tests/recovery/check_live_function_coverage.py
       - name: Bootstrap isolated Auth shim
         run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/bootstrap_pg.sql
       - name: Restore baseline 001-016
