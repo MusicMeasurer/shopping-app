@@ -855,12 +855,18 @@ export function createStorage(name = 'shopping-app') {
       }
       const key = accountKey(accountId, operation.operationId)
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
       const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
       if (!mapping || mapping.remoteListId !== operation.remoteListId) {
         tx.abort()
         await tx.done.catch(() => {})
         throw new Error('Missing verified list mapping')
+      }
+      const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+      if (intents.some(row => row.intent.remoteListId === operation.remoteListId)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Completion pending; list edits are temporarily locked')
       }
       const operations = tx.objectStore('accountOperations')
       const existing = await operations.get(key)
