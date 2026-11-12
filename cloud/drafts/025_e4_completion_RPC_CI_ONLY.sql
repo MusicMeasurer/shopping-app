@@ -52,13 +52,8 @@ begin
  select count(*) into v_count from public.shopping_items
    where list_id=p_list and deleted_at is null;
  if v_count = 0 then raise exception 'Cannot complete an empty list'; end if;
- -- Existing pre-E4 lists are permanent until metadata migration is applied.
- if exists (select 1 from information_schema.columns
-            where table_schema='public' and table_name='shopping_lists' and column_name='kind') then
-   execute 'select kind from public.shopping_lists where id=$1' into v_kind using p_list;
- else
-   v_kind := 'permanent';
- end if;
+ -- E4 metadata 022 must be installed before this RPC.
+ v_kind := v_list.kind;
  if p_mode <> 'none_purchased' then
    v_archive := gen_random_uuid();
    insert into public.e4_archive_completions
@@ -72,7 +67,7 @@ begin
    where i.list_id=p_list and i.deleted_at is null
      and (p_mode='all_purchased' or i.purchased);
    -- 'marked_only' with zero marks creates no archive.
-   if not found then
+   if not exists (select 1 from public.e4_archive_items where completion_id=v_archive) then
      delete from public.e4_archive_completions where id=v_archive;
      v_archive := null;
    end if;
