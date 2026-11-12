@@ -12,12 +12,13 @@ jobs:
   authenticated-cloud-browser:
     runs-on: ubuntu-latest
     timeout-minutes: 12
+    environment: e3-lab
     env:
       E3E4_LAB_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
       E3E4_LAB_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
-      E3E4_LAB_TEST_EMAIL: ${{ secrets.E3E4_LAB_TEST_EMAIL }}
-      E3E4_LAB_TEST_PASSWORD: ${{ secrets.E3E4_LAB_TEST_PASSWORD }}
-      E3E4_LAB_TEST_LIST_ID: ${{ vars.E3E4_LAB_TEST_LIST_ID }}
+      E3E4_LAB_TEST_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      E3E4_LAB_TEST_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+      E3E4_LAB_TEST_LIST_ID: 6d5b862e-4296-4f03-91ee-89274d6a1772
       VITE_SUPABASE_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
     steps:
@@ -36,4 +37,4 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium webkit
       - name: Authenticated E3/E4 cloud browser E2E
-        run: npx playwright test tests/e3-e4-cloud-acceptance.spec.ts
+        run: npx playwright test tests/e3-e4-cloud-acceptance.spec.ts --workers=1
