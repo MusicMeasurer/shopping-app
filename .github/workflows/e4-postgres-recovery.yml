@@ -20,6 +20,7 @@ on:
       - 'src/AuthenticatedApp.tsx'
       - 'src/App.tsx'
       - 'src/App.completion.test.tsx'
+      - 'tests/e4-completion-acceptance.spec.ts'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
 permissions:
@@ -60,6 +61,10 @@ jobs:
         run: npm test -- --run
       - name: Typecheck and build PWA
         run: npm run build
+      - name: Install mobile browser engines
+        run: npx playwright install --with-deps chromium webkit
+      - name: Run real browser E4 completion acceptance (mobile Chromium and WebKit)
+        run: npx playwright test tests/e4-completion-acceptance.spec.ts
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
