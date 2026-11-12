@@ -29,7 +29,7 @@ export async function inspectCloudCompletion(
   // Legacy deletes cannot be assigned to a list reliably. Fail closed.
   if (pending.some(p => p.kind === 'delete' ||
     (p.kind === 'upsert' && p.item.listId === localListId) ||
-    (p.kind.startsWith('cloud-') && p.remoteListId === remoteListId)))
+    ((p.kind === 'cloud-add' || p.kind === 'cloud-update' || p.kind === 'cloud-delete') && p.remoteListId === remoteListId)))
     return blocked('Есть неотправленные изменения')
   const { data, error } = await client.from('shopping_lists')
     .select('id,owner_id,revision,deleted_at')
