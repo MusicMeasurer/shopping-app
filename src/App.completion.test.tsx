@@ -29,4 +29,21 @@ describe('E3/E4 shopping workspace completion controls', () => {
     }))
     expect(html).not.toContain('Завершить: отмеченные')
   })
+  it('disables all completion actions while a completion is in progress', () => {
+    const html = renderToStaticMarkup(createElement(App, {
+      storage, accountId, cloudBoundLists: { groceries: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+      onCompleteCloudList: () => {}, completionBusy: true,
+    }))
+    for (const label of ['Завершить: отмеченные', 'Завершить: всё куплено', 'Завершить: ничего не куплено']) {
+      expect(html).toMatch(new RegExp('<button[^>]*disabled=""[^>]*>' + label))
+    }
+  })
+  it('shows completion result beside the active list', () => {
+    const html = renderToStaticMarkup(createElement(App, {
+      storage, accountId, cloudBoundLists: { groceries: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
+      onCompleteCloudList: () => {}, completionStatus: 'Список завершён.',
+    }))
+    expect(html).toContain('role="status">Список завершён.')
+  })
+
 })
