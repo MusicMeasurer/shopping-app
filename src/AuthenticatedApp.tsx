@@ -326,7 +326,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function compareCloudList() {
     if (!client || view.status !== 'account' || cloudLoading) return
     const accountId = view.accountId
-    const localListId = selectedLocal
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) return
     setCloudLoading(true)
@@ -459,14 +458,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       )
       if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
       setCompletionPreflight(result.ready
-        ? 'Список согласован с облаком (ревизия ' + result.revision + '). Завершение пока недоступно: требуется безопасная синхронизация архива и удалений.'
+        ? 'Список согласован с облаком (ревизия ' + result.revision + '). Завершение доступно в панели выбранного списка.'
         : 'Завершение пока небезопасно: ' + result.reason)
     } catch {
       setCompletionPreflight('Проверка завершения не удалась. Изменения не выполнялись.')
     } finally { setCloudLoading(false) }
   }
 
-  async function completeCloudList(mode: CompletionMode) {
+  async function completeCloudList(localListId: ListId, mode: CompletionMode) {
     if (!client || !currentAccount || completionBusy || cloudLoading) return
     const accountId = currentAccount
     const localListId = selectedLocal
@@ -484,7 +483,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCompletionPreflight('Список завершён. Сервер подтвердил операцию ' + receipt.operationId)
       setCloudArchives(null)
       setWorkspaceRevision(value => value + 1)
-      void loadCloudLists()
+      await loadCloudArchive()
     } catch (cause) {
       setCompletionPreflight('Не удалось завершить: ' + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
         '. Если операция уже отправлена, её идентификатор сохранён для безопасного повтора.')
@@ -581,12 +580,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           Проверить готовность облачного списка к завершению
         </button>
         {completionPreflight && <p role="status">{completionPreflight}</p>}
-        {cloudBindings[selectedLocal] && <div aria-label="Завершение облачного списка">
-          <p>Завершить выбранный облачный список:</p>
-          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('marked_only')}>Только отмеченные покупки</button>
-          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('all_purchased')}>Все товары куплены</button>
-          <button type="button" disabled={completionBusy || cloudLoading} onClick={() => void completeCloudList('none_purchased')}>Ничего не куплено</button>
-        </div>}
         <button type="button" disabled={completionBusy} onClick={() => void recoverCloudCompletions()}>
           {completionBusy ? 'Проверяем завершение…' : 'Восстановить незавершённое завершение'}
         </button>
@@ -643,6 +636,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
     <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      cloudBoundLists={currentAccount ? cloudBindings : {}} onCompleteCloudList={currentAccount ? (listId, mode) => { void completeCloudList(listId, mode) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
         <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
