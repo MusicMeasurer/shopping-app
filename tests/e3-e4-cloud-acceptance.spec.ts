@@ -8,11 +8,11 @@ const url = process.env.E3E4_LAB_URL ?? ''
 const key = process.env.E3E4_LAB_PUBLISHABLE_KEY ?? ''
 const email = process.env.E3E4_LAB_TEST_EMAIL ?? ''
 const password = process.env.E3E4_LAB_TEST_PASSWORD ?? ''
-const listId = process.env.E3E4_LAB_TEST_LIST_ID ?? ''
+const fixturePrefix = 'E3E4_BROWSER_ISOLATED_'
 const expectedURL = 'https://' + lab + '.supabase.co'
-const ready = url === expectedURL && !!key && !!email && !!password && /^[0-9a-f-]{36}$/i.test(listId)
+const ready = url === expectedURL && !!key && !!email && !!password
 test.beforeAll(() => {
-  if (!ready) throw new Error('Authenticated E3/E4 E2E prerequisites missing: isolated lab URL, publishable key, disposable user credentials and owned permanent list ID are required; never use production credentials.')
+  if (!ready) throw new Error('Authenticated E3/E4 E2E prerequisites missing: isolated lab URL, publishable key, disposable user credentials are required; never use production credentials.')
 })
 
 test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-only completion persists after reload', async ({ page }) => {
@@ -21,11 +21,13 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   expect(authError).toBeNull()
   expect(signed.user?.id).toBeTruthy()
   const ownerId = signed.user!.id
-  const { data: owned, error: listError } = await client.from('shopping_lists').select('id,owner_id,kind,deleted_at').eq('id', listId).single()
+  // Each run creates its own empty list; never mutate the historical shared HTTP fixture.
+  const { data: created, error: listError } = await client.from('shopping_lists')
+    .insert({ owner_id: ownerId, name: fixturePrefix + crypto.randomUUID(), kind: 'permanent' })
+    .select('id,owner_id,kind,deleted_at').single()
   expect(listError).toBeNull()
-  expect(owned?.owner_id).toBe(ownerId)
-  expect(owned?.kind).toBe('permanent')
-  expect(owned?.deleted_at).toBeNull()
+  expect(created?.owner_id).toBe(ownerId)
+  const listId: string = created!.id
   const { data: initial, error: itemsError } = await client.from('shopping_items').select('id').eq('list_id', listId).is('deleted_at', null)
   expect(itemsError).toBeNull()
   expect(initial).toHaveLength(0)
