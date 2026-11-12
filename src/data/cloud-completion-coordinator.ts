@@ -3,6 +3,7 @@ import type { Storage, CloudCompletionIntent } from './storage'
 import type { ListId } from '../domain/shopping'
 import { inspectCloudCompletion } from './cloud-completion-preflight'
 import { sendCloudCompletion, type CompletionMode, type CompletionReceipt } from './cloud-completion-rpc'
+import { fetchRemoteTombstones } from './remote-snapshot'
 
 /**
  * Durable completion protocol. A committed server receipt can be recovered
@@ -31,8 +32,16 @@ export function createCloudCompletionCoordinator(
       expectedRevision: intent.expectedRevision, mode: intent.mode,
     })
     assertActive()
+    // Never invent deleted-item versions. Re-read the server's tombstones
+    // after a confirmed receipt and require exactly the intended item IDs.
+    const tombstones = await fetchRemoteTombstones(client, intent.remoteListId)
+    assertActive()
+    const relevant = tombstones.filter(row => intent.itemIds.includes(row.id))
+    if (relevant.length !== intent.itemIds.length ||
+        new Set(relevant.map(row => row.id)).size !== intent.itemIds.length)
+      throw new Error('Confirmed server tombstones incomplete; completion retained for retry')
     // A local crash before this atomic commit leaves the intent to replay.
-    await storage.commitAccountCompletion(intent, receipt.revision)
+    await storage.commitAccountCompletion(intent, receipt.revision, relevant)
     return receipt
   }
   async function begin(localListId: ListId, remoteListId: string, mode: CompletionMode) {
