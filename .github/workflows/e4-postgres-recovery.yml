@@ -48,6 +48,14 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/TEST_MIGRATIONS_ATOMIC_001_016.sql
       - name: Apply reviewed CI ACL normalization draft
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/018_acl_normalization_REVIEW_ONLY.sql
+      - name: Set up disposable Supabase-style extensions schema
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/bootstrap_extensions_pg.sql
+      - name: Restore invitation SQL 017 in isolated database
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/017_invitation_links_REVIEW_ONLY.sql
+      - name: Restore Siri SQL 020 in isolated database
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/020_siri_add_REVIEW_ONLY.sql
+      - name: Verify E3 RLS and scoped Siri execution rights
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_restored_e3.sql
       - name: Check restored baseline structure and security
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_restored_baseline.sql
       - name: Verify effective permissions
