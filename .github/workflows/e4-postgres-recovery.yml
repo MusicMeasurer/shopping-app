@@ -11,6 +11,9 @@ on:
       - 'src/data/cloud-completion-preflight.test.ts'
       - 'src/data/cloud-completion-rpc.ts'
       - 'src/data/cloud-completion-rpc.test.ts'
+      - 'src/data/cloud-completion-coordinator.ts'
+      - 'src/data/cloud-completion-coordinator.test.ts'
+      - 'src/data/storage.ts'
       - 'src/AuthenticatedApp.tsx'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
