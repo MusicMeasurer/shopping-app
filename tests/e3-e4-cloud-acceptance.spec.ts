@@ -44,13 +44,16 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByLabel('Что нужно купить?').fill(prefix)
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeVisible()
-  // Account edits auto-flush. A manual flush can legitimately report zero after an automatic send.
-  // Assert server state instead of assuming a positive manual-flush receipt.
+  // Observe manual retry status if auto-flush failed, without assuming a positive count.
+  await page.getByRole('button', { name: 'Отправить подготовленные изменения' }).click()
+  await expect(page.getByRole('button', { name: 'Отправить подготовленные изменения' })).toBeEnabled()
+  const syncMessage = (await page.locator('body').innerText()).match(/Отправлено изменений: \\d+|Нет подготовленных изменений\\.|Отправка не завершена\\.[^\\n]*/)?.[0] ?? 'No visible sync result'
+  console.log('E3E4 sync diagnostic:', syncMessage)
   await expect.poll(async () => {
     const { data, error } = await client.from('shopping_items').select('id').eq('list_id', listId).eq('name', prefix).is('deleted_at', null)
     if (error) throw error
     return data?.length ?? 0
-  }, { timeout: 20000, message: 'Item not synchronized after automatic account flush' }).toBe(1)
+  }, { timeout: 20000, message: 'Item not synchronized; manual sync status: ' + syncMessage }).toBe(1)
   await page.getByRole('checkbox', { name: prefix }).click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeChecked()
   await expect.poll(async () => {
