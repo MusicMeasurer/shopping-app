@@ -31,10 +31,13 @@ function fixture() {
     readAccountListMappings: vi.fn(async () => [{ localListId: 'groceries', remoteListId }]),
   }
   const rpc = vi.fn(async () => ({ data: receipt, error: null }))
+  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ not: async () => ({ data: [{
+    id: itemId, list_id: remoteListId, version: 2, deleted_at: '2026-11-12T12:00:00Z',
+  }], error: null }) }) }) }))
   return {
     storage, rpc, setCrash: (v: boolean) => { crash = v },
     getIntents: () => intents,
-    coordinator: createCloudCompletionCoordinator(storage as never, { rpc } as never, accountId, () => true),
+    coordinator: createCloudCompletionCoordinator(storage as never, { rpc, from } as never, accountId, () => true),
   }
 }
 describe('durable E4 cloud completion coordinator', () => {
