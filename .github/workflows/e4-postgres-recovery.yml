@@ -77,6 +77,10 @@ jobs:
           fi
       - name: RLS A/B regression
         run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_acl_rls.sql
+      - name: Create E4 archive snapshot schema in isolated PostgreSQL
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql
+      - name: Verify E4 archive RLS and snapshot durability
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_archive_schema.sql
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
