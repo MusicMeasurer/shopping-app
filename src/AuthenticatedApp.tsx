@@ -4,6 +4,7 @@ import { App } from './App'
 import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
+import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import { createAccountSync } from './data/account-sync'
 import type { Storage } from './data/storage'
@@ -25,6 +26,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
+  const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
+  const [cloudArchiveError, setCloudArchiveError] = useState('')
+  const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
   const [cloudLoading, setCloudLoading] = useState(false)
   const [selectedLocal, setSelectedLocal] = useState<ListId>('groceries')
@@ -432,6 +436,28 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
+  async function loadCloudArchive() {
+    if (!client || !currentAccount || cloudArchiveBusy) return
+    setCloudArchiveBusy(true)
+    setCloudArchiveError('')
+    try {
+      // Verify the active identity; never show snapshots from an old account.
+      const { data: { user }, error: identityError } = await client.auth.getUser()
+      if (identityError || user?.id !== currentAccount) throw new Error('Аккаунт не подтверждён')
+      const snapshots = await fetchCloudArchive(client)
+      const { data: { user: stillCurrent }, error: recheckError } = await client.auth.getUser()
+      if (recheckError || stillCurrent?.id !== currentAccount) throw new Error('Аккаунт изменился')
+      setCloudArchives(snapshots)
+    } catch (err) {
+      setCloudArchives(null)
+      setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
+    } finally { setCloudArchiveBusy(false) }
+  }
+  useEffect(() => {
+    setCloudArchives(null)
+    setCloudArchiveError('')
+  }, [workspaceAccount])
+
   async function signOut() {
     if (!controller || busy) return
     setBusy(true)
@@ -474,6 +500,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </div>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
+      <section aria-label="Облачный архив">
+        <h3>Облачный архив покупок</h3>
+        <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
+          {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
+        </button>
+        {cloudArchiveError && <p role="alert">{cloudArchiveError}</p>}
+        {cloudArchives && <div role="status">
+          {cloudArchives.length === 0 ? <p>В облачном архиве пока нет покупок.</p> :
+            <ul>{cloudArchives.map(snapshot => <li key={snapshot.id}>
+              <strong>{snapshot.sourceListName}</strong> — {new Date(snapshot.completedAt).toLocaleDateString('ru-RU')}
+              <ul>{snapshot.items.map(item => <li key={item.ordinal}>
+                {item.name}{item.quantity != null ? ` — ${item.quantity}${item.unit ? ' ' + item.unit : ''}` : ''}
+              </li>)}</ul>
+            </li>)}</ul>}
+        </div>}
+      </section>
       {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
       <p>Привязка не переносит существующие покупки. Новые изменения в привязанном списке отправляются автоматически при доступной сети.</p>
       <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
