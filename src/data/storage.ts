@@ -800,10 +800,13 @@ export function createStorage(name = 'shopping-app') {
       return rows.map(row => row.intent)
     },
     /** Atomically commit a confirmed receipt and remove exactly the intended local items. */
-    async commitAccountCompletion(intent: CloudCompletionIntent, revision: number): Promise<void> {
-      if (!Number.isSafeInteger(revision) || revision <= intent.expectedRevision) throw new Error('Invalid completion revision')
+    async commitAccountCompletion(intent: CloudCompletionIntent, revision: number, tombstones: { id: string; version: number }[]): Promise<void> {
+      if (!Number.isSafeInteger(revision) || revision <= intent.expectedRevision ||
+          tombstones.length !== intent.itemIds.length || new Set(tombstones.map(row => row.id)).size !== tombstones.length ||
+          tombstones.some(row => !intent.itemIds.includes(row.id) || !Number.isSafeInteger(row.version) || row.version < 1))
+        throw new Error('Invalid confirmed completion tombstones')
       const db = await database
-      const tx = db.transaction(['accountCompletions', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountCompletions', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
       try {
         const key = accountKey(intent.accountId, intent.operationId)
         const stored = await tx.objectStore('accountCompletions').get(key)
@@ -820,6 +823,16 @@ export function createStorage(name = 'shopping-app') {
         if (rows.length !== intent.itemIds.length || rows.some(row => !intent.itemIds.includes(row.item.id)))
           throw new Error('Local items changed since completion request')
         for (const row of rows) await tx.objectStore('accountItems').delete(row.key)
+        for (const tombstone of tombstones) {
+          const versionKey = accountKey(intent.accountId, tombstone.id)
+          const old = await tx.objectStore('accountItemVersions').get(versionKey)
+          if (old && (old.remoteListId !== intent.remoteListId || old.version >= tombstone.version))
+            throw new Error('Confirmed tombstone version conflict')
+          await tx.objectStore('accountItemVersions').put({
+            key: versionKey, accountId: intent.accountId, itemId: tombstone.id,
+            remoteListId: intent.remoteListId, version: tombstone.version,
+          })
+        }
         await tx.objectStore('accountCompletions').delete(key)
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
