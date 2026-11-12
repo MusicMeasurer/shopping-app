@@ -47,3 +47,12 @@ Current first increment: `024_e4_archive_snapshot_SCHEMA_CI_ONLY.sql` + `test_e4
 - Added `tests/recovery/test_e4_completion_rpc.sql`: marked-only, none-purchased, no-marks, replay, payload mismatch, stale revision, foreign owner, archived item count, revision/tombstones.
 - [GitHub Actions run #23](https://github.com/MusicMeasurer/shopping-app/actions/runs/43207740279) **success** at commit `c38cc725660e0fd1d6bc31c7ca2c28e3c754f010`; temporary PostgreSQL only.
 - **Not yet done:** end-to-end oneoff flow with metadata 022, all-purchased snapshot assertion, empty-list negative test, race/concurrency test, hosted A/B tests, browser offline queue, archive UI wiring and physical iPhone acceptance. Existing lab was not changed. Do not deploy these CI-only drafts as-is; review auth/permissions, compatibility with E3 pull cursors and list deletion semantics first.
+
+
+## E4 metadata + completion CI checkpoint · 2026-11-12
+
+- CI now installs additive E4 list metadata draft `022` before completion RPC `025`. RPC reads the explicit permanent/oneoff kind rather than silently assuming permanent for all lists.
+- Fixed archive insert verification to query archive items by their completion UUID.
+- Added isolated PostgreSQL tests for oneoff soft-removal, `all_purchased` with quantity/unit snapshot, empty-list rejection, alongside prior marked-only, no-purchase, replay, stale revision and foreign owner.
+- [GitHub Actions run](https://github.com/MusicMeasurer/shopping-app/actions/runs/43208871411) completed **success** for commit `4f6df36f58c579b095cb78aa06ec6e4af4228917`.
+- **Still open:** hosted lab deployment and A/B tests, full concurrency stress, cross-device synchronization and browser integration/offline queue, physical iPhone acceptance. This is not E3+E4 acceptance and the main Supabase environment remains unchanged.
