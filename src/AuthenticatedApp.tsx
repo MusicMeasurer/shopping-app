@@ -644,7 +644,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       </button>
       {cloudMetadataError && <p role="alert">{cloudMetadataError}</p>}
       {cloudMetadata && <section aria-label="Проверенные метаданные облачных списков">
-        <h3>Списки аккаунта (только просмотр)</h3>
+        <h3>Списки аккаунта</h3>
+        <p>Изменения доступны только при установленном серверном контракте E4. При ошибке данные не перезаписываются; сначала проверьте состояние облака.</p>
         {cloudMetadata.length === 0 ? <p>Облачных списков пока нет.</p> :
           <ul>{cloudMetadata.map(row => <li key={row.id}>
             {row.name} — {row.kind === 'oneoff' ? 'разовый' : 'постоянный'} · позиция {row.position} · версия {row.revision}
