@@ -145,6 +145,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     await selectAccountList(listA)
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
+    await page.getByRole('button', { name: 'Настройки' }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: 'Удалить локальный профиль', exact: true }).click()
     await page.getByRole('button', { name: 'Настройки' }).click()
