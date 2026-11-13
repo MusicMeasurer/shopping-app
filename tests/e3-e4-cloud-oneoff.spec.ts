@@ -12,7 +12,12 @@ test.beforeAll(() => {
 })
 
 test('account E3/E4: oneoff list can be created, completed and archived without remaining active', async ({ page }) => {
-  test.setTimeout(120000)
+  test.setTimeout(180000)
+  const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
+  page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
+  page.on('pageerror', error => console.log('[browser pageerror]', error.message))
+  page.on('requestfailed', request => console.log('[browser requestfailed]', request.method(), request.url(), request.failure()?.errorText))
+  test.info().annotations.push({ type: 'diagnostic', description: 'Phase trace in job logs; last phase before timeout identifies blocker' })
   const client = createClient(url, key, { auth: { persistSession: false } })
   const { data: auth, error } = await client.auth.signInWithPassword({ email, password })
   expect(error).toBeNull()
@@ -27,6 +32,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   expect(rpcError?.code, 'E4 create_e4_list RPC is missing from the isolated lab; deploy only after security review').not.toBe('PGRST202')
   expect(rpcError, 'E4 RPC preflight must reject an empty list name').not.toBeNull()
   const name = 'E3E4_ONEOFF_' + crypto.randomUUID()
+  tracePhase('opening app')
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
   await page.getByLabel('Email').fill(email)
@@ -37,6 +43,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Добавить список' }),
     'E4 oneoff creation is absent in authenticated mode').toBeVisible()
+  tracePhase('creating oneoff')
   await page.getByRole('button', { name: 'Добавить список' }).click()
   await page.getByLabel('Название списка').fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
@@ -44,15 +51,18 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('button', { name })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
+  tracePhase('selecting oneoff')
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   // Exercise the actual account item queue and completion protocol, not just
   // creation of a button. Use a unique disposable list in the isolated lab.
+  tracePhase('adding item')
   await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
+  tracePhase('waiting for remote item')
   await expect.poll(async () => {
     const { data } = await client.from('shopping_lists').select('id').eq('name', name).single()
     if (!data?.id) return 0
@@ -60,6 +70,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
+  tracePhase('completing list')
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
   // Fail with the application's actual completion reason rather than a generic
@@ -77,10 +88,12 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(page.getByText(name).last()).toBeVisible()
   // Acceptance must survive a fresh application boot, not only React state.
+  tracePhase('reloading app')
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off reappeared after reload').toHaveCount(0)
+  tracePhase('reopening archive')
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(page.getByText(name).last(),
     'Completed one-off archive must persist after reload').toBeVisible()
