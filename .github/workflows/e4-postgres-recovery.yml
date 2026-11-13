@@ -121,6 +121,8 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/023_e4_list_metadata_rpc_REVIEW_ONLY.sql
       - name: Verify E4 metadata RPC ownership, replay, conflicts and ACL
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_metadata_rpc.sql
+      - name: Concurrent E4 metadata writes must serialize safely
+        run: python tests/recovery/test_e4_metadata_concurrency.py
       - name: Create E4 atomic completion RPC in isolated PostgreSQL
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/025_e4_completion_RPC_CI_ONLY.sql
       - name: Test E4 completion, idempotency, isolation and sync tombstones
