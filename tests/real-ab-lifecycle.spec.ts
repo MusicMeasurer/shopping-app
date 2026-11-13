@@ -41,6 +41,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     throw new Error('Only pinned disposable lab with publishable key is allowed')
   }
   const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  const guestList = integrated ? 'GUEST_LIST_' + crypto.randomUUID() : 'E4 TEST LIST'
   const listA = 'A_LIST_' + crypto.randomUUID()
   const listB = 'B_LIST_' + crypto.randomUUID()
   async function selectAccountList(name: string, create = false) {
@@ -79,11 +80,11 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await page.getByRole('button', { name: 'Новый список' }).click()
   const newListDialog = page.getByRole('dialog', { name: integrated ? 'Создать список' : 'Новый список' })
   await expect(newListDialog).toBeVisible()
-  await newListDialog.getByLabel('Название списка', { exact: true }).fill('E4 TEST LIST')
+  await newListDialog.getByLabel('Название списка', { exact: true }).fill(guestList)
   await newListDialog.getByLabel('Тип списка', { exact: true }).selectOption('permanent')
   await newListDialog.getByRole('button', { name: 'Создать', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'E4 TEST LIST' })).toBeVisible()
-  await page.getByRole('button', { name: /Продукты/ }).click()
+  await expect(page.getByRole('button', { name: guestList, exact: true })).toBeVisible()
+  await page.getByRole('button', { name: integrated ? guestList : 'Продукты', exact: true }).click()
   await add(page, guest)
   await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toHaveAttribute('aria-pressed', 'false')
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
@@ -99,7 +100,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.locator('.account-full-email')).toHaveText(process.env.E3_USER_A_EMAIL!)
   await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   if (integrated) {
-    await page.getByRole('button', { name: 'Продукты', exact: true }).first().click()
+    await selectAccountList(guestList)
     await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   } else await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
   await selectAccountList(listA, true)
@@ -110,12 +111,16 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
     await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
   }
+  await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: itemA })).toHaveCount(0)
   await signIn(page, 1)
   await expect(page.getByRole('checkbox', { name: itemA })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
-  if (integrated) await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
+  if (integrated) {
+    await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: guestList, exact: true })).toHaveCount(0)
+  }
   await selectAccountList(listB, true)
   await add(page, itemB)
   await page.reload()
@@ -130,13 +135,20 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: itemB })).toHaveCount(0)
   await removeAccountList()
+  if (integrated) {
+    await expect(page.getByRole('button', { name: guestList, exact: true })).toHaveCount(1)
+    await selectAccountList(guestList)
+    await removeAccountList()
+  }
   await signOut(page)
   if (integrated) await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
+  await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   // Offline restart is exercised for the local guest workspace. Authenticated
   // offline session restoration is a separate acceptance criterion.
   await context.setOffline(true)
   await page.reload()
+  await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible({ timeout: 20000 })
   await context.setOffline(false)
 })
