@@ -153,7 +153,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(archivedCycles.getByText(archivedEditedItem, { exact: true })).toBeVisible()
   tracePhase('reloading permanent list')
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
   await expect(page.getByRole('button', { name, exact: true }),
     'Permanent list disappeared after reload').toBeVisible()
   await page.getByRole('button', { name, exact: true }).click()
@@ -321,7 +321,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     .toBeVisible({ timeout: 20000 })
   await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(archivedCycles).toHaveCount(2)
