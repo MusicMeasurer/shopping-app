@@ -9,7 +9,7 @@ import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
 import type { LocalProfileRegistry } from './data/local-profiles'
-export function App({ storage, accountId = null, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [] }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [] }: { storage: Storage; accountId?: string | null; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -87,7 +87,7 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists }: { storage: Storage; accountId: string | null; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
@@ -263,6 +263,8 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const itemStore = useMemo(() => accountId === null ? (guestProfileId ? profileItemStore(storage, guestProfileId) : itemStoreForAccount(storage, null)) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, guestProfileId, onQueued])
   const shopping = useShopping(itemStore, refreshRevision)
   const rows = itemsForList(shopping.items, active)
+  const [deleteCloudListId, setDeleteCloudListId] = useState<ListId | null>(null)
+  const hasMarkedItems = rows.some(item => item.purchased)
   const remaining = rows.filter(item => !item.purchased).length
   const list = visibleLists.find(list => list.id === active)
   async function submit(event: FormEvent) {
@@ -321,6 +323,25 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>onCompleteCloudList(active,'marked_only')}>Завершить: отмеченные</button>
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>onCompleteCloudList(active,'all_purchased')}>Завершить: всё куплено</button>
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>onCompleteCloudList(active,'none_purchased')}>Завершить: ничего не куплено</button>
+        <button type="button" className="danger" disabled={shopping.loading || shopping.busy || completionBusy} onClick={() => setDeleteCloudListId(active)}>Удалить список</button>
+        {deleteCloudListId === active && <div className="dialog-backdrop">
+          <section role="dialog" aria-modal="true" aria-labelledby="cloud-delete-title" className="rename-dialog">
+            <h2 id="cloud-delete-title">Удалить список?</h2>
+            <p>Активные товары будут удалены. Сохранённые покупки останутся в архиве.</p>
+            {hasMarkedItems && <p>Отмеченные товары не попадут в историю покупок. Чтобы сохранить их, сначала завершите список.</p>}
+            <div className="dialog-buttons">
+              {hasMarkedItems && <button type="button" onClick={() => {
+                setDeleteCloudListId(null)
+                onCompleteCloudList(active, 'marked_only')
+              }}>Завершить отмеченные</button>}
+              <button type="button" onClick={() => setDeleteCloudListId(null)}>Отмена</button>
+              <button type="button" className="danger" disabled={shopping.loading || shopping.busy || completionBusy} onClick={() => {
+                setDeleteCloudListId(null)
+                onCompleteCloudList(active, 'delete_list', hasMarkedItems)
+              }}>Удалить</button>
+            </div>
+          </section>
+        </div>}
       </div>}{accountId!==null&&completionStatus&&<p role="status">{completionStatus}</p>}{accountId===null&&list&&<div className="list-toolbar" aria-label="Управление текущим списком"><button type="button" aria-label="Переименовать список" title="Переименовать" disabled={changingList} onClick={()=>{setRenameName(list.name);setRenaming(true)}}>✎</button><button type="button" aria-label={`Тип списка: ${'kind' in list&&list.kind==='oneoff'?'Разовый':'Постоянный'}. Изменить тип`} title="Изменить тип" disabled={changingList} onClick={()=>void updateLocalList('kind',list.id,'kind' in list&&list.kind==='oneoff'?'permanent':'oneoff')}>{'kind' in list&&list.kind==='oneoff'?'⌛':'∞'}</button><button type="button" aria-label="Завершить список" title="Завершить список" disabled={changingList} onClick={()=>void completeLocalList()}>✓</button><button type="button" className="danger" aria-label="Удалить список" title="Удалить список" disabled={changingList} onClick={()=>void deleteLocalList()}>▤</button></div>}</div>
       {accountId !== null && list && !cloudBoundLists[active] && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
       <form onSubmit={submit}><label htmlFor="item-name">Что нужно купить?{accountId === null ? " (можно несколько строк)" : ""}</label><div className="input-row">{accountId === null ? <textarea id="item-name" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Например, молоко 2 л" rows={2} disabled={shopping.loading || shopping.busy}/> : <input id="item-name" value={name} onChange={event => setName(event.target.value)} placeholder="Например, молоко" maxLength={120} autoComplete="off" disabled={shopping.loading || shopping.busy}/> }<button className="add" disabled={shopping.loading || shopping.busy || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>

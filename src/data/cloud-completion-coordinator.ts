@@ -31,6 +31,7 @@ export function createCloudCompletionCoordinator(
       expectedRevision: intent.expectedRevision, mode: intent.mode,
     })
     assertActive()
+    if (receipt.itemCount !== intent.itemIds.length) throw new Error('Server receipt item count mismatch')
     // Never invent deleted-item versions. Re-read the server's tombstones
     // after a confirmed receipt and require exactly the intended item IDs.
     // Normal item RLS hides tombstones once a one-off list is completed.
@@ -56,16 +57,18 @@ export function createCloudCompletionCoordinator(
     await storage.commitAccountCompletion(intent, receipt.revision, relevant)
     return receipt
   }
-  async function begin(localListId: ListId, remoteListId: string, mode: CompletionMode) {
+  async function begin(localListId: ListId, remoteListId: string, mode: CompletionMode, confirmedMarked?: boolean) {
     assertActive()
     if ((await storage.readAccountCompletions(accountId)).some(row => row.remoteListId === remoteListId))
       throw new Error('Finish recovering the previous completion first')
     const preflight = await inspectCloudCompletion(storage, client, accountId,
-      localListId, remoteListId, isActive)
+      localListId, remoteListId, isActive, mode === 'delete_list')
     assertActive()
     if (!preflight.ready || preflight.revision === null) throw new Error(preflight.reason)
     const items = (await storage.readAccountItems(accountId)).filter(item => item.listId === localListId)
     assertActive()
+    if (mode === 'delete_list' && items.some(item => item.purchased) !== confirmedMarked)
+      throw new Error('Отметки изменились. Проверьте список и подтвердите удаление заново.')
     const intent: CloudCompletionIntent = {
       operationId: crypto.randomUUID(), accountId, localListId, remoteListId,
       expectedRevision: preflight.revision, mode,

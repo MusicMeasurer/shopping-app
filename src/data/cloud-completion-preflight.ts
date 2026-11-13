@@ -15,6 +15,7 @@ export async function inspectCloudCompletion(
   localListId: ListId,
   remoteListId: string,
   isActive: () => boolean,
+  deleting = false,
 ): Promise<{ ready: boolean; reason: string; revision: number | null }> {
   const blocked = (reason: string) => ({ ready: false, reason, revision: null })
   if (!isActive()) return blocked('Аккаунт изменился')
@@ -46,9 +47,9 @@ export async function inspectCloudCompletion(
   const localItems = local.filter(item => item.listId === localListId)
   // E3 remote snapshot does not yet include quantity/unit. Never claim the
   // archive will match a local quantity that we cannot verify remotely.
-  if (localItems.some(item => item.quantity !== undefined || item.unit !== undefined))
+  if (!deleting && localItems.some(item => item.quantity !== undefined || item.unit !== undefined))
     return blocked('Количество и единицы ещё не подтверждаются облачной синхронизацией')
-  if (remote.length === 0) return blocked('Пустой облачный список')
+  if (!deleting && remote.length === 0) return blocked('Пустой облачный список')
   // A cloud-only item or an unmatched local item must be reconciled before
   // completion. Compare purchase flags and names, not only item counts.
   const remoteById = new Map(remote.map(item => [item.id, item]))

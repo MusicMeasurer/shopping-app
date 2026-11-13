@@ -602,12 +602,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCloudLoading(false) }
   }
 
-  async function completeCloudList(localListId: ListId, mode: CompletionMode) {
+  async function completeCloudList(localListId: ListId, mode: CompletionMode, confirmedMarked?: boolean) {
     if (!client || !currentAccount || completionBusy || cloudLoading) return
     const accountId = currentAccount
     const remoteListId = cloudBindings[localListId]
     if (!remoteListId) { setCompletionPreflight('Сначала привяжите список к облаку.'); return }
-    if (!window.confirm(mode === 'none_purchased'
+    if (mode !== 'delete_list' && !window.confirm(mode === 'none_purchased'
       ? 'Завершить список без покупок? Товары будут очищены, архив покупок не пополнится.'
       : 'Завершить облачный список? Купленные товары попадут в архив, активные товары будут очищены.')) return
     setCompletionBusy(true)
@@ -616,7 +616,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
       const coordinator = createCloudCompletionCoordinator(storage, client, accountId,
         () => activeAccount.current === accountId)
-      const receipt = await coordinator.begin(localListId, remoteListId, mode)
+      const receipt = await coordinator.begin(localListId, remoteListId, mode, confirmedMarked)
       if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
       // One-off lists disappear from the active cloud set after completion.
       // Refresh from the server rather than optimistically hiding a list.
@@ -625,12 +625,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         throw new Error('Аккаунт изменился')
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-      setCompletionPreflight('Список завершён. Сервер подтвердил операцию ' + receipt.operationId)
+      setCompletionPreflight((mode === 'delete_list' ? 'Список удалён.' : 'Список завершён.') +
+        ' Сервер подтвердил операцию ' + receipt.operationId)
       setCloudArchives(null)
       setWorkspaceRevision(value => value + 1)
       void loadCloudArchive()
     } catch (cause) {
-      setCompletionPreflight('Не удалось завершить: ' + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
+      setCompletionPreflight((mode === 'delete_list' ? 'Не удалось удалить: ' : 'Не удалось завершить: ') + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
         '. Если операция уже отправлена, её идентификатор сохранён для безопасного повтора.')
     } finally { setCompletionBusy(false) }
   }
@@ -643,6 +644,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const receipts = await createCloudCompletionCoordinator(storage, client, accountId,
         () => activeAccount.current === accountId).recoverAll()
       if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      if (receipts.length) {
+        const refreshed = await fetchCloudListMetadata(client, accountId)
+        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+          throw new Error('Аккаунт изменился')
+        setCloudMetadata(refreshed)
+        setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
+      }
       setCompletionPreflight(receipts.length
         ? 'Восстановлено завершений: ' + receipts.length
         : 'Незавершённых операций нет.')
@@ -820,7 +828,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
     <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
-      cloudBoundLists={currentAccount ? cloudBindings : {}} accountCloudLists={currentAccount ? (cloudMetadata ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode) => { void completeCloudList(listId, mode) } : undefined}
+      cloudBoundLists={currentAccount ? cloudBindings : {}} accountCloudLists={currentAccount ? (cloudMetadata ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
         <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>

@@ -5,7 +5,7 @@ import type { PendingItemOperation, CloudPendingOperation } from './pending-oper
 
 export interface CloudCompletionIntent {
   operationId: string; accountId: string; localListId: string; remoteListId: string;
-  expectedRevision: number; mode: 'marked_only' | 'all_purchased' | 'none_purchased';
+  expectedRevision: number; mode: 'marked_only' | 'all_purchased' | 'none_purchased' | 'delete_list';
   itemIds: string[]; createdAt: number
 }
 interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
@@ -773,7 +773,7 @@ export function createStorage(name = 'shopping-app') {
       const { accountId, operationId, localListId, remoteListId, itemIds } = intent
       if (!accountId || !operationId || !localListId || !remoteListId ||
           !Number.isSafeInteger(intent.expectedRevision) || intent.expectedRevision < 0 ||
-          !itemIds.length || new Set(itemIds).size !== itemIds.length) throw new Error('Invalid completion intent')
+          (intent.mode !== 'delete_list' && !itemIds.length) || new Set(itemIds).size !== itemIds.length) throw new Error('Invalid completion intent')
       const db = await database
       const tx = db.transaction(['accountCompletions', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
       try {

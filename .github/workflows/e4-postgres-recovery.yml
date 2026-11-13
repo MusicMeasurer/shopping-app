@@ -137,6 +137,10 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_hosted_ab_rls.sql
       - name: Concurrent E4 completion requests must serialize safely
         run: python tests/recovery/test_e4_completion_concurrency.py
+      - name: Extend E4 transaction to delete lists
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/027_e4_list_delete_RPC_CI_ONLY.sql
+      - name: Verify E4 deletion, archive preservation and owner scope
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_list_delete_rpc.sql
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
