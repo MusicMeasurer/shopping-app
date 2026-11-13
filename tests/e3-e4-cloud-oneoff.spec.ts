@@ -42,6 +42,10 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.locator('#new-list-kind').selectOption('oneoff')
   await page.getByRole('button', { name: 'Создать список' }).click()
   await expect(page.getByRole('button', { name })).toBeVisible()
+  // Creation does not implicitly change the active shopping workspace list.
+  // Explicitly select the newly created, verified and bound account list.
+  await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   // Exercise the actual account item queue and completion protocol, not just
   // creation of a button. Use a unique disposable list in the isolated lab.
   await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
