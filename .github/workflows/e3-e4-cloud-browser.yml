@@ -5,6 +5,7 @@ on:
     branches: [feature/e4-accepted-reintegration]
     paths:
       - 'src/App.tsx'
+      - 'src/style.css'
       - 'src/AuthenticatedApp.tsx'
       - 'src/data/e4-cloud-list-operations.ts'
       - 'src/data/e4-cloud-list-operations.test.ts'
