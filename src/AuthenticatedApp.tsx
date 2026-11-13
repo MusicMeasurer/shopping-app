@@ -325,7 +325,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     try {
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
-      await createCloudList(client, accountId, crypto.randomUUID(), newCloudListName, newCloudListKind)
+      const created = await createCloudList(client, accountId, crypto.randomUUID(), newCloudListName, newCloudListKind)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
       const refreshed = await fetchCloudListMetadata(client, accountId)
