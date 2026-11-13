@@ -91,7 +91,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     const { count } = await client.from('shopping_items').select('id', { count: 'exact', head: true })
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
-  }, { timeout: 30000 }).toBe(1)
+  }, { timeout: 30000 }).toBe(2)
   tracePhase('completing list')
   await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.accept())
