@@ -195,4 +195,4 @@ nav.lists-grid .list-name-wrap .list-name{margin:0}
 .shopping-e4 .input-row{position:relative;z-index:1}
 
 /* Confine grid hit-testing to its own box while Chromium scrolls the item form into view. */
-.shopping-e4 nav.lists-grid{overflow:clip;isolation:isolate}
+.shopping-e4 nav.lists-grid{max-height:45dvh;overflow-y:auto;overflow-x:clip;overscroll-behavior:contain;align-content:start;isolation:isolate}
