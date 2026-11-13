@@ -42,7 +42,24 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.locator('#new-list-kind').selectOption('oneoff')
   await page.getByRole('button', { name: 'Создать список' }).click()
   await expect(page.getByRole('button', { name })).toBeVisible()
-  // Remaining lifecycle assertions intentionally await availability of account list creation.
-  // No shared fixture or accepted environment is modified by this precondition.
+  // Exercise the actual account item queue and completion protocol, not just
+  // creation of a button. Use a unique disposable list in the isolated lab.
+  await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
+  await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
+  // The account sync must confirm the queued item before completion.
+  await expect.poll(async () => {
+    const { data } = await client.from('shopping_lists').select('id').eq('name', name).single()
+    if (!data?.id) return 0
+    const { count } = await client.from('shopping_items').select('id', { count: 'exact', head: true })
+      .eq('list_id', data.id).is('deleted_at', null)
+    return count ?? 0
+  }, { timeout: 30000 }).toBe(1)
+  page.once('dialog', dialog => void dialog.accept())
+  await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
+  await expect(page.getByRole('button', { name })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(page.getByText(name).last()).toBeVisible()
   await client.auth.signOut()
 })
