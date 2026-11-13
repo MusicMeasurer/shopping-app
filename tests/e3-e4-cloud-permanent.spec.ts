@@ -131,7 +131,9 @@ test('account E3/E4: permanent list archives all or only marked purchases in sep
   }
   const marked = page.getByRole('checkbox', { name: nextItem, exact: true })
   const unmarked = page.getByRole('checkbox', { name: unmarkedItem, exact: true })
-  await marked.check()
+  // The controlled checkbox updates after the asynchronous local write.
+  await marked.click()
+  await expect(marked).toBeChecked()
   await expect.poll(async () => {
     const { data: owned } = await client.from('shopping_lists').select('id').eq('name', name).single()
     if (!owned?.id) return {}
