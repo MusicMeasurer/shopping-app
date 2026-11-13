@@ -317,8 +317,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         throw new Error('Account changed')
       setNewCloudListOpen(false)
       setNewCloudListName('')
-      setCloudMetadata(null)
-      await loadCloudMetadata()
+      const refreshed = await fetchCloudListMetadata(client, accountId)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      setCloudMetadata(refreshed)
+      setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
     } catch {
       if (activeAccount.current === accountId)
         setCloudMetadataError('Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
