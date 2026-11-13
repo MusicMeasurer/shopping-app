@@ -17,6 +17,15 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   const { data: auth, error } = await client.auth.signInWithPassword({ email, password })
   expect(error).toBeNull()
   expect(auth.user).not.toBeNull()
+  // Verify server readiness before browser interaction. A missing RPC is a
+  // deployment blocker, not a browser rendering defect. This intentionally
+  // remains a failing acceptance test until the isolated lab is provisioned.
+  const probeOperation = crypto.randomUUID()
+  const { error: rpcError } = await client.rpc('create_e4_list', {
+    p_operation: probeOperation, p_name: '', p_kind: 'oneoff',
+  })
+  expect(rpcError?.code, 'E4 create_e4_list RPC is missing from the isolated lab; deploy only after security review').not.toBe('PGRST202')
+  expect(rpcError, 'E4 RPC preflight must reject an empty list name').not.toBeNull()
   const name = 'E3E4_ONEOFF_' + crypto.randomUUID()
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
