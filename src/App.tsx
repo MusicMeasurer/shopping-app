@@ -35,6 +35,7 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
     return () => { cancelled = true }
   }, [storage, accountId, registry, guestProfile])
   const localAccount = savedAccount?.profileId === guestProfile ? savedAccount : null
+  const [profileActionError, setProfileActionError] = useState('')
   const [profileBusy, setProfileBusy] = useState(false)
   useEffect(() => {
     if (accountId !== null) return
@@ -87,20 +88,26 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
   }
   async function removeGuestProfile() {
     if (profileBusy || !registry || !guestProfile || registry.profiles[0]?.id === guestProfile) return
+    setProfileActionError('')
     if (!window.confirm('Удалить локальные списки и архивы этого профиля с устройства? Облачные данные не удаляются. Неотправленные операции блокируют удаление.')) return
     setProfileBusy(true)
     try {
       const next = await storage.deleteLocalProfile(guestProfile, guestProfile)
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
-    } catch { setStartupError('Не удалось удалить профиль. Возможно, есть неотправленные изменения. Данные сохранены.') }
+    } catch (error) {
+      setProfileActionError(error instanceof Error && error.message.includes('unsynced operations')
+        ? 'Есть неотправленные изменения. Войдите в этот аккаунт и дождитесь синхронизации перед удалением.'
+        : 'Не удалось удалить локальную копию профиля. Данные сохранены.')
+    }
     finally { setProfileBusy(false) }
   }
   if (accountId === null && startupError) return <main><p role="alert">{startupError}</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined && upgradeBlocked) return <main><p role="alert">Другая открытая вкладка использует старую версию покупок и не даёт безопасно обновить хранилище. Закройте другие вкладки приложения, затем повторите открытие. Ваши покупки не удалены.</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
   return <>
-    {accountId === null && guestProfile && registry && <section aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && !registry.profiles.find(row => row.id === guestProfile)?.cloudAccountId && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</section>}
+    {accountId === null && guestProfile && registry && <section aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</section>}
+    {accountId === null && profileActionError && <p role="alert">{profileActionError}</p>}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} completionBusy={completionBusy} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={headerActions} />}
   </>
 }

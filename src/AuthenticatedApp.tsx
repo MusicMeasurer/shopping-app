@@ -113,6 +113,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       } catch {
         if (!cancelled) setCloudRefreshStatus('Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
+      if (await storage.needsAccountCacheRestore(currentAccount)) {
+        const rows = await fetchCloudListMetadata(client, currentAccount)
+        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+        for (const row of rows) {
+          await bindVerifiedOwnedList(storage, client, currentAccount, row.id, row.id, () => !cancelled)
+        }
+        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+        await storage.cacheAccountListMetadata(currentAccount, rows)
+        await storage.confirmAccountCacheRestore(currentAccount)
+      }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
     })().catch(() => {
       if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')

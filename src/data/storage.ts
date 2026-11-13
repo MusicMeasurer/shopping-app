@@ -473,7 +473,8 @@ export function createStorage(name = 'shopping-app') {
       const db = await database
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
-        'profileArchives', 'profilePendingOperations',
+        'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
+        'accountItems', 'accountOperations', 'accountCompletions', 'accountListMappings', 'accountItemVersions',
       ], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
@@ -483,6 +484,23 @@ export function createStorage(name = 'shopping-app') {
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
         if (cutover.profileId === profileId) throw new Error('Original guest profile cannot be deleted')
+        const accountId = current.registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId
+        if (accountId) {
+          const [operations, completions, imports] = await Promise.all([
+            tx.objectStore('accountOperations').index('byAccount').count(accountId),
+            tx.objectStore('accountCompletions').index('byAccount').count(accountId),
+            tx.objectStore('guestImports').getAll(),
+          ])
+          if (operations || completions || imports.some(batch => batch.accountId === accountId && !batch.imported))
+            throw new Error('Profile has unsynced operations; deletion blocked')
+          await tx.objectStore('profileMigrations').put({
+            key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
+          })
+          for (const storeName of ['accountItems', 'accountListMappings', 'accountItemVersions'] as const) {
+            const store = tx.objectStore(storeName)
+            for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
+          }
+        }
         const registry = removeProfileMetadata(current.registry, profileId)
         const pending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(profileId)
         if (pending.length) throw new Error('Profile has unsynced operations; deletion blocked')
@@ -499,6 +517,12 @@ export function createStorage(name = 'shopping-app') {
         await done.catch(() => {})
         throw error
       }
+    },
+    async needsAccountCacheRestore(accountId: string): Promise<boolean> {
+      return !!await (await database).get('profileMigrations', 'restore-account:' + accountId)
+    },
+    async confirmAccountCacheRestore(accountId: string): Promise<void> {
+      await (await database).delete('profileMigrations', 'restore-account:' + accountId)
     },
     /** All profile writes require an existing profile and completed legacy cutover.
      * This guard prevents accidental cross-profile writes before migration.

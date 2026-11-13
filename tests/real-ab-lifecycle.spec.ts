@@ -54,6 +54,12 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('button', { name, exact: true }).click()
   }
 
+  async function openCloudArchive() {
+    const archive = page.getByRole('region', { name: 'Облачный архив' })
+    await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+    return archive.getByRole('status').filter({ has: page.locator('ul, p') })
+  }
+
   async function removeAccountList() {
     if (!integrated) return
     await page.getByRole('button', { name: 'Удалить список', exact: true }).click()
@@ -63,6 +69,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
       .getByRole('status').filter({ hasText: /^Список удалён/ })).toBeVisible({ timeout: 20000 })
   }
 
+  const archivedGuest = 'GUEST_ARCHIVE_' + crypto.randomUUID()
   const guest = 'GUEST_LIFECYCLE_' + crypto.randomUUID()
   const itemA = 'A_LIFECYCLE_' + crypto.randomUUID()
   const itemB = 'B_LIFECYCLE_' + crypto.randomUUID()
@@ -85,6 +92,14 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await newListDialog.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name: guestList, exact: true })).toBeVisible()
   await page.getByRole('button', { name: integrated ? guestList : 'Продукты', exact: true }).click()
+  if (integrated) {
+    await add(page, archivedGuest)
+    await page.getByRole('checkbox', { name: archivedGuest, exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toBeChecked()
+    page.once('dialog', dialog => void dialog.accept())
+    await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toHaveCount(0)
+  }
   await add(page, guest)
   await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toHaveAttribute('aria-pressed', 'false')
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
@@ -102,6 +117,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     await selectAccountList(guestList)
     await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
+    await expect((await openCloudArchive()).getByText(archivedGuest, { exact: true })).toBeVisible()
   } else await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
   await selectAccountList(listA, true)
   await add(page, itemA)
@@ -109,7 +125,10 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     await selectAccountList(listA)
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
-    await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
+    page.once('dialog', dialog => void dialog.accept())
+    await page.getByRole('button', { name: 'Удалить локальный профиль', exact: true }).click()
+    await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option')).toHaveCount(1)
+    await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
   }
   await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
@@ -120,6 +139,9 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: guestList, exact: true })).toHaveCount(0)
+    const archive = await openCloudArchive()
+    await expect(archive).toBeVisible()
+    await expect(archive.getByText(archivedGuest, { exact: true })).toHaveCount(0)
   }
   await selectAccountList(listB, true)
   await add(page, itemB)
@@ -130,6 +152,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await removeAccountList()
   await signOut(page)
   await signIn(page, 0)
+  if (integrated) await expect((await openCloudArchive()).getByText(archivedGuest, { exact: true })).toBeVisible()
   await selectAccountList(listA)
   if (integrated) await expect(page.getByRole('button', { name: listB, exact: true })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
