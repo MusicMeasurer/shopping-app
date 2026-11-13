@@ -121,6 +121,26 @@ test('real A → B → A isolates local purchases and preserves original guest a
   } else await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
   await selectAccountList(listA, true)
   await add(page, itemA)
+  if (integrated) {
+    // Deletion is tested on a fully synced profile. Local visibility alone
+    // does not prove that the cloud receipt has been committed to IndexedDB.
+    await expect.poll(() => page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('shopping-app')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      try {
+        return await new Promise<number>((resolve, reject) => {
+          const request = db.transaction('accountOperations').objectStore('accountOperations').count()
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+      } finally {
+        db.close()
+      }
+    }), { timeout: 30000 }).toBe(0)
+  }
   await signOut(page)
   if (integrated) {
     await selectAccountList(listA)
