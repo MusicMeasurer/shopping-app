@@ -5,9 +5,11 @@ import type { SupabaseClient } from '@supabase/supabase-js'
  * request must be retried with the EXACT same payload and operation ID.
  * Never auto-rebase a version conflict: it needs explicit reconciliation.
  */
+interface ItemAttributes { quantity: number | null; unit: string | null }
+
 export type RemoteMutation =
-  | { kind: 'add'; operationId: string; listId: string; itemId: string; name: string; purchased: boolean }
-  | { kind: 'update'; operationId: string; listId: string; itemId: string; expectedVersion: number; name?: string; purchased?: boolean }
+  | { kind: 'add'; operationId: string; listId: string; itemId: string; name: string; purchased: boolean; attributes?: ItemAttributes }
+  | { kind: 'update'; operationId: string; listId: string; itemId: string; expectedVersion: number; name?: string; purchased?: boolean; attributes?: ItemAttributes }
   | { kind: 'delete'; operationId: string; listId: string; itemId: string; expectedVersion: number }
 
 export interface RemoteMutationReceipt {
@@ -31,7 +33,7 @@ export async function applyRemoteMutation(
   if (mutation.kind === 'add' && (!mutation.name.trim() || mutation.name.trim().length > 120)) {
     throw new Error('Invalid item name')
   }
-  if (mutation.kind === 'update' && mutation.name === undefined && mutation.purchased === undefined) {
+  if (mutation.kind === 'update' && mutation.name === undefined && mutation.purchased === undefined && mutation.attributes === undefined) {
     throw new Error('Empty item update')
   }
   if (mutation.kind === 'update' && mutation.name !== undefined &&
@@ -47,7 +49,10 @@ export async function applyRemoteMutation(
     p_purchased: mutation.kind === 'delete' ? null : mutation.purchased ?? null,
     p_expected_version: mutation.kind === 'add' ? null : mutation.expectedVersion,
   }
-  const { data, error } = await client.rpc('apply_item_change', args)
+  const attributes = mutation.kind === 'delete' ? undefined : mutation.attributes
+  const { data, error } = attributes
+    ? await client.rpc('apply_e4_item_change', { ...args, p_quantity: attributes.quantity, p_unit: attributes.unit })
+    : await client.rpc('apply_item_change', args)
   if (error) throw error
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid mutation receipt')
   const receipt = data as Record<string, unknown>

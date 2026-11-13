@@ -88,16 +88,14 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
-  it('rejects quantity and unit edits on cloud-bound lists before local writes or queueing', async () => {
+  it('queues quantity and unit together and rejects values the cloud cannot store', async () => {
     const storage = await setup()
     const store = cloudAwareItemStore(storage, 'account-a')
-    const item = createItem('groceries', 'Рис')
-    await expect(store.save({ ...item, quantity: 2, unit: 'кг' }))
-      .rejects.toThrow('versioned E4 server contract')
-    await expect(store.save({ ...item, unit: 'кг' }))
-      .rejects.toThrow('versioned E4 server contract')
-    expect(await storage.readAccountItems('account-a')).toEqual([])
-    expect(await storage.readAccountPending('account-a')).toEqual([])
+    const item = { ...createItem('groceries', 'Рис'), quantity: 2, unit: 'кг' }
+    await expect(store.save({ ...item, quantity: 0.0001 })).rejects.toThrow('трёх знаков')
+    await store.save(item)
+    expect(await storage.readAccountItems('account-a')).toEqual([item])
+    expect(await storage.readAccountPending('account-a')).toEqual([expect.objectContaining({ item })])
     await storage.close()
   })
 

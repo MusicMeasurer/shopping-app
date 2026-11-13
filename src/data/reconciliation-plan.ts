@@ -44,7 +44,8 @@ export function planReconciliation(
     } else {
       const current = localById.get(item.id)!
       if (current.listId !== item.listId ||
-          current.name !== item.name || current.purchased !== item.purchased) {
+          current.name !== item.name || current.purchased !== item.purchased ||
+          current.quantity !== item.quantity || current.unit !== item.unit) {
         // Without a server version for the local copy, overwrite is unsafe.
         conflicts.push(item.id)
       }

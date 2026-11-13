@@ -45,10 +45,6 @@ export async function inspectCloudCompletion(
   const remote = await fetchRemoteItems(client, remoteListId)
   if (!isActive()) return blocked('Аккаунт изменился')
   const localItems = local.filter(item => item.listId === localListId)
-  // E3 remote snapshot does not yet include quantity/unit. Never claim the
-  // archive will match a local quantity that we cannot verify remotely.
-  if (!deleting && localItems.some(item => item.quantity !== undefined || item.unit !== undefined))
-    return blocked('Количество и единицы ещё не подтверждаются облачной синхронизацией')
   if (!deleting && remote.length === 0) return blocked('Пустой облачный список')
   // A cloud-only item or an unmatched local item must be reconciled before
   // completion. Compare purchase flags and names, not only item counts.
@@ -56,7 +52,8 @@ export async function inspectCloudCompletion(
   if (remoteById.size !== remote.length || localItems.length !== remote.length ||
       localItems.some(item => {
         const r = remoteById.get(item.id)
-        return !r || r.name !== item.name || r.purchased !== item.purchased
+        return !r || r.name !== item.name || r.purchased !== item.purchased ||
+          (!deleting && (r.quantity !== item.quantity || r.unit !== item.unit))
       })) return blocked('Локальный и облачный списки расходятся')
   // Recheck revision after remote item read; a concurrent server mutation
   // is still possible and will be rejected by the completion RPC.

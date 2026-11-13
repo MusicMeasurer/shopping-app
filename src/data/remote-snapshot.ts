@@ -12,6 +12,8 @@ export interface RemoteItem {
   purchased: boolean
   createdAt: string
   version: number
+  quantity?: number
+  unit?: string
 }
 
 export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, listId: string): Promise<RemoteItem[]> {
@@ -19,7 +21,7 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
     throw new Error('Invalid remote list ID')
   }
   const { data, error } = await client.from('shopping_items')
-    .select('id,list_id,name,purchased,created_at,version')
+    .select('id,list_id,name,purchased,created_at,version,quantity,unit')
     .eq('list_id', listId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
@@ -35,7 +37,12 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
         !Number.isSafeInteger(value.version) || (value.version as number) < 0) {
       throw new Error('Invalid remote item')
     }
+    const quantity = value.quantity == null ? undefined : Number(value.quantity)
+    if ((quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0)) ||
+        (value.unit != null && typeof value.unit !== 'string')) throw new Error('Invalid remote item attributes')
     return {
+      ...(quantity !== undefined ? { quantity } : {}),
+      ...(typeof value.unit === 'string' && value.unit.trim() ? { unit: value.unit } : {}),
       id: value.id, listId: value.list_id, name: value.name,
       purchased: value.purchased, createdAt: value.created_at,
       version: value.version as number,

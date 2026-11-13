@@ -39,6 +39,8 @@ function asLocalItem(remote: RemoteItem, resolveList: (remoteListId: string) => 
     listId: resolveList(remote.listId),
     name: remote.name,
     purchased: remote.purchased,
+      ...(remote.quantity !== undefined ? { quantity: remote.quantity } : {}),
+      ...(remote.unit !== undefined ? { unit: remote.unit } : {}),
     createdAt: Date.parse(remote.createdAt),
   }
 }

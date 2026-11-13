@@ -28,6 +28,16 @@ describe('remote mutation adapter', () => {
     })
     expect(fake.rpc).toHaveBeenCalledWith('apply_item_change', expect.objectContaining({ p_action: 'update', p_expected_version: 2, p_purchased: true }))
   })
+  it('uses the E4 RPC for explicit attribute clears', async () => {
+    const fake = fakeClient()
+    await applyRemoteMutation(fake.client, {
+      kind: 'update', operationId, listId, itemId, expectedVersion: 2,
+      attributes: { quantity: null, unit: null },
+    })
+    expect(fake.rpc).toHaveBeenCalledWith('apply_e4_item_change', expect.objectContaining({
+      p_expected_version: 2, p_quantity: null, p_unit: null,
+    }))
+  })
   it('never issues an unversioned delete', async () => {
     const fake = fakeClient()
     await expect(applyRemoteMutation(fake.client, {

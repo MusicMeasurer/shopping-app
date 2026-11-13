@@ -15,12 +15,13 @@ describe('versioned mutation conversion', () => {
       kind: 'delete', operationId: 'op', listId: 'remote', itemId: 'item', expectedVersion: 4,
     })
   })
-  it('refuses previously queued E4 quantity/unit edits without losing operation identity', () => {
+  it('keeps explicit attribute changes and clears across queue retries', () => {
     const extended = { ...item, quantity: 2, unit: 'кг' }
-    expect(() => resolveVersionedMutation({ ...base, kind: 'cloud-add', item: extended }))
-      .toThrow('Queued E4 quantity/unit edit')
-    expect(() => resolveVersionedMutation({ ...base, kind: 'cloud-update', expectedVersion: 1, item: extended }))
-      .toThrow('Queued E4 quantity/unit edit')
+    expect(resolveVersionedMutation({ ...base, kind: 'cloud-add', item: extended }))
+      .toMatchObject({ attributes: { quantity: 2, unit: 'кг' } })
+    expect(resolveVersionedMutation({ ...base, kind: 'cloud-update', expectedVersion: 1,
+      item: { ...extended, quantity: undefined, unit: undefined } }))
+      .toMatchObject({ attributes: { quantity: null, unit: null } })
   })
   it('refuses ambiguous legacy operations', () => {
     expect(() => resolveVersionedMutation({ kind: 'upsert', operationId: 'old', item })).toThrow('Legacy operation')

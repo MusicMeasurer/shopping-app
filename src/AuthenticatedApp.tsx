@@ -382,10 +382,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     try {
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
-      const updated = await sendCloudListChange(client, row, crypto.randomUUID(), change)
+      await sendCloudListChange(client, row, crypto.randomUUID(), change)
+      const refreshed = await fetchCloudListMetadata(client, accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
-      setCloudMetadata(previous => previous?.map(value => value.id === row.id ? updated : value) ?? null)
+      setCloudMetadata(refreshed)
+      setCloudLists(refreshed.map(value => ({ id: value.id, name: value.name })))
     } catch {
       if (activeAccount.current === accountId) {
         setCloudMetadata(null)
@@ -754,7 +756,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <h3>Списки аккаунта</h3>
         <p>Изменения доступны только при установленном серверном контракте E4. При ошибке данные не перезаписываются; сначала проверьте состояние облака.</p>
         {cloudMetadata.length === 0 ? <p>Облачных списков пока нет.</p> :
-          <ul>{cloudMetadata.map(row => <li key={row.id}>
+          <ul>{cloudMetadata.map((row, index) => <li key={row.id}>
             {row.name} — {row.kind === 'oneoff' ? 'разовый' : 'постоянный'} · позиция {row.position} · версия {row.revision}
             <button type="button" disabled={cloudMutationBusy || cloudLoading} onClick={() => {
               const name = window.prompt('Новое название списка', row.name)
@@ -765,10 +767,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               onClick={() => void changeCloudMetadata(row, { action: 'kind', kind: row.kind === 'oneoff' ? 'permanent' : 'oneoff' })}>
               Сделать {row.kind === 'oneoff' ? 'постоянным' : 'разовым'}
             </button>
-            <button type="button" disabled={cloudMutationBusy || cloudLoading || row.position === 0}
-              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: row.position - 1 })}>Выше</button>
-            <button type="button" disabled={cloudMutationBusy || cloudLoading}
-              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: row.position + 1 })}>Ниже</button>
+            <button type="button" disabled={cloudMutationBusy || cloudLoading || index === 0}
+              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: cloudMetadata[index - 1].position })}>Выше</button>
+            <button type="button" disabled={cloudMutationBusy || cloudLoading || index === cloudMetadata.length - 1}
+              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: cloudMetadata[index + 1].position })}>Ниже</button>
           </li>)}</ul>}
       </section>}
       <section aria-label="Облачный архив">
@@ -789,7 +791,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <ul>{cloudArchives.map(snapshot => <li key={snapshot.id}>
               <strong>{snapshot.sourceListName}</strong> — {new Date(snapshot.completedAt).toLocaleDateString('ru-RU')}
               <ul>{snapshot.items.map(item => <li key={item.ordinal}>
-                {item.name}{item.quantity != null ? ` — ${item.quantity}${item.unit ? ' ' + item.unit : ''}` : ''}
+                {item.name}{item.quantity != null || item.unit ? ` — ${[item.quantity, item.unit].filter(value => value != null).join(' ')}` : ''}
               </li>)}</ul>
             </li>)}</ul>}
         </div>}

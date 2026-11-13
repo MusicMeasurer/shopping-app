@@ -119,6 +119,8 @@ export function createAccountSync(
     const remoteItems = remote.map(item => ({
       id: item.id, listId: localListId, name: item.name,
       purchased: item.purchased, createdAt: Date.parse(item.createdAt),
+      ...(item.quantity !== undefined ? { quantity: item.quantity } : {}),
+      ...(item.unit !== undefined ? { unit: item.unit } : {}),
     }))
     const plan = planReconciliation(localItems, remoteItems, pending)
     if (plan.conflicts.length) throw new Error('Resolve conflicting items before import')
@@ -134,7 +136,7 @@ export function createAccountSync(
     const latest = await fetchRemoteItems(client, remoteListId)
     assertActive()
     const signature = (rows: typeof remote) => JSON.stringify(rows.map(item => [
-      item.id, item.listId, item.name, item.purchased, item.createdAt, item.version,
+      item.id, item.listId, item.name, item.purchased, item.createdAt, item.version, item.quantity, item.unit,
     ]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))))
     if (signature(remote) !== signature(latest)) {
       throw new Error('Remote list changed during import; retry comparison')

@@ -12,7 +12,7 @@ test.beforeAll(() => {
 })
 
 test('account E3/E4: permanent list archives all or marked purchases and skips a cycle without purchases', async ({ page }) => {
-  test.setTimeout(240000)
+  test.setTimeout(300000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
   page.on('pageerror', error => console.log('[browser pageerror]', error.message))
@@ -102,6 +102,42 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     await expect(result).toHaveText(/^Список завершён\. Сервер подтвердил операцию/)
   }
 
+  tracePhase('editing item attributes before archiving')
+  const editedItem = 'E4_EDITED_' + crypto.randomUUID()
+  async function editFirstItem(current: string, name: string, quantity: string, unit: string) {
+    const row = page.getByRole('listitem').filter({
+      has: page.getByRole('checkbox', { name: current, exact: false }),
+    })
+    await row.getByRole('button', { name: 'Изменить ' + current, exact: true }).click()
+    await row.getByLabel('Название').fill(name)
+    await row.getByLabel('Количество').fill(quantity)
+    await row.getByLabel('Единица измерения').fill(unit)
+    await row.getByRole('button', { name: 'Сохранить', exact: true }).click()
+  }
+  const { data: editedList, error: editedListError } = await client.from('shopping_lists')
+    .select('id').eq('name', name).single()
+  expect(editedListError).toBeNull()
+  async function checkItemAttributes(quantity: number | null, unit: string | null) {
+    await expect.poll(async () => {
+      const { data, error } = await client.from('shopping_items').select('name,quantity,unit')
+        .eq('list_id', editedList!.id).is('deleted_at', null)
+      if (error) throw error
+      return data
+    }, { timeout: 30000 }).toEqual([{ name: editedItem, quantity, unit }])
+  }
+  await page.reload()
+  await page.getByRole('button', { name, exact: true }).click()
+  await editFirstItem(firstItem, editedItem, '2.5', 'кг')
+  await checkItemAttributes(2.5, 'кг')
+  await page.reload()
+  await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: editedItem + ' · 2.5 кг', exact: true })).toBeVisible()
+  await editFirstItem(editedItem, editedItem, '', '')
+  await checkItemAttributes(null, null)
+  await editFirstItem(editedItem, editedItem, '3', 'л')
+  await checkItemAttributes(3, 'л')
+  const archivedEditedItem = editedItem + ' — 3 л'
+
   tracePhase('completing first cycle')
   await completeList('Завершить: всё куплено')
   // A permanent list survives completion, but its completed purchase is archived.
@@ -113,7 +149,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     has: page.locator('strong').filter({ hasText: name }),
   })
   await expect(archivedCycles).toHaveCount(1)
-  await expect(archivedCycles.getByText(firstItem, { exact: true })).toBeVisible()
+  await expect(archivedCycles.getByText(archivedEditedItem, { exact: true })).toBeVisible()
   tracePhase('reloading permanent list')
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
@@ -156,7 +192,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(unmarked).not.toBeChecked()
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(archivedCycles).toHaveCount(1)
-  await expect(archivedCycles.getByRole('listitem')).toHaveText([firstItem])
+  await expect(archivedCycles.getByRole('listitem')).toHaveText([archivedEditedItem])
 
   tracePhase('cancelling partial completion')
   const completeMarked = 'Завершить: отмеченные'
@@ -178,11 +214,11 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
 
   await expect(archivedCycles).toHaveCount(2)
-  const firstCycle = archivedCycles.filter({ has: page.getByText(firstItem, { exact: true }) })
+  const firstCycle = archivedCycles.filter({ has: page.getByText(archivedEditedItem, { exact: true }) })
   const secondCycle = archivedCycles.filter({ has: page.getByText(nextItem, { exact: true }) })
   await expect(firstCycle).toHaveCount(1)
   await expect(secondCycle).toHaveCount(1)
-  await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
+  await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
   tracePhase('completing third cycle without purchases')
   const noPurchaseItem = 'E4_NO_PURCHASE_' + crypto.randomUUID()
@@ -215,16 +251,49 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(noPurchase).toHaveCount(0)
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(archivedCycles).toHaveCount(2)
-  await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
+  await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
   await expect(archive.getByText(noPurchaseItem, { exact: true })).toHaveCount(0)
-  tracePhase('deleting cloud list with marked purchases')
   const discardedItem = 'E4_DISCARDED_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill(discardedItem)
   await page.getByLabel('Что нужно купить?').press('Enter')
   const discarded = page.getByRole('checkbox', { name: discardedItem, exact: true })
   await expect(discarded).toBeVisible()
-  await page.waitForTimeout(2500)
+  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: false }])
+
+  tracePhase('renaming, changing type and reordering cloud list')
+  const otherList = 'E4_ORDER_' + crypto.randomUUID()
+  await page.getByRole('button', { name: 'Добавить список' }).click()
+  await page.getByLabel('Название списка').fill(otherList)
+  await page.getByRole('button', { name: 'Создать список' }).click()
+  const renamed = name + '_RENAMED'
+  const metadata = page.getByRole('region', { name: 'Проверенные метаданные облачных списков' })
+  const metadataRow = (listName: string) => metadata.getByRole('listitem').filter({ hasText: listName + ' —' })
+  await expect(metadataRow(otherList)).toBeVisible()
+  page.once('dialog', dialog => void dialog.accept(renamed))
+  await metadataRow(name).getByRole('button', { name: 'Переименовать облачный список' }).click()
+  await expect(metadataRow(renamed)).toBeVisible()
+  await metadataRow(renamed).getByRole('button', { name: 'Сделать разовым' }).click()
+  await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
+  await metadataRow(renamed).getByRole('button', { name: 'Ниже', exact: true }).click()
+
+  const targetButtons = page.getByRole('navigation', { name: 'Списки покупок' })
+    .getByRole('button', { name: new RegExp('^(' + renamed + '|' + otherList + ')$') })
+  await expect(targetButtons.first()).toHaveAccessibleName(otherList)
+  await expect(targetButtons.last()).toHaveAccessibleName(renamed)
+  await page.reload()
+  await expect(targetButtons.first()).toHaveAccessibleName(otherList)
+  await expect(targetButtons.last()).toHaveAccessibleName(renamed)
+  await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
+  await page.getByRole('button', { name: renamed, exact: true }).click()
+  await expect(discarded).toBeVisible()
+  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: false }])
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(archivedCycles).toHaveCount(2)
+  await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
+  await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
+
+  tracePhase('deleting cloud list with marked purchases')
   await discarded.click()
   await expect(discarded).toBeChecked()
   await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: true }])
@@ -241,13 +310,13 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
   await expect(archive.getByRole('status').filter({ hasText: /^Список удалён\. Сервер подтвердил операцию/ }))
     .toBeVisible({ timeout: 20000 })
-  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
-  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(archivedCycles).toHaveCount(2)
-  await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
+  await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
   await expect(archive.getByText(discardedItem, { exact: true })).toHaveCount(0)
 

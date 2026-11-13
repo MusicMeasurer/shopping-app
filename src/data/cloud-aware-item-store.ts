@@ -15,11 +15,11 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         await storage.saveAccountItem(accountId, item)
         return
       }
-      // The current apply_item_change RPC accepts only name/purchased.
-      // Never acknowledge a local quantity/unit edit that cloud sync would silently drop.
-      if (item.quantity !== undefined || (item.unit !== undefined && item.unit.trim() !== '')) {
-        throw new Error('Cloud-bound quantity/unit edits require the versioned E4 server contract')
-      }
+      if (item.quantity !== undefined && (!Number.isFinite(item.quantity) || item.quantity <= 0 ||
+          item.quantity >= 1e9 || Number(item.quantity.toFixed(3)) !== item.quantity))
+        throw new Error('Введите положительное количество с точностью до трёх знаков после запятой')
+      if (item.unit !== undefined && item.unit.trim().length > 30)
+        throw new Error('Единица измерения должна содержать не более 30 символов')
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)
       if (known && known.remoteListId !== binding.remoteListId) {
