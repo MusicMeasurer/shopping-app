@@ -196,3 +196,38 @@ nav.lists-grid .list-name-wrap .list-name{margin:0}
 
 /* Confine grid hit-testing to its own box while Chromium scrolls the item form into view. */
 .shopping-e4 nav.lists-grid{max-height:45dvh;overflow-y:auto;overflow-x:clip;overscroll-behavior:contain;align-content:start;isolation:isolate}
+
+/* The E4 header has its own top bar above the title and description. */
+.shopping-e4 > header {
+  display: block;
+}
+
+.shopping-e4 .account-header-control {
+  max-width: 100%;
+}
+
+/* Keep long list names and cloud controls within the mobile viewport. */
+section[aria-label="Облачные списки"] {
+  width: min(calc(100% - 24px), 620px);
+  margin: 16px auto;
+  overflow-wrap: anywhere;
+}
+
+section[aria-label="Облачные списки"] :is(button, input, select) {
+  max-width: 100%;
+}
+
+section[aria-label="Облачные списки"] button {
+  min-height: 44px;
+  white-space: normal;
+}
+
+section[aria-label="Облачные списки"] li {
+  display: block;
+  min-height: 0;
+  padding: 10px 0;
+}
+
+section[aria-label="Облачные списки"] li > button {
+  margin: 6px 6px 0 0;
+}
