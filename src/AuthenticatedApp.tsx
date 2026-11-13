@@ -66,6 +66,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     if (view.status === 'account') { setAccountDialogOpen(false); setPassword('') }
   }, [view.status])
+  const [offlineLists, setOfflineLists] = useState<{
+    accountId: string; bindings: Record<string, string>;
+    lists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[]
+  } | null>(null)
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
   // The account ID is only trusted after a fresh server verification. Keep
@@ -76,9 +80,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       let cancelled = false
       setReadyAccount(null)
       setProfileError('')
-      void storage.readLocalProfiles().then(registry => {
+      void Promise.all([storage.readLocalProfiles(), storage.readAccountListMappings(offlineAccount)]).then(([registry, mappings]) => {
         if (cancelled) return
         if (!registry?.profiles.some(p => p.cloudAccountId === offlineAccount)) throw new Error('No verified local binding')
+        setOfflineLists({
+          accountId: offlineAccount,
+          bindings: Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])),
+          lists: mappings.filter(row => row.metadata && row.localListId === row.remoteListId)
+            .sort((a, b) => a.metadata!.position - b.metadata!.position)
+            .map(row => ({ id: row.localListId, name: row.metadata!.name, kind: row.metadata!.kind })),
+        })
         setReadyAccount(offlineAccount)
       }).catch(() => { if (!cancelled) setProfileError('Локальный профиль не подтверждён. Доступ заблокирован.') })
       return () => { cancelled = true }
@@ -255,6 +266,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })()
     return () => { cancelled = true }
   }, [client, currentAccount, readyAccount])
+
+  useEffect(() => {
+    if (!currentAccount || readyAccount !== currentAccount || !cloudMetadata ||
+        cloudMetadata.some(row => row.ownerId !== currentAccount)) return
+    void storage.cacheAccountListMetadata(currentAccount, cloudMetadata).catch(() => {
+      if (activeAccount.current === currentAccount)
+        setCloudRefreshStatus('Не удалось сохранить списки для офлайн-доступа.')
+    })
+  }, [currentAccount, readyAccount, cloudMetadata, cloudBindings, storage])
 
   // Read-only cloud refresh for verified, bound lists. Never apply remote
   // deletions or overwrite local edits without explicit user review.
@@ -835,7 +855,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
     <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
-      cloudBoundLists={currentAccount ? cloudBindings : {}} accountCloudLists={currentAccount ? (cloudMetadata ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
+      cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
         <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>

@@ -1,8 +1,7 @@
 import { test, expect, type Page } from '@playwright/test'
 
 // Real browser + real Auth A/B against the pinned disposable Supabase lab.
-// Shopping edits intentionally remain local and unbound: never modify existing
-// remote fixtures or user-owned cloud lists in this lifecycle test.
+// Integration runs create private disposable lists for each test account.
 const credentials = [
   ['E3_USER_A_EMAIL', 'E3_USER_A_PASSWORD'],
   ['E3_USER_B_EMAIL', 'E3_USER_B_PASSWORD'],
@@ -27,8 +26,11 @@ async function signOut(page: Page) {
 }
 
 async function add(page: Page, name: string) {
-  await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  const input = page.getByLabel('Что нужно купить?', { exact: false })
+  await input.fill(name)
+  if (process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration' &&
+      await input.evaluate(element => element.tagName === 'INPUT')) await input.press('Enter')
+  else await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 15000 })
 }
 
@@ -38,6 +40,28 @@ test('real A → B → A isolates local purchases and preserves original guest a
       !process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.startsWith('sb_publishable_')) {
     throw new Error('Only pinned disposable lab with publishable key is allowed')
   }
+  const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  const listA = 'A_LIST_' + crypto.randomUUID()
+  const listB = 'B_LIST_' + crypto.randomUUID()
+  async function selectAccountList(name: string, create = false) {
+    if (!integrated) return
+    if (create) {
+      await page.getByRole('button', { name: 'Добавить список', exact: true }).click()
+      await page.getByLabel('Название списка').fill(name)
+      await page.getByRole('button', { name: 'Создать список', exact: true }).click()
+    }
+    await page.getByRole('button', { name, exact: true }).click()
+  }
+
+  async function removeAccountList() {
+    if (!integrated) return
+    await page.getByRole('button', { name: 'Удалить список', exact: true }).click()
+    await page.getByRole('dialog', { name: 'Удалить список?' })
+      .getByRole('button', { name: 'Удалить', exact: true }).click()
+    await expect(page.getByRole('region', { name: 'Облачный архив' })
+      .getByRole('status').filter({ hasText: /^Список удалён/ })).toBeVisible({ timeout: 20000 })
+  }
+
   const guest = 'GUEST_LIFECYCLE_' + crypto.randomUUID()
   const itemA = 'A_LIFECYCLE_' + crypto.randomUUID()
   const itemB = 'B_LIFECYCLE_' + crypto.randomUUID()
@@ -74,6 +98,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.locator('.account-full-email')).toHaveText(process.env.E3_USER_A_EMAIL!)
   await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
+  await selectAccountList(listA, true)
   await add(page, itemA)
   await signOut(page)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
@@ -81,14 +106,21 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await signIn(page, 1)
   await expect(page.getByRole('checkbox', { name: itemA })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
+  if (integrated) await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
+  await selectAccountList(listB, true)
   await add(page, itemB)
   await page.reload()
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await selectAccountList(listB)
   await expect(page.getByRole('checkbox', { name: itemB })).toBeVisible()
+  await removeAccountList()
   await signOut(page)
   await signIn(page, 0)
+  await selectAccountList(listA)
+  if (integrated) await expect(page.getByRole('button', { name: listB, exact: true })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: itemB })).toHaveCount(0)
+  await removeAccountList()
   await signOut(page)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   // Offline restart is exercised for the local guest workspace. Authenticated

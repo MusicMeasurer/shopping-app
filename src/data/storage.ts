@@ -9,7 +9,7 @@ export interface CloudCompletionIntent {
   itemIds: string[]; createdAt: number
 }
 interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
-interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string }
+interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string; metadata?: { name: string; kind: 'permanent' | 'oneoff'; position: number } }
 interface ScopedOperation {
   key: string
   accountId: string
@@ -884,6 +884,24 @@ export function createStorage(name = 'shopping-app') {
     async readAccountListMappings(accountId: string): Promise<ScopedListMapping[]> {
       accountKey(accountId, 'check')
       return (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+    },
+    async cacheAccountListMetadata(accountId: string, rows: readonly {
+      id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number
+    }[]): Promise<void> {
+      if (rows.some(row => row.ownerId !== accountId)) throw new Error('Foreign list metadata')
+      const byId = new Map(rows.map(row => [row.id, row]))
+      const tx = (await database).transaction('accountListMappings', 'readwrite')
+      for (const mapping of await tx.store.index('byAccount').getAll(accountId)) {
+        const row = byId.get(mapping.remoteListId)
+        if (row) {
+          const { name, kind, position } = row
+          await tx.store.put({ ...mapping, metadata: { name, kind, position } })
+        } else if (mapping.metadata) {
+          const { metadata: _metadata, ...withoutMetadata } = mapping
+          await tx.store.put(withoutMetadata)
+        }
+      }
+      await tx.done
     },
     async bindAccountList(accountId: string, localListId: string, remoteListId: string): Promise<void> {
       if (!localListId.trim() || !/^[0-9a-f]{8}-[0-9a-f-]{27,}$/i.test(remoteListId)) {

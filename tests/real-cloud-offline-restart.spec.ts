@@ -18,7 +18,9 @@ test('bound account queues an offline add across browser restart and syncs after
   const { data: lists, error: listsError } = await api.from('shopping_lists').select('id,name').eq('name', 'SHOPPINGAPP_HTTP_TEST_A')
   if (listsError) throw listsError
   expect(lists?.length).toBe(1)
-  const listId = lists![0].id as string
+  let listId = lists![0].id as string
+  const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  const listName = 'OFFLINE_LIST_' + crypto.randomUUID()
   const name = 'OFFLINE_BROWSER_' + crypto.randomUUID()
   let itemId: string | null = null
   let afterRestartId: string | null = null
@@ -30,15 +32,26 @@ test('bound account queues an offline add across browser restart and syncs after
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
-    await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
-    await expect(page.getByRole('option', { name: 'SHOPPINGAPP_HTTP_TEST_A' })).toBeAttached()
-    await page.getByLabel('Локальный список').selectOption('groceries')
-    await page.getByLabel('Облачный список').selectOption({ label: 'SHOPPINGAPP_HTTP_TEST_A' })
-    await page.getByRole('button', { name: 'Привязать' }).click()
-    await expect(page.getByText('Продукты: облачный список привязан', { exact: false })).toBeVisible({ timeout: 20000 })
+    if (integrated) {
+      await page.getByRole('button', { name: 'Добавить список', exact: true }).click()
+      await page.getByLabel('Название списка').fill(listName)
+      await page.getByRole('button', { name: 'Создать список', exact: true }).click()
+      await page.getByRole('button', { name: listName, exact: true }).click()
+      const { data, error } = await api.from('shopping_lists').select('id').eq('name', listName).single()
+      if (error) throw error
+      listId = data.id
+    } else {
+      await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
+      await expect(page.getByRole('option', { name: 'SHOPPINGAPP_HTTP_TEST_A' })).toBeAttached()
+      await page.getByLabel('Локальный список').selectOption('groceries')
+      await page.getByLabel('Облачный список').selectOption({ label: 'SHOPPINGAPP_HTTP_TEST_A' })
+      await page.getByRole('button', { name: 'Привязать' }).click()
+      await expect(page.getByText('Продукты: облачный список привязан', { exact: false })).toBeVisible({ timeout: 20000 })
+    }
     await context.setOffline(true)
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
-    await page.getByRole('button', { name: 'Добавить товар' }).click()
+    if (integrated) await page.getByLabel('Что нужно купить?', { exact: false }).press('Enter')
+    else await page.getByRole('button', { name: 'Добавить товар' }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 15000 })
     // No remote mutation can succeed while browser networking is disabled.
     const { data: before, error: beforeError } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
@@ -46,15 +59,18 @@ test('bound account queues an offline add across browser restart and syncs after
     expect(before).toHaveLength(0)
     await page.reload()
     await expect(page.getByText('Локальный профиль: нет сети.', { exact: false })).toBeVisible({ timeout: 30000 })
+    if (integrated) await page.getByRole('button', { name: listName, exact: true }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible()
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(afterRestartName)
-    await page.getByRole('button', { name: 'Добавить товар' }).click()
+    if (integrated) await page.getByLabel('Что нужно купить?', { exact: false }).press('Enter')
+    else await page.getByRole('button', { name: 'Добавить товар' }).click()
     await expect(page.getByRole('checkbox', { name: afterRestartName })).toBeVisible()
     // Reconnection must reverify server identity before uploading queued edits.
     await context.setOffline(false)
     // Connectivity event must reverify the account and drain the durable queue
     // without requiring another page reload or manual cloud action.
     await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+    if (integrated) await page.getByRole('button', { name: listName, exact: true }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 20000 })
     await expect.poll(async () => {
       const { data, error } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
@@ -83,6 +99,18 @@ test('bound account queues an offline add across browser restart and syncs after
           p_name: null, p_purchased: null, p_expected_version: row.version,
         })
         if (error) throw error
+      }
+    }
+    if (integrated) {
+      const { data: list, error } = await api.from('shopping_lists').select('revision')
+        .eq('id', listId).eq('name', listName).is('deleted_at', null).maybeSingle()
+      if (error) throw error
+      if (list) {
+        const { error: deleteError } = await api.rpc('complete_e4_list', {
+          p_operation: crypto.randomUUID(), p_list: listId,
+          p_expected_revision: list.revision, p_mode: 'delete_list',
+        })
+        if (deleteError) throw deleteError
       }
     }
     await api.auth.signOut()
