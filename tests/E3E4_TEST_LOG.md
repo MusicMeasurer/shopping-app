@@ -19,3 +19,12 @@ Workflow: `.github/workflows/e3-e4-cloud-browser.yml`; test: `tests/e3-e4-cloud-
 Earlier run failed at config validation because the workflow invented new secret names. The established names and environment above fix this configuration mistake. **Run result must still be checked; no claim of E2E success until verified.**
 
 This journal is in the feature branch to avoid unauthorized changes to `main/docs/05_DEV_LOG.md`. After acceptance, transfer the relevant facts to the canonical log under a separately authorized documentation update.
+
+## 2026-11-13 · Повторная сверка E3↔E4 и решение о точечном завершении (Инструкция 1)
+
+- 09.11 журнал main/docs/05_DEV_LOG.md зафиксировал несовместимую основу первоначальной E4 (E3 IndexedDB v6 / E4 v3); 10.11 в feature/e3-e4-integration уже были единая IndexedDB v7, локальные списки E4, архив и сохранённые account stores E3.
+- Проверены ветки feature/e3-e4-integration, feature/e4-accepted-reintegration, feature/e4-accessibility-archive-fixes, snapshot/e4-local-integration-ci-passed-2026-11-11 и связанные исходники. Повторная разработка локального E4 не требуется.
+- Фактический разрыв в текущей ветке: account-mode App.tsx выбирает фиксированные lists, а создание/переименование/тип/архив UI ограничены accountId === null. Локальные E4 методы и cloud completion/archives существуют; облачные метаданные списков реализованы частично (022/023 REVIEW_ONLY и e4-cloud-list-metadata.ts, не подключённый к account UI). RPC 023 не содержит create/delete; облачный lifecycle oneoff не подтверждён.
+- Действие: выполнить Инструкцию 1 на feature/e4-accepted-reintegration с повторным использованием E4 и проверенными E3 контрактами; не менять main, production, shoppingapp-security-lab и принятые данные. Сначала подтвердить недостающий облачный контракт и его security/rollback gates, затем подключить account UI и выполнить негативные/регрессионные/браузерные проверки. Не объявлять E4 account lifecycle завершённым до проверок.
+- Ранее подтверждены браузерные сценарии трёх режимов завершения постоянного облачного списка. Тест oneoff показал отсутствие создания в account UI (run 43335452610); не трактовать это как отсутствие локальной E4 реализации.
+- Эта запись ведётся в рабочей ветке как оперативный журнал: канонический main/docs/05_DEV_LOG.md не изменён, поскольку main остаётся защищённым от изменений без отдельного разрешения.
