@@ -11,7 +11,7 @@ test.beforeAll(() => {
     throw new Error('Refusing to run outside the established isolated E3 lab')
 })
 
-test('account E3/E4: permanent list retains two separate archived cycles after reload', async ({ page }) => {
+test('account E3/E4: permanent list archives all or only marked purchases in separate cycles', async ({ page }) => {
   test.setTimeout(180000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
@@ -92,9 +92,9 @@ test('account E3/E4: permanent list retains two separate archived cycles after r
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
-  async function completeList() {
+  async function completeList(buttonName: string) {
     page.once('dialog', dialog => void dialog.accept())
-    await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
+    await page.getByRole('button', { name: buttonName, exact: true }).click()
     // Fail with the application's actual completion reason rather than a generic
     // timeout. The server receipt remains mandatory for this acceptance.
     const result = page.getByRole('region', { name: 'Облачный архив' }).getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
@@ -103,7 +103,7 @@ test('account E3/E4: permanent list retains two separate archived cycles after r
   }
 
   tracePhase('completing first cycle')
-  await completeList()
+  await completeList('Завершить: всё куплено')
   // A permanent list survives completion, but its completed purchase is archived.
   await expect(page.getByRole('button', { name, exact: true }),
     'Permanent list must remain active after completion').toBeVisible()
@@ -123,29 +123,49 @@ test('account E3/E4: permanent list retains two separate archived cycles after r
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   // A completed permanent list must be reusable for a fresh shopping cycle.
   const nextItem = 'E4_SECOND_CYCLE_' + crypto.randomUUID()
-  await page.getByLabel('Что нужно купить?').fill(nextItem)
-  await page.getByLabel('Что нужно купить?').press('Enter')
-  await expect(page.getByRole('checkbox', { name: nextItem })).toBeVisible()
+  const unmarkedItem = 'E4_UNMARKED_' + crypto.randomUUID()
+  for (const item of [nextItem, unmarkedItem]) {
+    await page.getByLabel('Что нужно купить?').fill(item)
+    await page.getByLabel('Что нужно купить?').press('Enter')
+    await expect(page.getByRole('checkbox', { name: item, exact: true })).toBeVisible()
+  }
+  const marked = page.getByRole('checkbox', { name: nextItem, exact: true })
+  const unmarked = page.getByRole('checkbox', { name: unmarkedItem, exact: true })
+  await marked.check()
   await expect.poll(async () => {
     const { data: owned } = await client.from('shopping_lists').select('id').eq('name', name).single()
-    if (!owned?.id) return 0
-    const { count } = await client.from('shopping_items')
-      .select('id', { count: 'exact', head: true }).eq('list_id', owned.id)
-      .eq('name', nextItem).is('deleted_at', null)
-    return count ?? 0
-  }, { timeout: 30000 }).toBe(1)
+    if (!owned?.id) return {}
+    const { data, error } = await client.from('shopping_items').select('name,purchased')
+      .eq('list_id', owned.id).is('deleted_at', null)
+    if (error) throw error
+    return Object.fromEntries((data ?? []).map(item => [item.name, item.purchased]))
+  }, { timeout: 30000 }).toEqual({ [nextItem]: true, [unmarkedItem]: false })
   await page.reload()
-  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
   await page.getByRole('button', { name, exact: true }).click()
-  await expect(page.getByRole('checkbox', { name: nextItem }),
-    'Second-cycle item disappeared after reload').toBeVisible()
-  tracePhase('completing second cycle')
-  await completeList()
+  await expect(marked).toBeChecked()
+  await expect(unmarked).toBeVisible()
+  await expect(unmarked).not.toBeChecked()
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(archivedCycles).toHaveCount(1)
+  await expect(archivedCycles.getByRole('listitem')).toHaveText([firstItem])
+
+  tracePhase('cancelling partial completion')
+  const completeMarked = 'Завершить: отмеченные'
+  page.once('dialog', dialog => void dialog.dismiss())
+  await page.getByRole('button', { name: completeMarked, exact: true }).click()
+  await expect(marked).toBeChecked()
+  await expect(unmarked).toBeVisible()
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(archivedCycles).toHaveCount(1)
+
+  tracePhase('completing second cycle with marked items only')
+  await completeList(completeMarked)
   await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
-  await expect(page.getByRole('checkbox', { name: nextItem, exact: true })).toHaveCount(0)
+  await expect(marked).toHaveCount(0)
+  await expect(unmarked).toHaveCount(0)
   await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
 
   await expect(archivedCycles).toHaveCount(2)
