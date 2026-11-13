@@ -4,6 +4,10 @@ on:
   push:
     branches: [feature/e4-accepted-reintegration]
     paths:
+      - 'src/App.tsx'
+      - 'src/AuthenticatedApp.tsx'
+      - 'src/data/e4-cloud-list-operations.ts'
+      - 'src/data/e4-cloud-list-operations.test.ts'
       - 'tests/e3-e4-cloud-acceptance.spec.ts'
       - 'tests/e3-e4-cloud-modes.spec.ts'
       - 'tests/e3-e4-cloud-oneoff.spec.ts'
