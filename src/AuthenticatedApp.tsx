@@ -36,9 +36,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
   const [cloudMetadataError, setCloudMetadataError] = useState('')
   const [cloudMutationBusy, setCloudMutationBusy] = useState(false)
-  const [newCloudListOpen, setNewCloudListOpen] = useState(false)
-  const [newCloudListName, setNewCloudListName] = useState('')
-  const [newCloudListKind, setNewCloudListKind] = useState<'permanent' | 'oneoff'>('permanent')
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
@@ -246,9 +243,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudLists([])
     setCloudMetadata(null)
     setCloudMetadataError('')
-    setNewCloudListOpen(false)
-    setNewCloudListName('')
-    setNewCloudListKind('permanent')
     setCloudRefreshStatus('')
     setCloudBindings({})
     setSelectedRemote('')
@@ -383,8 +377,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCloudLoading(false) }
   }
 
-  async function addCloudList(event: FormEvent) {
-    event.preventDefault()
+  async function addCloudList(newCloudListName: string, newCloudListKind: 'permanent' | 'oneoff') {
     if (!client || !currentAccount || readyAccount !== currentAccount ||
         cloudMutationBusy || cloudLoading || !newCloudListName.trim()) return
     const accountId = currentAccount
@@ -410,8 +403,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-      setNewCloudListOpen(false)
-      setNewCloudListName('')
+      return true
     } catch {
       if (activeAccount.current === accountId)
         setCloudMetadataError('Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
@@ -434,6 +426,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         throw new Error('Account changed')
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(value => ({ id: value.id, name: value.name })))
+      return true
     } catch {
       if (activeAccount.current === accountId) {
         setCloudMetadata(null)
@@ -779,21 +772,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         {error && <p role="alert">{error}</p>}
       </section>
     </div>}
+    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
+      onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind) => !!await addCloudList(name, kind) : undefined}
+      onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
+        const row = cloudMetadata.find(list => list.id === id)
+        if (!row) return false
+        return !!await changeCloudMetadata(row, action === 'rename' ? { action, name: value.trim() } : { action, kind: value === 'oneoff' ? 'oneoff' : 'permanent' })
+      } : undefined}
+      cloudListBusy={cloudMutationBusy || cloudLoading}
+      cloudListError={cloudMetadataError}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
+      headerActions={client ? <div className="account-header-control">
+        {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
+        <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
+          <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
+        </button>
+      </div> : undefined} />
     {client && view.status === 'account' && <section aria-label="Облачные списки">
-      <h2>Облачные списки</h2>
-      <button type="button" disabled={cloudMutationBusy || cloudLoading} onClick={() => setNewCloudListOpen(open => !open)}>Добавить список</button>
-      {newCloudListOpen && <form onSubmit={event => void addCloudList(event)}>
-        <label htmlFor="new-cloud-list-name">Название списка</label>
-        <input id="new-cloud-list-name" value={newCloudListName} maxLength={120} required
-          onChange={event => setNewCloudListName(event.target.value)} />
-        <label htmlFor="new-list-kind">Тип списка</label>
-        <select id="new-list-kind" value={newCloudListKind}
-          onChange={event => setNewCloudListKind(event.target.value as 'permanent' | 'oneoff')}>
-          <option value="permanent">Постоянный</option><option value="oneoff">Разовый</option>
-        </select>
-        <button disabled={cloudMutationBusy || cloudLoading || !newCloudListName.trim()}>Создать список</button>
-      </form>}
-
+      <details><summary>Служебные операции облака</summary>
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
         Проверить типы и порядок облачных списков
       </button>
@@ -819,6 +816,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: cloudMetadata[index + 1].position })}>Ниже</button>
           </li>)}</ul>}
       </section>}
+      </details>
       <section aria-label="Облачный архив">
         <h3>Облачный архив покупок</h3>
         <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void previewCloudCompletion()}>
@@ -842,6 +840,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             </li>)}</ul>}
         </div>}
       </section>
+      <details><summary>Привязка и синхронизация</summary>
       {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
       <p>Привязка не переносит существующие покупки. Новые изменения в привязанном списке отправляются автоматически при доступной сети.</p>
       <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
@@ -879,15 +878,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} cloudUrl={import.meta.env.VITE_SUPABASE_URL} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={cloudMetadata?.find(list => list.id === selectedLocal)?.name ?? lists.find(list => list.id === selectedLocal)?.name ?? 'Список покупок'} />}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
+      </details>
     </section>}
-    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
-      cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
-      accountCloudLists={currentAccount ? (cloudMetadata ?? []) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
-      headerActions={client ? <div className="account-header-control">
-        {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
-        <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
-          <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
-        </button>
-      </div> : undefined} />
   </>
 }
