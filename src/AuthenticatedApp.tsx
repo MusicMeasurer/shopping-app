@@ -5,6 +5,7 @@ import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudListMetadata, type CloudListMetadata } from './data/e4-cloud-list-metadata'
+import { sendCloudListChange, type CloudListChange } from './data/e4-cloud-list-operations'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
 import { inspectCloudCompletion } from './data/cloud-completion-preflight'
 import { createCloudCompletionCoordinator } from './data/cloud-completion-coordinator'
@@ -32,6 +33,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
   const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
   const [cloudMetadataError, setCloudMetadataError] = useState('')
+  const [cloudMutationBusy, setCloudMutationBusy] = useState(false)
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
@@ -294,6 +296,28 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current === accountId)
         setCloudMetadataError('Не удалось проверить метаданные облачных списков. Данные не изменены.')
     } finally { setCloudLoading(false) }
+  }
+
+  async function changeCloudMetadata(row: CloudListMetadata, change: CloudListChange) {
+    if (!client || !currentAccount || readyAccount !== currentAccount ||
+        cloudMutationBusy || cloudLoading || row.ownerId !== currentAccount ||
+        !cloudMetadata?.some(value => value.id === row.id && value.revision === row.revision)) return
+    const accountId = currentAccount
+    setCloudMutationBusy(true)
+    setCloudMetadataError('')
+    try {
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      const updated = await sendCloudListChange(client, row, crypto.randomUUID(), change)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      setCloudMetadata(previous => previous?.map(value => value.id === row.id ? updated : value) ?? null)
+    } catch {
+      if (activeAccount.current === accountId) {
+        setCloudMetadata(null)
+        setCloudMetadataError('Изменение не подтверждено сервером. Проверьте список заново; не повторяйте операцию до проверки состояния.')
+      }
+    } finally { setCloudMutationBusy(false) }
   }
 
   async function loadCloudLists() {
@@ -622,7 +646,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       {cloudMetadata && <section aria-label="Проверенные метаданные облачных списков">
         <h3>Списки аккаунта (только просмотр)</h3>
         {cloudMetadata.length === 0 ? <p>Облачных списков пока нет.</p> :
-          <ul>{cloudMetadata.map(row => <li key={row.id}>{row.name} — {row.kind === 'oneoff' ? 'разовый' : 'постоянный'} · позиция {row.position} · версия {row.revision}</li>)}</ul>}
+          <ul>{cloudMetadata.map(row => <li key={row.id}>
+            {row.name} — {row.kind === 'oneoff' ? 'разовый' : 'постоянный'} · позиция {row.position} · версия {row.revision}
+            <button type="button" disabled={cloudMutationBusy || cloudLoading} onClick={() => {
+              const name = window.prompt('Новое название списка', row.name)
+              if (name !== null && name.trim() && name.trim() !== row.name)
+                void changeCloudMetadata(row, { action: 'rename', name: name.trim() })
+            }}>Переименовать облачный список</button>
+            <button type="button" disabled={cloudMutationBusy || cloudLoading}
+              onClick={() => void changeCloudMetadata(row, { action: 'kind', kind: row.kind === 'oneoff' ? 'permanent' : 'oneoff' })}>
+              Сделать {row.kind === 'oneoff' ? 'постоянным' : 'разовым'}
+            </button>
+            <button type="button" disabled={cloudMutationBusy || cloudLoading || row.position === 0}
+              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: row.position - 1 })}>Выше</button>
+            <button type="button" disabled={cloudMutationBusy || cloudLoading}
+              onClick={() => void changeCloudMetadata(row, { action: 'reorder', position: row.position + 1 })}>Ниже</button>
+          </li>)}</ul>}
       </section>}
       <section aria-label="Облачный архив">
         <h3>Облачный архив покупок</h3>
