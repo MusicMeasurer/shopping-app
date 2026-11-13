@@ -76,6 +76,9 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
         hit: top?.outerHTML.slice(0, 240), viewport: { width: innerWidth, height: innerHeight } }
     })
   })))
+  // Mobile Chromium retains a focused input and changes its visual viewport;
+  // dismiss the virtual keyboard before a genuine pointer click (never force).
+  await page.getByLabel('Что нужно купить?').blur()
   await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
   await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
