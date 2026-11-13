@@ -76,5 +76,13 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(page.getByText(name).last()).toBeVisible()
+  // Acceptance must survive a fresh application boot, not only React state.
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('button', { name, exact: true }),
+    'Completed one-off reappeared after reload').toHaveCount(0)
+  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(page.getByText(name).last(),
+    'Completed one-off archive must persist after reload').toBeVisible()
   await client.auth.signOut()
 })
