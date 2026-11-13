@@ -20,7 +20,10 @@ describe('versioned cloud E4 list metadata adapter', () => {
     expect(c.rpc).not.toHaveBeenCalled()
   })
   it('rejects stale, mismatched and malformed receipts', async () => {
-    for (const data of [null, {}, { list_id: list.id, revision: 4 }, { list_id: crypto.randomUUID(), revision: 5 }]) {
+    for (const data of [null, {}, { list_id: list.id, revision: 4 }, { list_id: crypto.randomUUID(), revision: 5 },
+      { operation_id: op, list_id: list.id, revision: 5, name: 'Продукты', kind: 'permanent', position: 0 },
+      { operation_id: op, list_id: list.id, revision: 6, name: 'Новый', kind: 'permanent', position: 0 },
+      { operation_id: crypto.randomUUID(), list_id: list.id, revision: 5, name: 'Новый', kind: 'permanent', position: 0 }]) {
       await expect(sendCloudListChange(fake(data) as never, list, op, { action: 'kind', kind: 'oneoff' })).rejects.toThrow()
     }
   })
