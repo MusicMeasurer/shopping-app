@@ -45,11 +45,16 @@ export async function sendCloudListChange(
   // The server's receipt is NOT a substitute for a fresh owner-scoped read.
   if (receipt.operation_id !== operationId || receipt.list_id !== list.id ||
       !Number.isSafeInteger(receipt.revision) ||
-      (receipt.revision as number) <= list.revision)
+      (receipt.revision as number) !== list.revision + 1 ||
+      typeof receipt.name !== 'string' || !receipt.name.trim() ||
+      (receipt.kind !== 'permanent' && receipt.kind !== 'oneoff') ||
+      !Number.isSafeInteger(receipt.position) || (receipt.position as number) < 0 ||
+      (change.action === 'rename' && receipt.name !== change.name.trim()) ||
+      (change.action === 'kind' && receipt.kind !== change.kind) ||
+      (change.action === 'reorder' && receipt.position !== change.position))
     throw new Error('Unverified list revision')
   return { ...list, revision: receipt.revision as number,
-    ...(change.action === 'rename' ? { name: change.name.trim() } : {}),
-    ...(change.action === 'kind' ? { kind: change.kind } : {}),
-    ...(change.action === 'reorder' ? { position: change.position } : {}),
+    name: receipt.name, kind: receipt.kind as 'permanent' | 'oneoff',
+    position: receipt.position as number,
   }
 }
