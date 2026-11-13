@@ -98,10 +98,18 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.getByRole('dialog', { name: 'Мой аккаунт' })).toBeVisible()
   await expect(page.locator('.account-full-email')).toHaveText(process.env.E3_USER_A_EMAIL!)
   await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
-  await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
+  if (integrated) {
+    await page.getByRole('button', { name: 'Продукты', exact: true }).first().click()
+    await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
+  } else await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
   await selectAccountList(listA, true)
   await add(page, itemA)
   await signOut(page)
+  if (integrated) {
+    await selectAccountList(listA)
+    await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
+    await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
+  }
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: itemA })).toHaveCount(0)
   await signIn(page, 1)
@@ -123,6 +131,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.getByRole('checkbox', { name: itemB })).toHaveCount(0)
   await removeAccountList()
   await signOut(page)
+  if (integrated) await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   // Offline restart is exercised for the local guest workspace. Authenticated
   // offline session restoration is a separate acceptance criterion.

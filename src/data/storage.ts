@@ -24,7 +24,12 @@ export interface ArchivedListRecord {
   id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
 }
 interface ProfileOwnedRecord<T> { key: string; profileId: string; record: T }
+interface GuestImport {
+  key: string; accountId: string; operationId: string; imported: boolean
+  lists: ShoppingListRecord[]; items: Item[]; archives: ArchivedListRecord[]
+}
 interface ShoppingDB extends DBSchema {
+  guestImports: { key: string; value: GuestImport }
   profileLists: { key: string; value: ProfileOwnedRecord<ShoppingListRecord>; indexes: { byProfile: string } }
   profileItems: { key: string; value: ProfileOwnedRecord<Item>; indexes: { byProfile: string } }
   profileArchives: { key: string; value: ProfileOwnedRecord<ArchivedListRecord>; indexes: { byProfile: string } }
@@ -49,8 +54,9 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 11, {
+  const database = openDB<ShoppingDB>(name, 12, {
     upgrade(db, oldVersion, _newVersion, tx) {
+      if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
       if (!db.objectStoreNames.contains('accountCompletions')) {
@@ -363,7 +369,7 @@ export function createStorage(name = 'shopping-app') {
     async ensureVerifiedAccountProfile(verifiedAccountId: string): Promise<LocalProfileRegistry> {
       if (!verifiedAccountId.trim()) throw new Error('Verified account required')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileCutover'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -373,12 +379,64 @@ export function createStorage(name = 'shopping-app') {
           throw new Error('Profile cutover is not active')
         }
         const existing = current.registry.profiles.find(p => p.cloudAccountId === verifiedAccountId)
+        const guest = current.registry.profiles.find(p => p.id === current.registry.activeProfileId && p.cloudAccountId === null)
+        if (guest && !await tx.objectStore('guestImports').get(guest.id)) {
+          const records = await Promise.all([
+            tx.objectStore('profileLists').index('byProfile').getAll(guest.id),
+            tx.objectStore('profileItems').index('byProfile').getAll(guest.id),
+            tx.objectStore('profileArchives').index('byProfile').getAll(guest.id),
+          ])
+          if (records[1].length || records[2].length || records[0].some(row =>
+              !defaultLists.some(list => list.id === row.record.id && list.name === row.record.name))) {
+            await tx.objectStore('guestImports').add({
+              key: guest.id, accountId: verifiedAccountId, operationId: crypto.randomUUID(), imported: false,
+              lists: records[0].map(row => row.record), items: records[1].map(row => row.record),
+              archives: records[2].map(row => row.record),
+            })
+          }
+        }
         const registry = existing
           ? { ...current.registry, activeProfileId: existing.id }
           : addProfile(current.registry, { id: crypto.randomUUID(), cloudAccountId: verifiedAccountId, createdAt: Date.now() })
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
+      } catch (error) {
+        try { tx.abort() } catch { /* already aborted */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async readGuestImports(accountId: string): Promise<GuestImport[]> {
+      return (await (await database).getAll('guestImports')).filter(row => row.accountId === accountId && !row.imported)
+    },
+    async confirmGuestImport(batch: GuestImport, mappings: readonly {
+      id: string; name: string; kind: 'permanent' | 'oneoff'; position: number
+    }[], items: readonly { item: Item; version: number }[]): Promise<void> {
+      const tx = (await database).transaction(['guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const current = await tx.objectStore('guestImports').get(batch.key)
+        if (!current || current.accountId !== batch.accountId || current.operationId !== batch.operationId)
+          throw new Error('Guest import ownership changed')
+        if (!current.imported) {
+          for (const { id, name, kind, position } of mappings) {
+            const key = accountKey(batch.accountId, id)
+            await tx.objectStore('accountListMappings').add({
+              key, accountId: batch.accountId, localListId: id, remoteListId: id, metadata: { name, kind, position },
+            })
+          }
+          for (const { item, version } of items) {
+            const key = accountKey(batch.accountId, item.id)
+            await tx.objectStore('accountItems').add({ key, accountId: batch.accountId, item })
+            await tx.objectStore('accountItemVersions').add({
+              key, accountId: batch.accountId, itemId: item.id, remoteListId: item.listId, version,
+            })
+          }
+          await tx.objectStore('guestImports').put({ ...current, imported: true, lists: [], items: [], archives: [] })
+        }
+        await done
       } catch (error) {
         try { tx.abort() } catch { /* already aborted */ }
         await done.catch(() => {})
@@ -398,10 +456,6 @@ export function createStorage(name = 'shopping-app') {
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
         const registry = switchProfile(current.registry, profileId)
-        // A cloud-bound profile cannot be activated as an unauthenticated guest.
-        if (registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId !== null) {
-          throw new Error('Cloud-bound profile requires verified account')
-        }
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry

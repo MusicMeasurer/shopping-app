@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { App } from './App'
+import { syncGuestImports } from './data/guest-import'
 import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
@@ -106,6 +107,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       }
       if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
       await storage.ensureVerifiedAccountProfile(currentAccount)
+      try {
+        await syncGuestImports(storage, client, currentAccount,
+          async () => !cancelled && await verifiedAccountId(client) === currentAccount)
+      } catch {
+        if (!cancelled) setCloudRefreshStatus('Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
+      }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
     })().catch(() => {
       if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')

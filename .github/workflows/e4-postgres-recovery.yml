@@ -145,6 +145,10 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/028_e4_item_attributes_RPC_CI_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_item_attributes.sql
+      - name: Check atomic guest import and replay
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/029_e4_guest_import_RPC_CI_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_guest_import.sql
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
