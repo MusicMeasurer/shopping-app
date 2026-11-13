@@ -16,6 +16,7 @@ test.beforeAll(() => {
 })
 
 test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-only completion persists after reload', async ({ page }) => {
+  test.setTimeout(90000) // Full authenticated cloud round-trip: account setup, two syncs, completion and reload.
   const client = createClient(url, key, { auth: { persistSession: false } })
   const { data: signed, error: authError } = await client.auth.signInWithPassword({ email, password })
   expect(authError).toBeNull()
