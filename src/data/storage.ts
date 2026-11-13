@@ -799,6 +799,14 @@ export function createStorage(name = 'shopping-app') {
       const rows = await (await database).getAllFromIndex('accountCompletions', 'byAccount', accountId)
       return rows.map(row => row.intent)
     },
+    async discardRejectedDeletion(intent: CloudCompletionIntent): Promise<void> {
+      const tx = (await database).transaction('accountCompletions', 'readwrite')
+      const key = accountKey(intent.accountId, intent.operationId)
+      const stored = await tx.store.get(key)
+      if (intent.mode === 'delete_list' && stored && JSON.stringify(stored.intent) === JSON.stringify(intent))
+        await tx.store.delete(key)
+      await tx.done
+    },
     /** Atomically commit a confirmed receipt and remove exactly the intended local items. */
     async commitAccountCompletion(intent: CloudCompletionIntent, revision: number, tombstones: { id: string; version: number }[]): Promise<void> {
       if (!Number.isSafeInteger(revision) || revision <= intent.expectedRevision ||
@@ -832,6 +840,9 @@ export function createStorage(name = 'shopping-app') {
             key: versionKey, accountId: intent.accountId, itemId: tombstone.id,
             remoteListId: intent.remoteListId, version: tombstone.version,
           })
+        }
+        if (intent.mode === 'delete_list') {
+          await tx.objectStore('accountListMappings').delete(accountKey(intent.accountId, intent.localListId))
         }
         await tx.objectStore('accountCompletions').delete(key)
         await tx.done

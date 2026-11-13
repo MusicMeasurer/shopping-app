@@ -11,7 +11,7 @@ import { sendCloudCompletion, type CompletionMode, type CompletionReceipt } from
  */
 export function createCloudCompletionCoordinator(
   storage: Pick<Storage, 'beginAccountCompletion' | 'readAccountCompletions' | 'commitAccountCompletion' |
-    'readAccountItems' | 'readAccountPending' | 'readAccountListMappings'>,
+    'readAccountItems' | 'readAccountPending' | 'readAccountListMappings' | 'discardRejectedDeletion'>,
   client: Pick<SupabaseClient, 'rpc' | 'from'>,
   accountId: string,
   isActive: () => boolean,
@@ -26,10 +26,20 @@ export function createCloudCompletionCoordinator(
     assertActive()
     if (!pending.some(row => JSON.stringify(row) === JSON.stringify(intent)))
       throw new Error('Missing durable completion intent')
-    const receipt = await sendCloudCompletion(client, {
-      operationId: intent.operationId, listId: intent.remoteListId,
-      expectedRevision: intent.expectedRevision, mode: intent.mode,
-    })
+    let receipt: CompletionReceipt
+    try {
+      receipt = await sendCloudCompletion(client, {
+        operationId: intent.operationId, listId: intent.remoteListId,
+        expectedRevision: intent.expectedRevision, mode: intent.mode,
+      })
+    } catch (error) {
+      // Only explicit server rejections prove that there is no committed deletion to recover.
+      if (intent.mode === 'delete_list' && isActive() && error && typeof error === 'object' &&
+          'code' in error && error.code === 'P0001' && 'message' in error &&
+          (error.message === 'List revision conflict' || error.message === 'List unavailable'))
+        await storage.discardRejectedDeletion(intent)
+      throw error
+    }
     assertActive()
     if (receipt.itemCount !== intent.itemIds.length) throw new Error('Server receipt item count mismatch')
     // Never invent deleted-item versions. Re-read the server's tombstones

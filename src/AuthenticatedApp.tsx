@@ -625,6 +625,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         throw new Error('Аккаунт изменился')
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
+      if (mode === 'delete_list') {
+        setCloudBindings(current => Object.fromEntries(Object.entries(current).filter(([, id]) => id !== remoteListId)))
+      }
       setCompletionPreflight((mode === 'delete_list' ? 'Список удалён.' : 'Список завершён.') +
         ' Сервер подтвердил операцию ' + receipt.operationId)
       setCloudArchives(null)
@@ -650,6 +653,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           throw new Error('Аккаунт изменился')
         setCloudMetadata(refreshed)
         setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
+        const deleted = new Set(receipts.filter(receipt => receipt.mode === 'delete_list').map(receipt => receipt.listId))
+        setCloudBindings(current => Object.fromEntries(Object.entries(current).filter(([, id]) => !deleted.has(id))))
       }
       setCompletionPreflight(receipts.length
         ? 'Восстановлено завершений: ' + receipts.length
