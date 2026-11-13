@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
-// Acceptance characterization: deliberately fails if account-mode oneoff lifecycle is unavailable.
+// Hosted coverage for consecutive shopping cycles in a permanent account list.
 const url = process.env.E3E4_LAB_URL ?? ''
 const key = process.env.E3E4_LAB_PUBLISHABLE_KEY ?? ''
 const email = process.env.E3E4_LAB_TEST_EMAIL ?? ''
@@ -11,7 +11,7 @@ test.beforeAll(() => {
     throw new Error('Refusing to run outside the established isolated E3 lab')
 })
 
-test('account E3/E4: permanent list remains active after completion and reload', async ({ page }) => {
+test('account E3/E4: permanent list retains two separate archived cycles after reload', async ({ page }) => {
   test.setTimeout(180000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
@@ -42,8 +42,8 @@ test('account E3/E4: permanent list remains active after completion and reload',
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Добавить список' }),
-    'E4 oneoff creation is absent in authenticated mode').toBeVisible()
-  tracePhase('creating oneoff')
+    'E4 list creation is absent in authenticated mode').toBeVisible()
+  tracePhase('creating permanent list')
   await page.getByRole('button', { name: 'Добавить список' }).click()
   await page.getByLabel('Название списка').fill(name)
   await page.locator('#new-list-kind').selectOption('permanent')
@@ -51,13 +51,14 @@ test('account E3/E4: permanent list remains active after completion and reload',
   await expect(page.getByRole('button', { name })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
-  tracePhase('selecting oneoff')
+  tracePhase('selecting permanent list')
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   // Exercise the actual account item queue and completion protocol, not just
   // creation of a button. Use a unique disposable list in the isolated lab.
   tracePhase('adding item')
-  await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
+  const firstItem = 'E4_FIRST_CYCLE_' + crypto.randomUUID()
+  await page.getByLabel('Что нужно купить?').fill(firstItem)
   // A blocked pointer must fail quickly instead of consuming the entire mobile run.
   // Capture real hit-testing geometry before tapping; CSS stacking guesses are
   // insufficient when an overflowing grid physically covers the form.
@@ -91,24 +92,28 @@ test('account E3/E4: permanent list remains active after completion and reload',
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
-  tracePhase('completing list')
-  page.once('dialog', dialog => void dialog.accept())
-  await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  // Fail with the application's actual completion reason rather than a generic
-  // timeout. The server receipt remains mandatory for this acceptance.
-  await expect.poll(async () => {
-    const messages = await page.locator('[role="status"]').allTextContents()
-    const completion = messages.find(message => /Список завершён\.|Не удалось завершить:/.test(message))
-    return completion ?? ''
-  }, { timeout: 20000 }).toMatch(/Список завершён\.|Не удалось завершить:/)
-  const completionMessages = await page.locator('[role="status"]').allTextContents()
-  const completionMessage = completionMessages.find(message => /Список завершён\.|Не удалось завершить:/.test(message)) ?? ''
-  expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/Список завершён\. Сервер подтвердил операцию/)
+  async function completeList() {
+    page.once('dialog', dialog => void dialog.accept())
+    await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
+    // Fail with the application's actual completion reason rather than a generic
+    // timeout. The server receipt remains mandatory for this acceptance.
+    const result = page.getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
+    await expect(result).toBeVisible({ timeout: 20000 })
+    await expect(result).toHaveText(/^Список завершён\. Сервер подтвердил операцию/)
+  }
+
+  tracePhase('completing first cycle')
+  await completeList()
   // A permanent list survives completion, but its completed purchase is archived.
   await expect(page.getByRole('button', { name, exact: true }),
     'Permanent list must remain active after completion').toBeVisible()
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
-  await expect(page.getByText(name).last(), 'Permanent completion must be archived').toBeVisible()
+  const archive = page.getByRole('region', { name: 'Облачный архив' })
+  const archivedCycles = archive.getByRole('status').locator(':scope > ul > li').filter({
+    has: page.locator('strong').filter({ hasText: name }),
+  })
+  await expect(archivedCycles).toHaveCount(1)
+  await expect(archivedCycles.getByText(firstItem, { exact: true })).toBeVisible()
   tracePhase('reloading permanent list')
   await page.reload()
   await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
@@ -134,7 +139,21 @@ test('account E3/E4: permanent list remains active after completion and reload',
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('checkbox', { name: nextItem }),
     'Second-cycle item disappeared after reload').toBeVisible()
-  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
-  await expect(page.getByText(name).last(), 'Permanent archive disappeared after reload').toBeVisible()
+  tracePhase('completing second cycle')
+  await completeList()
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  await page.reload()
+  await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: nextItem, exact: true })).toHaveCount(0)
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+
+  await expect(archivedCycles).toHaveCount(2)
+  const firstCycle = archivedCycles.filter({ has: page.getByText(firstItem, { exact: true }) })
+  const secondCycle = archivedCycles.filter({ has: page.getByText(nextItem, { exact: true }) })
+  await expect(firstCycle).toHaveCount(1)
+  await expect(secondCycle).toHaveCount(1)
+  await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
+  await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
   await client.auth.signOut()
 })
