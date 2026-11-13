@@ -10,6 +10,7 @@ export async function syncGuestImports(
     if (!await isActive()) return
     const { data, error } = await client.rpc('import_e4_guest_profile', {
       p_operation: batch.operationId,
+      p_account: accountId,
       p_snapshot: { lists: batch.lists, items: batch.items, archives: batch.archives },
     })
     if (error) throw error

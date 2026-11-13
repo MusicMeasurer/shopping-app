@@ -9,7 +9,7 @@ create table public.e4_guest_imports (
 alter table public.e4_guest_imports enable row level security;
 revoke all on public.e4_guest_imports from public, anon, authenticated;
 
-create function public.import_e4_guest_profile(p_operation uuid, p_snapshot jsonb)
+create function public.import_e4_guest_profile(p_operation uuid, p_account uuid, p_snapshot jsonb)
 returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   actor uuid := auth.uid();
@@ -25,7 +25,7 @@ declare
   ordinal bigint;
   result jsonb;
 begin
-  if actor is null or p_operation is null or
+  if actor is null or actor is distinct from p_account or p_operation is null or
      jsonb_typeof(p_snapshot->'lists') is distinct from 'array' or
      jsonb_typeof(p_snapshot->'items') is distinct from 'array' or
      jsonb_typeof(p_snapshot->'archives') is distinct from 'array' then
@@ -82,5 +82,5 @@ begin
   return result;
 end;
 $$;
-revoke all on function public.import_e4_guest_profile(uuid,jsonb) from public,anon;
-grant execute on function public.import_e4_guest_profile(uuid,jsonb) to authenticated;
+revoke all on function public.import_e4_guest_profile(uuid,uuid,jsonb) from public,anon;
+grant execute on function public.import_e4_guest_profile(uuid,uuid,jsonb) to authenticated;

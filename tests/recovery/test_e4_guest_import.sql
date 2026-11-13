@@ -8,15 +8,15 @@ declare
   payload constant jsonb := '{"lists":[{"id":"local","name":"Migrated","kind":"permanent","position":0}],"items":[{"id":"item","listId":"local","name":"Rice","purchased":false,"quantity":2.5,"unit":"kg","createdAt":1700000000000}],"archives":[{"sourceListId":"old","name":"Historical","completedAt":1700000000000,"items":[{"name":"Tea","quantity":1,"unit":"box"}]}]}';
   receipt jsonb;
 begin
-  receipt := public.import_e4_guest_profile(op,payload);
-  if receipt is distinct from public.import_e4_guest_profile(op,payload)
+  receipt := public.import_e4_guest_profile(op,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',payload);
+  if receipt is distinct from public.import_e4_guest_profile(op,'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',payload)
      or (select count(*) from public.shopping_lists where name='Migrated') <> 1
      or (select count(*) from public.shopping_items where name='Rice' and quantity=2.5 and unit='kg') <> 1
      or (select count(*) from public.e4_archive_items where name='Tea' and unit='box') <> 1 then
     raise exception 'Guest import mismatch';
   end if;
   begin
-    perform public.import_e4_guest_profile(op, payload || '{"items":[]}'::jsonb);
+    perform public.import_e4_guest_profile(op, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', payload || '{"items":[]}'::jsonb);
     raise exception 'Changed replay accepted';
   exception when raise_exception then
     if sqlerrm <> 'Guest import payload changed' then raise; end if;
@@ -25,9 +25,16 @@ end $$;
 select set_config('request.jwt.claim.sub','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',true);
 do $$
 begin
+  begin
+    perform public.import_e4_guest_profile(gen_random_uuid(),'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      '{"lists":[],"items":[],"archives":[]}'::jsonb);
+    raise exception 'Wrong-session import accepted';
+  exception when raise_exception then
+    if sqlerrm <> 'Invalid guest import' then raise; end if;
+  end;
   if exists(select 1 from public.shopping_lists where name='Migrated')
     or exists(select 1 from public.e4_archive_completions where source_list_name='Historical')
-    or has_function_privilege('anon','public.import_e4_guest_profile(uuid,jsonb)','EXECUTE') then
+    or has_function_privilege('anon','public.import_e4_guest_profile(uuid,uuid,jsonb)','EXECUTE') then
     raise exception 'Guest import isolation failure';
   end if;
 end $$;
