@@ -18,10 +18,8 @@ declare
   entry jsonb;
   item jsonb;
   ids jsonb := '{}'::jsonb;
-  imported_items jsonb := '[]'::jsonb;
   list_key text;
   remote_id uuid;
-  item_id uuid;
   archive_id uuid;
   position_offset bigint;
   ordinal bigint;
@@ -58,9 +56,7 @@ begin
     if remote_id is null then raise exception 'Guest item has no list'; end if;
     insert into public.shopping_items(list_id,name,purchased,quantity,unit,created_at)
       values(remote_id,item->>'name',(item->>'purchased')::boolean,(item->>'quantity')::numeric,
-        item->>'unit',to_timestamp((item->>'createdAt')::double precision / 1000))
-      returning id into item_id;
-    imported_items := imported_items || jsonb_build_array(jsonb_build_object('source',item->>'id','id',item_id,'listId',remote_id));
+        item->>'unit',to_timestamp((item->>'createdAt')::double precision / 1000));
   end loop;
   for entry in select value from jsonb_array_elements(p_snapshot->'archives')
   loop
@@ -81,7 +77,7 @@ begin
       ordinal := ordinal + 1;
     end loop;
   end loop;
-  result := jsonb_build_object('lists',ids,'items',imported_items);
+  result := jsonb_build_object('lists',ids);
   insert into public.e4_guest_imports values(actor,p_operation,fingerprint,result);
   return result;
 end;

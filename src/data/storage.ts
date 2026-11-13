@@ -369,7 +369,7 @@ export function createStorage(name = 'shopping-app') {
     async ensureVerifiedAccountProfile(verifiedAccountId: string): Promise<LocalProfileRegistry> {
       if (!verifiedAccountId.trim()) throw new Error('Verified account required')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {

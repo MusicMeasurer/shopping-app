@@ -21,6 +21,8 @@ on:
       - 'src/data/cloud-completion-failure.test.ts'
       - 'src/data/cloud-completion-storage.test.ts'
       - 'src/data/storage.ts'
+      - 'src/data/storage.test.ts'
+      - 'src/data/guest-import.ts'
       - 'src/AuthenticatedApp.tsx'
       - 'src/App.tsx'
       - 'src/App.completion.test.tsx'
