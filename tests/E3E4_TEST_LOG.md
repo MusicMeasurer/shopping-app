@@ -28,3 +28,8 @@ This journal is in the feature branch to avoid unauthorized changes to `main/doc
 - Действие: выполнить Инструкцию 1 на feature/e4-accepted-reintegration с повторным использованием E4 и проверенными E3 контрактами; не менять main, production, shoppingapp-security-lab и принятые данные. Сначала подтвердить недостающий облачный контракт и его security/rollback gates, затем подключить account UI и выполнить негативные/регрессионные/браузерные проверки. Не объявлять E4 account lifecycle завершённым до проверок.
 - Ранее подтверждены браузерные сценарии трёх режимов завершения постоянного облачного списка. Тест oneoff показал отсутствие создания в account UI (run 43335452610); не трактовать это как отсутствие локальной E4 реализации.
 - Эта запись ведётся в рабочей ветке как оперативный журнал: канонический main/docs/05_DEV_LOG.md не изменён, поскольку main остаётся защищённым от изменений без отдельного разрешения.
+
+### 2026-11-13 · Hosted contract verification (read-only)
+- SQL introspection of shoppingapp-migration-lab shows shopping_lists already has kind and position; therefore 022 metadata columns are **present in hosted lab**, despite older REVIEW_ONLY header. No claim is made about the exact migration that added them.
+- Only complete_e4_list appears among public functions named *e4*; apply_e4_list_metadata from 023 is **not deployed**. No versioned cloud create/delete RPC is present in the reviewed 023 draft. Thus cloud account list CRUD cannot be safely enabled by simply lifting UI gates.
+- No SQL writes were executed. Before applying privileged list operations, require owner-only authorization, idempotency, conflict tests, A/B isolation and recovery checks.
