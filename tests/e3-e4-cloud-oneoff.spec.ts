@@ -62,8 +62,16 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   }, { timeout: 30000 }).toBe(1)
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  await expect(page.getByText(/Список завершён\. Сервер подтвердил операцию/),
-    'Completion must have a verified server receipt before asserting one-off removal').toBeVisible({ timeout: 20000 })
+  // Fail with the application's actual completion reason rather than a generic
+  // timeout. The server receipt remains mandatory for this acceptance.
+  await expect.poll(async () => {
+    const messages = await page.locator('[role="status"]').allTextContents()
+    const completion = messages.find(message => /Список завершён\.|Не удалось завершить:/.test(message))
+    return completion ?? ''
+  }, { timeout: 20000 }).toMatch(/Список завершён\.|Не удалось завершить:/)
+  const completionMessages = await page.locator('[role="status"]').allTextContents()
+  const completionMessage = completionMessages.find(message => /Список завершён\.|Не удалось завершить:/.test(message)) ?? ''
+  expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/Список завершён\. Сервер подтвердил операцию/)
   await expect(page.getByRole('button', { name }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
