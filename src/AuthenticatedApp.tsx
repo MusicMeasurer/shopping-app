@@ -234,6 +234,28 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     return () => { cancelled = true }
   }, [currentAccount, readyAccount, storage])
 
+  // Discover the verified account's active cloud lists on login/restart.
+  // Without this, the shopping workspace falls back to legacy defaults until
+  // the user manually opens the metadata panel.
+  useEffect(() => {
+    if (!client || !currentAccount || readyAccount !== currentAccount) return
+    const accountId = currentAccount
+    let cancelled = false
+    void (async () => {
+      try {
+        if (await verifiedAccountId(client) !== accountId) return
+        const rows = await fetchCloudListMetadata(client, accountId)
+        if (cancelled || activeAccount.current !== accountId ||
+            await verifiedAccountId(client) !== accountId) return
+        setCloudMetadata(rows)
+      } catch {
+        if (!cancelled && activeAccount.current === accountId)
+          setCloudMetadataError('Не удалось загрузить облачные списки. Повторите проверку.')
+      }
+    })()
+    return () => { cancelled = true }
+  }, [client, currentAccount, readyAccount])
+
   // Read-only cloud refresh for verified, bound lists. Never apply remote
   // deletions or overwrite local edits without explicit user review.
   useEffect(() => {
@@ -596,6 +618,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         () => activeAccount.current === accountId)
       const receipt = await coordinator.begin(localListId, remoteListId, mode)
       if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
+      // One-off lists disappear from the active cloud set after completion.
+      // Refresh from the server rather than optimistically hiding a list.
+      const refreshed = await fetchCloudListMetadata(client, accountId)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Аккаунт изменился')
+      setCloudMetadata(refreshed)
+      setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
       setCompletionPreflight('Список завершён. Сервер подтвердил операцию ' + receipt.operationId)
       setCloudArchives(null)
       setWorkspaceRevision(value => value + 1)
@@ -786,7 +815,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         onClick={() => void importCloudItems()}>Импортировать только новые покупки</button>}
       {cloudBindings[selectedLocal] && <button type="button" disabled={cloudLoading}
         onClick={() => void flushCloudQueue()}>Отправить подготовленные изменения</button>}
-      {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} cloudUrl={import.meta.env.VITE_SUPABASE_URL} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={lists.find(list => list.id === selectedLocal)!.name} />}
+      {cloudBindings[selectedLocal] && <SiriSetup key={currentAccount + ':' + cloudBindings[selectedLocal]} cloudUrl={import.meta.env.VITE_SUPABASE_URL} client={client} accountId={currentAccount!} listId={cloudBindings[selectedLocal]} listName={cloudMetadata?.find(list => list.id === selectedLocal)?.name ?? lists.find(list => list.id === selectedLocal)?.name ?? 'Список покупок'} />}
       {lists.map(list => cloudBindings[list.id] &&
         <p key={list.id}>{list.name}: облачный список привязан (новые изменения отправляются автоматически).</p>)}
     </section>}
