@@ -58,7 +58,8 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // creation of a button. Use a unique disposable list in the isolated lab.
   tracePhase('adding item')
   await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  // A blocked pointer must fail quickly instead of consuming the entire mobile run.
+  await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
   await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
