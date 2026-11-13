@@ -33,9 +33,9 @@ test('bound account queues an offline add across browser restart and syncs after
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
     if (integrated) {
-      await page.getByRole('button', { name: 'Добавить список', exact: true }).click()
+      await page.getByRole('button', { name: 'Новый список', exact: true }).click()
       await page.getByLabel('Название списка').fill(listName)
-      await page.getByRole('button', { name: 'Создать список', exact: true }).click()
+      await page.getByRole('button', { name: 'Создать', exact: true }).click()
       await page.getByRole('button', { name: listName, exact: true }).click()
       const { data, error } = await api.from('shopping_lists').select('id').eq('name', listName).single()
       if (error) throw error
