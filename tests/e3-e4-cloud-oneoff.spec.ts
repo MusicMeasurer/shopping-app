@@ -57,7 +57,8 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // Exercise the actual account item queue and completion protocol, not just
   // creation of a button. Use a unique disposable list in the isolated lab.
   tracePhase('adding item')
-  await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID())
+  const secondItem = 'E4_SECOND_' + crypto.randomUUID()
+  await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID() + '\n' + secondItem + ' 2 л')
   // A blocked pointer must fail quickly instead of consuming the entire mobile run.
   // Capture real hit-testing geometry before tapping; CSS stacking guesses are
   // insufficient when an overflowing grid physically covers the form.
@@ -110,6 +111,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('button', { name: /^Архив,/ }).click()
   const e4Archive = page.getByRole('region', { name: 'Архив покупок' })
   await expect(e4Archive.getByRole('heading', { name, exact: true })).toBeVisible()
+  await expect(e4Archive.getByText(secondItem + ' — 2 л')).toBeVisible()
   // Acceptance must survive a fresh application boot, not only React state.
   tracePhase('reloading app')
   await page.reload()

@@ -50,8 +50,7 @@ test('bound account queues an offline add across browser restart and syncs after
     }
     await context.setOffline(true)
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
-    if (integrated) await page.getByLabel('Что нужно купить?', { exact: false }).press('Enter')
-    else await page.getByRole('button', { name: 'Добавить товар' }).click()
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 15000 })
     // No remote mutation can succeed while browser networking is disabled.
     const { data: before, error: beforeError } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
@@ -62,8 +61,7 @@ test('bound account queues an offline add across browser restart and syncs after
     if (integrated) await page.getByRole('button', { name: listName, exact: true }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible()
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(afterRestartName)
-    if (integrated) await page.getByLabel('Что нужно купить?', { exact: false }).press('Enter')
-    else await page.getByRole('button', { name: 'Добавить товар' }).click()
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
     await expect(page.getByRole('checkbox', { name: afterRestartName })).toBeVisible()
     // Reconnection must reverify server identity before uploading queued edits.
     await context.setOffline(false)
