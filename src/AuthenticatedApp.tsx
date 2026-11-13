@@ -321,6 +321,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const refreshed = await fetchCloudListMetadata(client, accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
+      // A newly created cloud list has no legacy local ID. Bind its verified
+      // server UUID to the same account-scoped local ID before enabling edits.
+      // Never infer ownership from the displayed name or fall back to guest data.
+      await bindVerifiedOwnedList(storage, client, accountId, created.id, created.id,
+        () => activeAccount.current === accountId)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      setCloudBindings(previous => ({ ...previous, [created.id]: created.id }))
+      setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
       setNewCloudListOpen(false)
