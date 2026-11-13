@@ -57,8 +57,8 @@ END $test$;
 SELECT set_config('request.jwt.claim.sub','bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',false);
 DO $test$
 BEGIN
- IF EXISTS (SELECT 1 FROM public.e4_list_operations)
- THEN RAISE EXCEPTION 'Operation receipts visible directly'; END IF;
+ IF has_table_privilege('authenticated','public.e4_list_operations','SELECT')
+ THEN RAISE EXCEPTION 'Operation receipts directly readable'; END IF;
  BEGIN
   PERFORM public.apply_e4_list_metadata(
    '99999999-9999-4999-8999-999999999999','11111111-1111-4111-8111-111111111111',3,'Hijack',null,null);
