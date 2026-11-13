@@ -3,7 +3,6 @@ import type { Storage, CloudCompletionIntent } from './storage'
 import type { ListId } from '../domain/shopping'
 import { inspectCloudCompletion } from './cloud-completion-preflight'
 import { sendCloudCompletion, type CompletionMode, type CompletionReceipt } from './cloud-completion-rpc'
-import { fetchRemoteTombstones } from './remote-snapshot'
 
 /**
  * Durable completion protocol. A committed server receipt can be recovered
@@ -34,7 +33,20 @@ export function createCloudCompletionCoordinator(
     assertActive()
     // Never invent deleted-item versions. Re-read the server's tombstones
     // after a confirmed receipt and require exactly the intended item IDs.
-    const tombstones = await fetchRemoteTombstones(client, intent.remoteListId)
+    // Normal item RLS hides tombstones once a one-off list is completed.
+    // Use the owner-and-operation-scoped receipt RPC instead.
+    const { data: tombstoneRows, error: tombstoneError } = await client.rpc(
+      'read_e4_completion_tombstones', { p_operation: intent.operationId })
+    if (tombstoneError || !Array.isArray(tombstoneRows))
+      throw new Error('Receipt-scoped tombstone verification unavailable; completion retained for retry')
+    const tombstones = tombstoneRows.map((row: Record<string, unknown>) => {
+      if (typeof row.id !== 'string' || row.list_id !== intent.remoteListId ||
+          !Number.isSafeInteger(row.version) || typeof row.deleted_at !== 'string' ||
+          !Number.isFinite(Date.parse(row.deleted_at)))
+        throw new Error('Invalid receipt-scoped tombstone')
+      return { id: row.id, listId: row.list_id, version: row.version as number,
+        deletedAt: row.deleted_at }
+    })
     assertActive()
     const relevant = tombstones.filter(row => intent.itemIds.includes(row.id))
     if (relevant.length !== intent.itemIds.length ||
