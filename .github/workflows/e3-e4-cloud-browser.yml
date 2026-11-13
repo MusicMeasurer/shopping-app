@@ -12,6 +12,7 @@ on:
       - 'tests/e3-e4-cloud-acceptance.spec.ts'
       - 'tests/e3-e4-cloud-modes.spec.ts'
       - 'tests/e3-e4-cloud-oneoff.spec.ts'
+      - 'tests/e3-e4-cloud-permanent.spec.ts'
       - '.github/workflows/e3-e4-cloud-browser.yml'
 permissions:
   contents: read
@@ -42,6 +43,6 @@ jobs:
           test -n "$E3E4_LAB_TEST_PASSWORD" || { echo "::error::Missing disposable test password"; exit 1; }
           test -n "$E3E4_LAB_TEST_LIST_ID" || { echo "::error::Missing owned disposable test list"; exit 1; }
       - run: npm run build
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps webkit
       - name: Authenticated E3/E4 cloud browser E2E
-        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts --workers=1
+        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts tests/e3-e4-cloud-permanent.spec.ts --project=iphone-webkit --workers=1
