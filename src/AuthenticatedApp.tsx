@@ -116,19 +116,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (await storage.needsAccountCacheRestore(currentAccount)) {
         const rows = await fetchCloudListMetadata(client, currentAccount)
         if (cancelled || await verifiedAccountId(client) !== currentAccount) return
-        for (const row of rows) {
-          await bindVerifiedOwnedList(storage, client, currentAccount, row.id, row.id, () => !cancelled)
+        // Discovery already validated ownership. Restore bounded batches so
+        // accounts with many lists do not pay serial round trips at sign-in.
+        for (let offset = 0; offset < rows.length; offset += 8) {
+          if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+          await Promise.all(rows.slice(offset, offset + 8).map(async row => {
+            await storage.bindAccountList(currentAccount, row.id, row.id)
+            await createAccountSync(storage, client, {
+              accountId: currentAccount, localListId: row.id, remoteListId: row.id,
+              isActive: () => !cancelled,
+            }).importRemoteOnly()
+          }))
         }
         if (cancelled || await verifiedAccountId(client) !== currentAccount) return
         await storage.cacheAccountListMetadata(currentAccount, rows)
-        for (const row of rows) {
-          if (cancelled || await verifiedAccountId(client) !== currentAccount) return
-          await createAccountSync(storage, client, {
-            accountId: currentAccount, localListId: row.id, remoteListId: row.id,
-            isActive: () => !cancelled,
-          }).importRemoteOnly()
-        }
-        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
         await storage.confirmAccountCacheRestore(currentAccount)
       }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
