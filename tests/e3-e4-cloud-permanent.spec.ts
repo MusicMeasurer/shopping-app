@@ -97,7 +97,7 @@ test('account E3/E4: permanent list retains two separate archived cycles after r
     await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
     // Fail with the application's actual completion reason rather than a generic
     // timeout. The server receipt remains mandatory for this acceptance.
-    const result = page.getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
+    const result = page.getByRole('region', { name: 'Облачный архив' }).getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
     await expect(result).toBeVisible({ timeout: 20000 })
     await expect(result).toHaveText(/^Список завершён\. Сервер подтвердил операцию/)
   }
