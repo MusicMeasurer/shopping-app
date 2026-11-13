@@ -188,3 +188,8 @@ nav.lists-grid .list-select:not(.create-list-tile){display:grid;grid-template-ro
 nav.lists-grid .list-name-wrap{display:flex;align-items:center;min-height:0;min-width:0;overflow:hidden}
 nav.lists-grid .list-name-wrap .list-name{margin:0}
 .list-toolbar button svg{display:block;flex:none}
+
+/* Keep the shopping form above overflowing list tiles in mobile Chromium. */
+.shopping-e4 nav.lists-grid{position:relative;z-index:0;min-width:0}
+.shopping-e4 nav.lists-grid + section{position:relative;z-index:1}
+.shopping-e4 .input-row{position:relative;z-index:1}
