@@ -4,6 +4,7 @@ import { App } from './App'
 import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
+import { fetchCloudListMetadata, type CloudListMetadata } from './data/e4-cloud-list-metadata'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
 import { inspectCloudCompletion } from './data/cloud-completion-preflight'
 import { createCloudCompletionCoordinator } from './data/cloud-completion-coordinator'
@@ -29,6 +30,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
+  const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
+  const [cloudMetadataError, setCloudMetadataError] = useState('')
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
@@ -193,6 +196,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // Account changes invalidate all cloud discovery and selection state.
   useEffect(() => {
     setCloudLists([])
+    setCloudMetadata(null)
+    setCloudMetadataError('')
     setCloudRefreshStatus('')
     setCloudBindings({})
     setSelectedRemote('')
@@ -272,6 +277,24 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       window.removeEventListener('online', onOnline)
     }
   }, [client, currentAccount, readyAccount, storage, cloudMappingRevision])
+
+  async function loadCloudMetadata() {
+    if (!client || !currentAccount || readyAccount !== currentAccount || cloudLoading) return
+    const accountId = currentAccount
+    setCloudLoading(true)
+    setCloudMetadataError('')
+    setCloudMetadata(null)
+    try {
+      if (await verifiedAccountId(client) !== accountId) throw new Error('Account changed')
+      const records = await fetchCloudListMetadata(client, accountId)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      setCloudMetadata(records)
+    } catch {
+      if (activeAccount.current === accountId)
+        setCloudMetadataError('Не удалось проверить метаданные облачных списков. Данные не изменены.')
+    } finally { setCloudLoading(false) }
+  }
 
   async function loadCloudLists() {
     if (!client || view.status !== 'account' || cloudLoading) return
@@ -592,6 +615,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </div>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
+      <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
+        Проверить типы и порядок облачных списков
+      </button>
+      {cloudMetadataError && <p role="alert">{cloudMetadataError}</p>}
+      {cloudMetadata && <section aria-label="Проверенные метаданные облачных списков">
+        <h3>Списки аккаунта (только просмотр)</h3>
+        {cloudMetadata.length === 0 ? <p>Облачных списков пока нет.</p> :
+          <ul>{cloudMetadata.map(row => <li key={row.id}>{row.name} — {row.kind === 'oneoff' ? 'разовый' : 'постоянный'} · позиция {row.position} · версия {row.revision}</li>)}</ul>}
+      </section>}
       <section aria-label="Облачный архив">
         <h3>Облачный архив покупок</h3>
         <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void previewCloudCompletion()}>
