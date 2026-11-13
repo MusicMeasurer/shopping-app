@@ -62,7 +62,10 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   }, { timeout: 30000 }).toBe(1)
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  await expect(page.getByRole('button', { name })).toHaveCount(0)
+  await expect(page.getByText(/Список завершён\. Сервер подтвердил операцию/),
+    'Completion must have a verified server receipt before asserting one-off removal').toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('button', { name }),
+    'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(page.getByText(name).last()).toBeVisible()
   await client.auth.signOut()
