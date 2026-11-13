@@ -118,11 +118,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
         do {
           flushRequested.current = false
-          const mappings = await storage.readAccountListMappings(accountId)
+          const [mappings, owned] = await Promise.all([
+            storage.readAccountListMappings(accountId),
+            fetchOwnedCloudLists(client, accountId),
+          ])
+          if (activeAccount.current !== accountId) return
+          const ownedIds = new Set(owned.map(row => row.id))
           for (const mapping of mappings) {
           if (activeAccount.current !== accountId) return
-          // Dynamic E4 account IDs are valid only when still server-owned.
-          if (!ownedIds.has(mapping.remoteListId)) { failed = true; continue }
+          if (!ownedIds.has(mapping.remoteListId)) continue
           await createAccountSync(storage, client, {
             accountId, localListId: mapping.localListId as ListId,
             remoteListId: mapping.remoteListId,
@@ -252,7 +256,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         const ownedIds = new Set(owned.map(row => row.id))
         for (const mapping of mappings) {
           if (disposed || activeAccount.current !== accountId) return
-          if (!lists.some(list => list.id === mapping.localListId)) continue
+          if (!ownedIds.has(mapping.remoteListId)) { failed = true; continue }
           try {
             imported += await createAccountSync(storage, client, {
               accountId,
