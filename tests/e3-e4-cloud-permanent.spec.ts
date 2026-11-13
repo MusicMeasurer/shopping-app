@@ -116,6 +116,24 @@ test('account E3/E4: permanent list remains active after completion and reload',
     'Permanent list disappeared after reload').toBeVisible()
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  // A completed permanent list must be reusable for a fresh shopping cycle.
+  const nextItem = 'E4_SECOND_CYCLE_' + crypto.randomUUID()
+  await page.getByLabel('Что нужно купить?').fill(nextItem)
+  await page.getByLabel('Что нужно купить?').press('Enter')
+  await expect(page.getByRole('checkbox', { name: nextItem })).toBeVisible()
+  await expect.poll(async () => {
+    const { data: owned } = await client.from('shopping_lists').select('id').eq('name', name).single()
+    if (!owned?.id) return 0
+    const { count } = await client.from('shopping_items')
+      .select('id', { count: 'exact', head: true }).eq('list_id', owned.id)
+      .eq('name', nextItem).is('deleted_at', null)
+    return count ?? 0
+  }, { timeout: 30000 }).toBe(1)
+  await page.reload()
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+  await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: nextItem }),
+    'Second-cycle item disappeared after reload').toBeVisible()
   await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
   await expect(page.getByText(name).last(), 'Permanent archive disappeared after reload').toBeVisible()
   await client.auth.signOut()
