@@ -25,6 +25,7 @@ export async function sendCloudListChange(
     throw new Error('Invalid list operation identity')
   const args: Record<string, unknown> = {
     p_operation: operationId, p_list: list.id, p_expected_revision: list.revision,
+    p_name: null, p_kind: null, p_position: null,
   }
   if (change.action === 'rename') {
     if (change.name.trim().length < 1 || change.name.trim().length > 120) throw new Error('Invalid list name')
@@ -42,7 +43,8 @@ export async function sendCloudListChange(
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Unverified list receipt')
   const receipt = data as Record<string, unknown>
   // The server's receipt is NOT a substitute for a fresh owner-scoped read.
-  if (receipt.list_id !== list.id || !Number.isSafeInteger(receipt.revision) ||
+  if (receipt.operation_id !== operationId || receipt.list_id !== list.id ||
+      !Number.isSafeInteger(receipt.revision) ||
       (receipt.revision as number) <= list.revision)
     throw new Error('Unverified list revision')
   return { ...list, revision: receipt.revision as number,
