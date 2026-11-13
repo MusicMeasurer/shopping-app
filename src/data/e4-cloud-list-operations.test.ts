@@ -12,6 +12,22 @@ describe('versioned cloud E4 list metadata adapter', () => {
     expect(await sendCloudListChange(c as never, list, op, { action: 'rename', name: ' Дача ' })).toEqual({ ...list, name: 'Дача', revision: 5 })
     expect(c.rpc).toHaveBeenCalledWith('apply_e4_list_metadata', { p_operation: op, p_list: list.id, p_expected_revision: 4, p_name: 'Дача', p_kind: null, p_position: null })
   })
+  it('applies kind and reorder only after verified full receipts', async () => {
+    const kind = fake({ operation_id: op, list_id: list.id, revision: 5, name: list.name, kind: 'oneoff', position: 0 })
+    expect(await sendCloudListChange(kind as never, list, op, { action: 'kind', kind: 'oneoff' }))
+      .toEqual({ ...list, kind: 'oneoff', revision: 5 })
+    expect(kind.rpc).toHaveBeenCalledWith('apply_e4_list_metadata', {
+      p_operation: op, p_list: list.id, p_expected_revision: 4,
+      p_name: null, p_kind: 'oneoff', p_position: null,
+    })
+    const reorder = fake({ operation_id: op, list_id: list.id, revision: 5, name: list.name, kind: list.kind, position: 3 })
+    expect(await sendCloudListChange(reorder as never, list, op, { action: 'reorder', position: 3 }))
+      .toEqual({ ...list, position: 3, revision: 5 })
+    expect(reorder.rpc).toHaveBeenCalledWith('apply_e4_list_metadata', {
+      p_operation: op, p_list: list.id, p_expected_revision: 4,
+      p_name: null, p_kind: null, p_position: 3,
+    })
+  })
   it('rejects malformed input before network', async () => {
     const c = fake({})
     await expect(sendCloudListChange(c as never, list, 'invalid', { action: 'kind', kind: 'oneoff' })).rejects.toThrow()
