@@ -124,7 +124,7 @@ test('account E3/E4: permanent list archives all or only marked purchases in sep
   // A completed permanent list must be reusable for a fresh shopping cycle.
   const nextItem = 'E4_SECOND_CYCLE_' + crypto.randomUUID()
   const unmarkedItem = 'E4_UNMARKED_' + crypto.randomUUID()
-  for (const item of [nextItem, unmarkedItem]) {
+  for (const item of [unmarkedItem, nextItem]) {
     await page.getByLabel('Что нужно купить?').fill(item)
     await page.getByLabel('Что нужно купить?').press('Enter')
     await expect(page.getByRole('checkbox', { name: item, exact: true })).toBeVisible()
@@ -142,12 +142,10 @@ test('account E3/E4: permanent list archives all or only marked purchases in sep
     }, { timeout: 30000 }).toEqual({ [nextItem]: purchased, [unmarkedItem]: false })
   }
 
-  // Reload after both creations reach the server so the client can read their confirmed versions.
-  await expectCloudMarks(false)
-  await page.reload()
-  await page.getByRole('button', { name, exact: true }).click()
-  await expect(marked).not.toBeChecked()
-  await expect(unmarked).toBeVisible()
+  // Measure the fixed user-requested delay from the target item's visibility.
+  tracePhase('waiting 2500 ms after the target item appears')
+  await page.waitForTimeout(2500)
+  tracePhase('marking the new item without reloading')
   await marked.click()
   await expect(marked).toBeChecked()
   await expectCloudMarks(true)
