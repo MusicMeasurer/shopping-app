@@ -38,16 +38,16 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
-  await expect(page.getByRole('button', { name: 'Добавить список' }),
+  await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 list creation is absent in authenticated mode').toBeVisible()
   tracePhase('creating permanent list')
-  await page.getByRole('button', { name: 'Добавить список' }).click()
+  await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByLabel('Название списка').fill(name)
   await page.locator('#new-list-kind').selectOption('permanent')
-  await page.getByRole('button', { name: 'Создать список' }).click()
+  await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
@@ -81,7 +81,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   // dismiss the virtual keyboard before a genuine pointer click (never force).
   await page.getByLabel('Что нужно купить?').blur()
   await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
-  await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
   tracePhase('waiting for remote item')
@@ -93,6 +93,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
   async function completeList(buttonName: string) {
+    await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: buttonName, exact: true }).click()
     // Fail with the application's actual completion reason rather than a generic
@@ -196,6 +197,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
 
   tracePhase('cancelling partial completion')
   const completeMarked = 'Завершить: отмеченные'
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.dismiss())
   await page.getByRole('button', { name: completeMarked, exact: true }).click()
   await expect(marked).toBeChecked()
@@ -263,17 +265,23 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
 
   tracePhase('renaming, changing type and reordering cloud list')
   const otherList = 'E4_ORDER_' + crypto.randomUUID()
-  await page.getByRole('button', { name: 'Добавить список' }).click()
+  await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByLabel('Название списка').fill(otherList)
-  await page.getByRole('button', { name: 'Создать список' }).click()
+  await page.getByRole('button', { name: 'Создать', exact: true }).click()
   const renamed = name + '_RENAMED'
   const metadata = page.getByRole('region', { name: 'Проверенные метаданные облачных списков' })
   const metadataRow = (listName: string) => metadata.getByRole('listitem').filter({ hasText: listName + ' —' })
+  await page.getByRole('button', { name, exact: true }).click()
+  await page.getByRole('button', { name: 'Действия со списком' }).click()
+  await page.getByRole('menuitem', { name: /Переименовать/ }).click()
+  await page.getByRole('dialog', { name: 'Переименовать список' }).getByLabel('Название списка').fill(renamed)
+  await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
+  await expect(page.getByRole('button', { name: renamed, exact: true })).toBeVisible()
+  await page.getByRole('button', { name: /Тип списка: Постоянный/ }).click()
+  await expect(page.getByRole('button', { name: /Тип списка: Разовый/ })).toBeVisible()
+  await page.getByText('Служебные операции облака', { exact: true }).click()
   await expect(metadataRow(otherList)).toBeVisible()
-  page.once('dialog', dialog => void dialog.accept(renamed))
-  await metadataRow(name).getByRole('button', { name: 'Переименовать облачный список' }).click()
   await expect(metadataRow(renamed)).toBeVisible()
-  await metadataRow(renamed).getByRole('button', { name: 'Сделать разовым' }).click()
   await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
   await metadataRow(renamed).getByRole('button', { name: 'Ниже', exact: true }).click()
 
@@ -284,6 +292,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.reload()
   await expect(targetButtons.first()).toHaveAccessibleName(otherList)
   await expect(targetButtons.last()).toHaveAccessibleName(renamed)
+  await page.getByText('Служебные операции облака', { exact: true }).click()
   await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
   await page.getByRole('button', { name: renamed, exact: true }).click()
   await expect(discarded).toBeVisible()
@@ -322,9 +331,9 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
 
   tracePhase('deleting a cloud list without marked purchases')
   const unmarkedListName = 'E4_UNMARKED_LIST_' + crypto.randomUUID()
-  await page.getByRole('button', { name: 'Добавить список' }).click()
+  await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByLabel('Название списка').fill(unmarkedListName)
-  await page.getByRole('button', { name: 'Создать список' }).click()
+  await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await page.getByRole('button', { name: unmarkedListName, exact: true }).click()
   const uncheckedName = 'E4_UNCHECKED_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill(uncheckedName)

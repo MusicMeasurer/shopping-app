@@ -38,16 +38,16 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
-  await expect(page.getByRole('button', { name: 'Добавить список' }),
+  await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 oneoff creation is absent in authenticated mode').toBeVisible()
   tracePhase('creating oneoff')
-  await page.getByRole('button', { name: 'Добавить список' }).click()
+  await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByLabel('Название списка').fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
-  await page.getByRole('button', { name: 'Создать список' }).click()
+  await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
@@ -80,7 +80,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // dismiss the virtual keyboard before a genuine pointer click (never force).
   await page.getByLabel('Что нужно купить?').blur()
   await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
-  await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
   tracePhase('waiting for remote item')
@@ -92,6 +92,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
   tracePhase('completing list')
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
   // Fail with the application's actual completion reason rather than a generic

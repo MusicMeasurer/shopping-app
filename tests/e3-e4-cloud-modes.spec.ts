@@ -28,11 +28,12 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
+  await page.getByText('Привязка и синхронизация', { exact: true }).click()
   await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
   await page.locator('#remote-cloud-list').selectOption(listId)
   await page.getByRole('button', { name: 'Привязать', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
 
   async function addAndSync(name: string) {
     await page.getByLabel('Что нужно купить?').fill(name)
@@ -46,6 +47,7 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
   }
   const purchasedName = 'all-' + crypto.randomUUID().slice(0, 8)
   await addAndSync(purchasedName)
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
   await expect(page.getByRole('checkbox', { name: purchasedName })).toHaveCount(0)
@@ -59,6 +61,7 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
 
   const unpurchasedName = 'none-' + crypto.randomUUID().slice(0, 8)
   await addAndSync(unpurchasedName)
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => dialog.accept())
   await page.getByRole('button', { name: 'Завершить: ничего не куплено' }).click()
   await expect(page.getByRole('checkbox', { name: unpurchasedName })).toHaveCount(0)
@@ -72,7 +75,7 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
   await expect(page.getByRole('listitem').filter({ hasText: unpurchasedName })).toHaveCount(0)
   await page.reload()
   await expect(page.getByRole('button', { name: 'Продукты', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Завершить: всё куплено' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: purchasedName })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: unpurchasedName })).toHaveCount(0)
   await client.auth.signOut()

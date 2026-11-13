@@ -38,13 +38,14 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByRole('heading', { name: 'Облачные списки' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
+  await page.getByText('Привязка и синхронизация', { exact: true }).click()
   await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()
   await page.locator('#remote-cloud-list').selectOption(listId)
   await page.getByRole('button', { name: 'Привязать', exact: true }).click()
   // Binding is asynchronous. Do not add an item until IndexedDB mapping is committed
   // and the cloud completion toolbar confirms the account list is bound.
-  await expect(page.getByRole('button', { name: 'Завершить: отмеченные' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   const rpcEvents: { status: number; code: string; message: string }[] = []
   page.on('response', async response => {
     if (!response.url().includes('/rest/v1/rpc/apply_item_change')) return
@@ -106,9 +107,11 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
     return data?.[0]?.purchased
   }, { timeout: 20000, message: 'Purchase flag not synchronized after automatic account flush' }).toBe(true)
   const completion = page.getByRole('button', { name: 'Завершить: отмеченные' })
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => dialog.dismiss())
   await completion.click()
   await expect(page.getByRole('checkbox', { name: prefix })).toBeChecked()
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => dialog.accept())
   await completion.click()
   await expect(page.getByRole('checkbox', { name: prefix })).toHaveCount(0)
