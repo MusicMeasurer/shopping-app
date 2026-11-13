@@ -6,6 +6,7 @@ on:
     paths:
       - 'tests/e3-e4-cloud-acceptance.spec.ts'
       - 'tests/e3-e4-cloud-modes.spec.ts'
+      - 'tests/e3-e4-cloud-oneoff.spec.ts'
       - '.github/workflows/e3-e4-cloud-browser.yml'
 permissions:
   contents: read
@@ -38,4 +39,4 @@ jobs:
       - run: npm run build
       - run: npx playwright install --with-deps chromium webkit
       - name: Authenticated E3/E4 cloud browser E2E
-        run: npx playwright test tests/e3-e4-cloud-modes.spec.ts --workers=1
+        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts --workers=1
