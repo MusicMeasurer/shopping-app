@@ -6,6 +6,7 @@ import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudListMetadata, type CloudListMetadata } from './data/e4-cloud-list-metadata'
 import { sendCloudListChange, type CloudListChange } from './data/e4-cloud-list-operations'
+import { createCloudList } from './data/e4-cloud-list-create'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
 import { inspectCloudCompletion } from './data/cloud-completion-preflight'
 import { createCloudCompletionCoordinator } from './data/cloud-completion-coordinator'
@@ -34,6 +35,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
   const [cloudMetadataError, setCloudMetadataError] = useState('')
   const [cloudMutationBusy, setCloudMutationBusy] = useState(false)
+  const [newCloudListOpen, setNewCloudListOpen] = useState(false)
+  const [newCloudListName, setNewCloudListName] = useState('')
+  const [newCloudListKind, setNewCloudListKind] = useState<'permanent' | 'oneoff'>('permanent')
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
@@ -296,6 +300,29 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current === accountId)
         setCloudMetadataError('Не удалось проверить метаданные облачных списков. Данные не изменены.')
     } finally { setCloudLoading(false) }
+  }
+
+  async function addCloudList(event: FormEvent) {
+    event.preventDefault()
+    if (!client || !currentAccount || readyAccount !== currentAccount ||
+        cloudMutationBusy || cloudLoading || !newCloudListName.trim()) return
+    const accountId = currentAccount
+    setCloudMutationBusy(true)
+    setCloudMetadataError('')
+    try {
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      await createCloudList(client, accountId, crypto.randomUUID(), newCloudListName, newCloudListKind)
+      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
+        throw new Error('Account changed')
+      setNewCloudListOpen(false)
+      setNewCloudListName('')
+      setCloudMetadata(null)
+      await loadCloudMetadata()
+    } catch {
+      if (activeAccount.current === accountId)
+        setCloudMetadataError('Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
+    } finally { setCloudMutationBusy(false) }
   }
 
   async function changeCloudMetadata(row: CloudListMetadata, change: CloudListChange) {
@@ -639,6 +666,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </div>}
     {client && view.status === 'account' && <section aria-label="Облачные списки">
       <h2>Облачные списки</h2>
+      <button type="button" disabled={cloudMutationBusy || cloudLoading} onClick={() => setNewCloudListOpen(open => !open)}>Добавить список</button>
+      {newCloudListOpen && <form onSubmit={event => void addCloudList(event)}>
+        <label htmlFor="new-cloud-list-name">Название списка</label>
+        <input id="new-cloud-list-name" value={newCloudListName} maxLength={120} required
+          onChange={event => setNewCloudListName(event.target.value)} />
+        <label htmlFor="new-list-kind">Тип списка</label>
+        <select id="new-list-kind" value={newCloudListKind}
+          onChange={event => setNewCloudListKind(event.target.value as 'permanent' | 'oneoff')}>
+          <option value="permanent">Постоянный</option><option value="oneoff">Разовый</option>
+        </select>
+        <button disabled={cloudMutationBusy || cloudLoading || !newCloudListName.trim()}>Создать список</button>
+      </form>}
+
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
         Проверить типы и порядок облачных списков
       </button>
