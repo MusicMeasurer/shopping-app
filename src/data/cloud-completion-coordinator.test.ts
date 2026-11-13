@@ -30,11 +30,13 @@ function fixture() {
     readAccountPending: vi.fn(async () => []),
     readAccountListMappings: vi.fn(async () => [{ localListId: 'groceries', remoteListId }]),
   }
-  const rpc = vi.fn(async () => ({ data: receipt, error: null }))
   let tombstones: unknown[] = [{
     id: itemId, list_id: remoteListId, version: 2, deleted_at: '2026-11-12T12:00:00Z',
   }]
-  const from = vi.fn(() => ({ select: () => ({ eq: () => ({ not: async () => ({ data: tombstones, error: null }) }) }) }))
+  const rpc = vi.fn(async (name: string) => name === 'read_e4_completion_tombstones'
+    ? { data: tombstones, error: null }
+    : { data: receipt, error: null })
+  const from = vi.fn()
   return {
     storage, rpc, setTombstones: (rows: unknown[]) => { tombstones = rows }, setCrash: (v: boolean) => { crash = v },
     getIntents: () => intents,
@@ -51,8 +53,9 @@ describe('durable E4 cloud completion coordinator', () => {
     f.setCrash(false)
     expect(await f.coordinator.recoverAll()).toHaveLength(1)
     expect(f.getIntents()).toEqual([])
-    expect(f.rpc).toHaveBeenCalledTimes(2)
-    expect(f.rpc.mock.calls[0]).toEqual(f.rpc.mock.calls[1])
+    expect(f.rpc).toHaveBeenCalledTimes(4)
+    expect(f.rpc.mock.calls[0]).toEqual(f.rpc.mock.calls[2])
+    expect(f.rpc.mock.calls[1]).toEqual(f.rpc.mock.calls[3])
   })
   it('does not acknowledge completion when server tombstones are incomplete', async () => {
     const f = fixture()
