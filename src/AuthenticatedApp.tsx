@@ -121,6 +121,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
         if (cancelled || await verifiedAccountId(client) !== currentAccount) return
         await storage.cacheAccountListMetadata(currentAccount, rows)
+        for (const row of rows) {
+          if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+          await createAccountSync(storage, client, {
+            accountId: currentAccount, localListId: row.id, remoteListId: row.id,
+            isActive: () => !cancelled,
+          }).importRemoteOnly()
+        }
+        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
         await storage.confirmAccountCacheRestore(currentAccount)
       }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
