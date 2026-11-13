@@ -11,7 +11,7 @@ test.beforeAll(() => {
     throw new Error('Refusing to run outside the established isolated E3 lab')
 })
 
-test('account E3/E4: permanent list archives all or only marked purchases in separate cycles', async ({ page }) => {
+test('account E3/E4: permanent list archives all or marked purchases and skips a cycle without purchases', async ({ page }) => {
   test.setTimeout(180000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
@@ -184,5 +184,39 @@ test('account E3/E4: permanent list archives all or only marked purchases in sep
   await expect(secondCycle).toHaveCount(1)
   await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
+  tracePhase('completing third cycle without purchases')
+  const noPurchaseItem = 'E4_NO_PURCHASE_' + crypto.randomUUID()
+  await page.getByLabel('Что нужно купить?').fill(noPurchaseItem)
+  await page.getByLabel('Что нужно купить?').press('Enter')
+  const noPurchase = page.getByRole('checkbox', { name: noPurchaseItem, exact: true })
+  await expect(noPurchase).toBeVisible()
+  await expect(noPurchase).not.toBeChecked()
+
+  const { data: source, error: sourceError } = await client.from('shopping_lists')
+    .select('id').eq('name', name).single()
+  expect(sourceError).toBeNull()
+  expect(source?.id).toBeTruthy()
+
+  async function readActiveItems() {
+    const { data, error } = await client.from('shopping_items').select('name,purchased')
+      .eq('list_id', source!.id).is('deleted_at', null)
+    if (error) throw error
+    return data
+  }
+
+  await expect.poll(readActiveItems, { timeout: 30000 })
+    .toEqual([{ name: noPurchaseItem, purchased: false }])
+  await completeList('Завершить: ничего не куплено')
+  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([])
+
+  await page.reload()
+  await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  await expect(noPurchase).toHaveCount(0)
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click()
+  await expect(archivedCycles).toHaveCount(2)
+  await expect(firstCycle.getByRole('listitem')).toHaveText([firstItem])
+  await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
+  await expect(archive.getByText(noPurchaseItem, { exact: true })).toHaveCount(0)
   await client.auth.signOut()
 })
