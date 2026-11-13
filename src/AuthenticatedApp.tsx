@@ -778,10 +778,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
         const row = cloudMetadata.find(list => list.id === id)
         if (!row) return false
+        if (action === 'reorder') {
+          const target = cloudMetadata.find(list => list.id === value)
+          return target ? !!await changeCloudMetadata(row, { action, position: target.position }) : false
+        }
         return !!await changeCloudMetadata(row, action === 'rename' ? { action, name: value.trim() } : { action, kind: value === 'oneoff' ? 'oneoff' : 'permanent' })
       } : undefined}
       cloudListBusy={cloudMutationBusy || cloudLoading}
       cloudListError={cloudMetadataError}
+      cloudArchiveCount={cloudArchives?.length}
+      onOpenCloudArchive={loadCloudArchive}
+      cloudArchive={currentAccount ? (<section aria-label="Архив покупок">
+        <h2>Завершённые списки</h2>
+        <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
+          {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
+        </button>
+        {cloudArchiveError && <p role="alert">{cloudArchiveError}</p>}
+        {cloudArchives && <div role="status">
+          {cloudArchives.length === 0 ? <p>В облачном архиве пока нет покупок.</p> :
+            cloudArchives.map(snapshot => <article className="archive-entry" key={snapshot.id}>
+              <h3>{snapshot.sourceListName}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p>
+              <ul>{snapshot.items.map(item => <li key={item.ordinal}>
+                {item.name}{item.quantity != null || item.unit ? ` — ${[item.quantity, item.unit].filter(value => value != null).join(' ')}` : ''}
+              </li>)}</ul>
+            </article>)}
+        </div>}
+      </section>) : undefined}
       accountCloudLists={currentAccount ? (cloudMetadata ?? []) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}

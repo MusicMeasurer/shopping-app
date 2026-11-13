@@ -107,8 +107,9 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/Список завершён\. Сервер подтвердил операцию/)
   await expect(page.getByRole('button', { name }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
-  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
-  await expect(page.getByText(name).last()).toBeVisible()
+  await page.getByRole('button', { name: /^Архив,/ }).click()
+  const e4Archive = page.getByRole('region', { name: 'Архив покупок' })
+  await expect(e4Archive.getByRole('heading', { name, exact: true })).toBeVisible()
   // Acceptance must survive a fresh application boot, not only React state.
   tracePhase('reloading app')
   await page.reload()

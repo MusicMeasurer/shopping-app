@@ -147,7 +147,9 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: 'Удалить локальный профиль', exact: true }).click()
+    await page.getByRole('button', { name: 'Настройки' }).click()
     await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option')).toHaveCount(1)
+    await page.getByRole('button', { name: 'Закрыть', exact: true }).click()
     await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
   }
   await selectAccountList(guestList)
@@ -184,7 +186,15 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await removeAccountList()
   }
   await signOut(page)
-  if (integrated) await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
+  if (integrated) {
+    await expect(page.getByRole('button', { name: 'Действия со списком' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Новый список' })).toBeDisabled()
+    await expect(page.getByRole('button', { name: 'Удалить список', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: 'Настройки' }).click()
+    await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
+    await expect(page.getByRole('button', { name: 'Новый список' })).toBeEnabled()
+    await expect(page.getByRole('button', { name: 'Удалить список', exact: true })).toBeEnabled()
+  }
   await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
   // Offline restart is exercised for the local guest workspace. Authenticated

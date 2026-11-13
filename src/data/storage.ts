@@ -997,6 +997,33 @@ export function createStorage(name = 'shopping-app') {
       await tx.done
     },
     /** Persist an account edit and its cloud operation in one IndexedDB transaction. */
+    async saveAccountItemsToSync(accountId: string, items: Item[]): Promise<void> {
+      const listId = items[0]?.listId
+      if (!listId || items.some(item => item.listId !== listId))
+        throw new Error('Batch must belong to one list')
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+      try {
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, listId))
+        if (!mapping) throw new Error('Missing verified list mapping')
+        const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (intents.some(row => row.intent.remoteListId === mapping.remoteListId))
+          throw new Error('Completion pending; list edits are temporarily locked')
+        for (const item of items) {
+          const operation: CloudPendingOperation = {
+            kind: 'cloud-add', operationId: crypto.randomUUID(), localListId: listId,
+            remoteListId: mapping.remoteListId, itemId: item.id, item,
+          }
+          await tx.objectStore('accountItems').add({ key: accountKey(accountId, item.id), accountId, item })
+          await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation })
+        }
+        await tx.done
+      } catch (error) {
+        try { tx.abort() } catch { /* closed */ }
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
     async saveAccountEdit(accountId: string, operation: CloudPendingOperation): Promise<void> {
       if (!operation.itemId.trim() || !operation.localListId.trim() ||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operation.remoteListId) ||

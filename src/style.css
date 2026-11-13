@@ -198,13 +198,12 @@ nav.lists-grid .list-name-wrap .list-name{margin:0}
 .shopping-e4 nav.lists-grid{max-height:45dvh;overflow-y:auto;overflow-x:clip;overscroll-behavior:contain;align-content:start;isolation:isolate}
 
 /* The E4 header has its own top bar above the title and description. */
-.shopping-e4 > header {
-  display: block;
-}
 
-.shopping-e4 .account-header-control {
-  max-width: 100%;
-}
+
+.shopping-e4 > header { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: start; }
+.shopping-e4 > header > .account-header-control { grid-column: 2; max-width: 100%; }
+.profile-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.profile-controls select { max-width: 100%; }
 
 /* Keep long list names and cloud controls within the mobile viewport. */
 section[aria-label="Облачные списки"] {

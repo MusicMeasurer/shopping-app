@@ -1,6 +1,14 @@
 import type { Item } from '../domain/shopping'
 import type { Storage } from './storage'
 
+function validateCloudItem(item: Item) {
+  if (item.quantity !== undefined && (!Number.isFinite(item.quantity) || item.quantity <= 0 ||
+      item.quantity >= 1e9 || Number(item.quantity.toFixed(3)) !== item.quantity))
+    throw new Error('Введите положительное количество с точностью до трёх знаков после запятой')
+  if (item.unit !== undefined && item.unit.trim().length > 30)
+    throw new Error('Единица измерения должна содержать не более 30 символов')
+}
+
 /**
  * Account edits are atomic with their queued cloud operation when the list
  * has an explicit binding. Unbound lists stay local-only.
@@ -8,6 +16,11 @@ import type { Storage } from './storage'
 export function cloudAwareItemStore(storage: Storage, accountId: string, onQueued?: () => void) {
   return {
     read: () => storage.readAccountItems(accountId),
+    async saveMany(items: Item[]): Promise<void> {
+      items.forEach(validateCloudItem)
+      await storage.saveAccountItemsToSync(accountId, items)
+      onQueued?.()
+    },
     async save(item: Item): Promise<void> {
       const bindings = await storage.readAccountListMappings(accountId)
       const binding = bindings.find(row => row.localListId === item.listId)
@@ -15,11 +28,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         await storage.saveAccountItem(accountId, item)
         return
       }
-      if (item.quantity !== undefined && (!Number.isFinite(item.quantity) || item.quantity <= 0 ||
-          item.quantity >= 1e9 || Number(item.quantity.toFixed(3)) !== item.quantity))
-        throw new Error('Введите положительное количество с точностью до трёх знаков после запятой')
-      if (item.unit !== undefined && item.unit.trim().length > 30)
-        throw new Error('Единица измерения должна содержать не более 30 символов')
+      validateCloudItem(item)
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)
       if (known && known.remoteListId !== binding.remoteListId) {
