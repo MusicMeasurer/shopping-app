@@ -10,7 +10,7 @@ describe('versioned cloud E4 list metadata adapter', () => {
   it('validates rename and checks server revision', async () => {
     const c = fake({ operation_id: op, list_id: list.id, revision: 5, name: 'Дача', kind: 'permanent', position: 0 })
     expect(await sendCloudListChange(c as never, list, op, { action: 'rename', name: ' Дача ' })).toEqual({ ...list, name: 'Дача', revision: 5 })
-    expect(c.rpc).toHaveBeenCalledWith('apply_e4_list_metadata', { p_operation: op, p_list: list.id, p_expected_revision: 4, p_name: 'Дача' })
+    expect(c.rpc).toHaveBeenCalledWith('apply_e4_list_metadata', { p_operation: op, p_list: list.id, p_expected_revision: 4, p_name: 'Дача', p_kind: null, p_position: null })
   })
   it('rejects malformed input before network', async () => {
     const c = fake({})
