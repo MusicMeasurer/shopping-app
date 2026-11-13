@@ -5,6 +5,8 @@ on:
     paths:
       - 'cloud/drafts/**'
       - 'tests/recovery/**'
+      - 'src/data/e4-cloud-list-operations.ts'
+      - 'src/data/e4-cloud-list-operations.test.ts'
       - 'src/data/cloud-archive.ts'
       - 'src/data/cloud-archive.test.ts'
       - 'src/data/cloud-completion-preflight.ts'
