@@ -2,6 +2,8 @@ import type { SignOutGuard } from './signout-guard'
 import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 import { transitionAuthView, type AuthView } from './auth-view'
 
+const signOutTimeoutMs = 12000
+
 export interface AuthClient {
   getSession(): Promise<{ data: { session: SessionCandidate | null }; error: { message: string } | null }>
   onAuthStateChange(callback: (event: string, session: SessionCandidate | null) => void): {
@@ -18,6 +20,7 @@ export interface AuthClient {
 export function createAuthController(client: AuthClient, onChange: (view: AuthView) => void, guard?: SignOutGuard, verifyIdentity?: (session: SessionCandidate) => Promise<string | null>, restoreOffline?: (session: SessionCandidate) => Promise<string | null>) {
   let active = true
   let generation = 0
+  let pendingSignOut: ReturnType<AuthClient['signOut']> | undefined
   let signingOut = false
   let view: AuthView = { status: 'checking' }
   const emit = (next: AuthView) => {
@@ -49,6 +52,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       }
     } catch {
       if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+      // Keep the already verified workspace mounted during a transient failure.
+      // Cloud operations still verify identity before syncing.
+      if (sameAccount) return
       if (session && restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
         const offlineId = await restoreOffline(session).catch(() => null)
         if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
@@ -81,7 +87,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       if (error) throw new Error(error.message)
       await resolveSession(data.session, startedAt)
     } catch {
-      if (generation === startedAt) emit({ status: 'guest' })
+      if (generation === startedAt && view.status === 'checking') emit({ status: 'guest' })
     }
   }
 
@@ -93,12 +99,20 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     },
     async signOut() {
       // Hide account data before the remote sign-out request.
+      if (signingOut) return
       signingOut = true
       generation++
       emit({ status: 'checking' })
+      let timeout: ReturnType<typeof setTimeout> | undefined
       try {
         guard?.markPending()
-        const { error } = await client.signOut()
+        pendingSignOut ??= client.signOut().finally(() => { pendingSignOut = undefined })
+        const { error } = await Promise.race([
+          pendingSignOut,
+          new Promise<never>((_, reject) => {
+            timeout = setTimeout(() => reject(new Error('Sign-out timed out')), signOutTimeoutMs)
+          }),
+        ])
         if (error) throw new Error(error.message)
         guard?.clear()
         emit({ status: 'guest' })
@@ -108,6 +122,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
         emit({ status: 'checking' })
         throw error
       } finally {
+        clearTimeout(timeout)
         signingOut = false
       }
     },

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createAuthController, type AuthClient } from './auth-controller'
 import type { SessionCandidate } from './auth-scope'
+import { createSignOutGuard } from './signout-guard'
 import type { AuthView } from './auth-view'
 
 const id = '123e4567-e89b-42d3-a456-426614174000'
@@ -188,4 +189,55 @@ it('keeps the verified account mounted during a same-account session refresh', a
   await vi.waitFor(() => expect(verify).toHaveBeenCalledTimes(2))
   expect(views.slice(start)).toEqual([{ status: 'account', accountId: id }])
   controller.dispose()
+})
+
+it('keeps the current workspace on a temporary verification failure and drops a rejected identity', async () => {
+  const fake = fakeClient(session)
+  const views: AuthView[] = []
+  const verify = vi.fn<() => Promise<string | null>>().mockResolvedValue(id)
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+  await controller.initialize()
+  verify.mockRejectedValueOnce(new Error('connection stalled'))
+  fake.notify('SIGNED_IN', session)
+  await vi.waitFor(() => expect(verify).toHaveBeenCalledTimes(2))
+  expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+  verify.mockResolvedValueOnce(null)
+  fake.notify('TOKEN_REFRESHED', session)
+  await vi.waitFor(() => expect(views.at(-1)).toEqual({ status: 'guest' }))
+  controller.dispose()
+})
+
+it('times out a stalled sign-out and keeps the persistent guard until retry succeeds after restart', async () => {
+  vi.useFakeTimers()
+  try {
+    const values = new Map<string, string>()
+    const store = {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => { values.set(key, value) },
+      removeItem: (key: string) => { values.delete(key) },
+    }
+    const guard = createSignOutGuard(store)
+    const fake = fakeClient(session)
+    fake.client.signOut = () => new Promise(() => {})
+    const original = createAuthController(fake.client, () => {}, guard)
+    await original.initialize()
+    const stalled = expect(original.signOut()).rejects.toThrow('Sign-out timed out')
+    await vi.advanceTimersByTimeAsync(12000)
+    await stalled
+    expect(guard.isPending()).toBe(true)
+    original.dispose()
+
+    const restartedClient = fakeClient(session)
+    const views: AuthView[] = []
+    const restarted = createAuthController(restartedClient.client, view => views.push(view), createSignOutGuard(store))
+    await restarted.initialize()
+    expect(restartedClient.client.getSession).not.toHaveBeenCalled()
+    expect(views.at(-1)).toEqual({ status: 'checking' })
+    await restarted.signOut()
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    expect(guard.isPending()).toBe(false)
+    restarted.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
 })

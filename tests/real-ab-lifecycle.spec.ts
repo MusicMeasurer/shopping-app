@@ -145,8 +145,39 @@ test('real A → B → A isolates local purchases and preserves original guest a
     // Deletion is tested on a fully synced profile. Local visibility alone
     // does not prove that the cloud receipt has been committed to IndexedDB.
     await waitForCloudWrites()
+    const activeCard = page.getByRole('button', { name: listA, exact: true })
+    const product = page.getByRole('checkbox', { name: itemA })
+    // A transient auth failure on resume must leave the selected screen mounted.
+    const userRoute = '**/auth/v1/user'
+    await page.route(userRoute, route => route.fulfill({ status: 503, body: 'Unavailable' }))
+    const failedVerification = page.waitForResponse(response =>
+      response.url().endsWith('/auth/v1/user') && response.status() === 503)
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await failedVerification
+    await expect(activeCard).toHaveAttribute('aria-pressed', 'true')
+    await expect(product).toBeVisible()
+    await page.unroute(userRoute)
+    // A cold restart can verify again, then restore the same selected list.
+    await page.reload()
+    await expect(activeCard).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 })
+    await expect(product).toBeVisible()
+
+    const logoutRoute = '**/auth/v1/logout?*'
+    await page.route(logoutRoute, route => route.abort())
+    await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
+    await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Повторить выход' })).toBeEnabled({ timeout: 15000 })
+    await expect(product).toHaveCount(0)
+    await page.unroute(logoutRoute)
+    await page.reload()
+    await expect(page.getByText('Предыдущий выход не завершён.', { exact: false })).toBeVisible()
+    await page.getByRole('button', { name: 'Повторить выход' }).click()
+    await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+    await page.reload()
+    await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+  } else {
+    await signOut(page)
   }
-  await signOut(page)
   if (integrated) {
     await selectAccountList(listA)
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()

@@ -24,8 +24,9 @@ function clientWithUser(userId: string | null, getUserFails = false) {
 
 describe('server-verified account identity', () => {
   it('accepts a matching server identity', async () => {
-    const { client } = clientWithUser(id)
+    const { client, getUser } = clientWithUser(id)
     expect(await verifiedAccountId(client)).toBe(id)
+    expect(getUser).toHaveBeenCalledWith('token')
   })
   it('rejects a different user returned by the server', async () => {
     const { client } = clientWithUser(other)

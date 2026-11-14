@@ -17,7 +17,7 @@ import { createAccountSync } from './data/account-sync'
 import type { Storage } from './data/storage'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
-import { verifiedAccountId } from './data/verified-account'
+import { verifiedAccountId, verifySessionIdentity } from './data/verified-account'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
 
@@ -221,7 +221,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: () => client.auth.signOut(),
-    }, setView, guard, async () => verifiedAccountId(client), async session => {
+    }, setView, guard, session => verifySessionIdentity(client, session), async session => {
       if (navigator.onLine || guard.isPending()) return null
       const id = session.user?.id?.toLowerCase()
       const registry = await storage.readLocalProfiles()
@@ -724,7 +724,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
   </main>
   if (view.status === 'checking') return <main>
-    <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : 'Проверяем аккаунт…'}</p>
+    <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
     {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
   return <>

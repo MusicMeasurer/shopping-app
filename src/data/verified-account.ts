@@ -1,4 +1,4 @@
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js'
 import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 
 /**
@@ -9,13 +9,14 @@ import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-sco
 export async function verifiedAccountId(client: Pick<SupabaseClient, 'auth'>): Promise<string | null> {
   const { data: sessionData, error: sessionError } = await client.auth.getSession()
   if (sessionError || !sessionData.session) return null
-  const candidate = accountIdFromSessionCandidate(sessionData.session as SessionCandidate)
+  return verifySessionIdentity(client, sessionData.session as SessionCandidate).catch(() => null)
+}
+
+/** Distinguish a temporary connection failure from a rejected identity. */
+export async function verifySessionIdentity(client: Pick<SupabaseClient, 'auth'>, session: SessionCandidate): Promise<string | null> {
+  const candidate = accountIdFromSessionCandidate(session)
   if (!candidate) return null
-  try {
-    const { data: userData, error: userError } = await client.auth.getUser()
-    if (userError || !userData.user) return null
-    return userData.user.id.toLowerCase() === candidate ? candidate : null
-  } catch {
-    return null
-  }
+  const { data, error } = await client.auth.getUser(session.access_token)
+  if (isAuthRetryableFetchError(error)) throw error
+  return !error && data.user?.id.toLowerCase() === candidate ? candidate : null
 }
