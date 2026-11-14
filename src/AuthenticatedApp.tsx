@@ -276,29 +276,47 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     const accountId = currentAccount
     let disposed = false
     let running = false
+    let refreshRequested = false
     async function refresh() {
-      if (!client || disposed || running || document.visibilityState === 'hidden' || !navigator.onLine) return
+      if (!client || disposed || document.visibilityState === 'hidden' || !navigator.onLine) return
+      if (running) {
+        refreshRequested = true
+        return
+      }
       running = true
+      refreshRequested = false
       let imported = 0
       let failed = false
       try {
         if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
         const [mappings, owned] = await Promise.all([
           storage.readAccountListMappings(accountId),
-          fetchOwnedCloudLists(client, accountId),
+          fetchCloudListMetadata(client, accountId),
         ])
-        if (disposed || activeAccount.current !== accountId) return
-        const ownedIds = new Set(owned.map(row => row.id))
-        for (const mapping of mappings) {
-          if (disposed || activeAccount.current !== accountId) return
-          if (!ownedIds.has(mapping.remoteListId)) { failed = true; continue }
+        const stillActive = () => !disposed && activeAccount.current === accountId
+        const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
+        for (const row of owned) {
+          if (!stillActive()) return
+          const mapping = mappingsByRemoteId.get(row.id)
+          const localListId = mapping?.localListId ?? row.id
           try {
+            if (!mapping) await storage.bindAccountList(accountId, localListId, row.id)
             imported += await createAccountSync(storage, client, {
               accountId,
-              localListId: mapping.localListId as ListId,
-              remoteListId: mapping.remoteListId,
-              isActive: () => !disposed && activeAccount.current === accountId,
+              localListId,
+              remoteListId: row.id,
+              isActive: stillActive,
             }).importRemoteOnly()
+            if (!stillActive()) return
+            if (!mapping?.metadata) {
+              await storage.cacheAccountListMetadata(accountId, [row], { partial: true })
+              if (!stillActive()) return
+              setCloudBindings(current => ({ ...current, [localListId]: row.id }))
+              setCloudMetadata(current => current?.some(list => list.id === row.id) ? current
+                : [...(current ?? []), row].sort((a, b) => a.position - b.position))
+              setCloudLists(current => current.some(list => list.id === row.id) ? current
+                : [...current, { id: row.id, name: row.name }])
+            }
           } catch {
             // Keep processing other bound lists, but never import conflicting
             // items from this list or hide the error from the account owner.
@@ -318,6 +336,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           else if (imported > 0) setCloudRefreshStatus('Получено новых покупок из облака: ' + imported)
         }
         running = false
+        if (refreshRequested) void refresh()
       }
     }
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }

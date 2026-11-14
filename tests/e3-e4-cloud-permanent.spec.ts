@@ -43,14 +43,14 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 list creation is absent in authenticated mode').toBeVisible()
-  tracePhase('creating permanent list')
-  await page.getByRole('button', { name: 'Новый список' }).click()
-  await page.getByLabel('Название списка').fill(name)
-  await page.locator('#new-list-kind').selectOption('permanent')
-  await page.getByRole('button', { name: 'Создать', exact: true }).click()
-  await expect(page.getByRole('button', { name })).toBeVisible()
-  // Creation does not implicitly change the active shopping workspace list.
-  // Explicitly select the newly created, verified and bound account list.
+  tracePhase('creating a list from a second client while the app is open')
+  const { error: externalCreateError } = await client.rpc('create_e4_list', {
+    p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent',
+  })
+  expect(externalCreateError).toBeNull()
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 20000 })
+  // Discover and bind the existing server-owned list before allowing writes.
   tracePhase('selecting permanent list')
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
@@ -269,13 +269,26 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByLabel('Название списка').fill(otherList)
   await page.getByRole('button', { name: 'Создать', exact: true }).click()
+  const newList = page.getByRole('dialog', { name: 'Создать список' })
+  await page.getByRole('button', { name: otherList, exact: true }).waitFor()
+  await page.getByRole('button', { name: 'Новый список' }).click()
+  await newList.getByLabel('Название списка').fill(' ' + otherList.toLowerCase() + ' ')
+  await newList.getByRole('button', { name: 'Создать', exact: true }).click()
+  await expect(newList.getByRole('alert')).toHaveText('Список с таким названием уже существует.')
+  await newList.getByRole('button', { name: 'Отмена' }).click()
+  await expect(page.getByRole('button', { name: otherList, exact: true })).toHaveCount(1)
   const renamed = name + '_RENAMED'
   const metadata = page.getByRole('region', { name: 'Проверенные метаданные облачных списков' })
   const metadataRow = (listName: string) => metadata.getByRole('listitem').filter({ hasText: listName + ' —' })
   await page.getByRole('button', { name, exact: true }).click()
   await page.getByRole('button', { name: 'Действия со списком' }).click()
   await page.getByRole('menuitem', { name: /Переименовать/ }).click()
-  await page.getByRole('dialog', { name: 'Переименовать список' }).getByLabel('Название списка').fill(renamed)
+  const renameList = page.getByRole('dialog', { name: 'Переименовать список' })
+  await renameList.getByLabel('Название списка').fill(otherList.toLowerCase())
+  await renameList.getByRole('button', { name: 'Сохранить', exact: true }).click()
+  await expect(renameList.getByRole('alert')).toHaveText('Список с таким названием уже существует.')
+  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(1)
+  await renameList.getByLabel('Название списка').fill(renamed)
   await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toBeVisible()
   await page.getByRole('button', { name: /Тип списка: Постоянный/ }).click()

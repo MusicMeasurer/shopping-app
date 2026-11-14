@@ -173,7 +173,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     return () => { cancelled = true }
   }, [storage, accountId, guestProfileId])
   async function updateLocalList(action: 'rename' | 'kind', listId: string, value: string) {
-    if (accountId !== null || changingList) return
+    if (accountId !== null || changingList) return false
     setChangingList(true)
     try {
       if (action === 'rename') {
@@ -185,14 +185,15 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       }
       setLocalLists(guestProfileId ? await storage.readProfileLists(guestProfileId) : await storage.readLists())
       setListError(null)
-    } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось изменить список') }
+      return true
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Не удалось изменить список')
+      return false
+    }
     finally { setChangingList(false) }
   }
   async function changeList(action: 'rename' | 'kind', id: ListId, value: string) {
-    if (accountId === null) {
-      await updateLocalList(action, id, value)
-      return true
-    }
+    if (accountId === null) return updateLocalList(action, id, value)
     return await onChangeCloudList?.(id, action, value) ?? false
   }
 
@@ -388,9 +389,9 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
         </form>
       </section>
     </div>}
-    {renaming && canEditList && list && <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="rename-title" className="rename-dialog"><h2 id="rename-title">Переименовать список</h2><form onSubmit={event=>{event.preventDefault();if(renameName.trim()){void changeList('rename',list.id,renameName).then(saved=>{if(saved)setRenaming(false)})}}}><label htmlFor="rename-name">Название списка</label><div className="rename-input"><input id="rename-name" autoFocus maxLength={120} value={renameName} onChange={event=>setRenameName(event.target.value)}/><button type="button" aria-label="Очистить название" onClick={()=>setRenameName('')}>🧹</button></div><div className="dialog-buttons"><button type="button" onClick={()=>setRenaming(false)}>Отмена</button><button disabled={listActionsBusy||!renameName.trim()}>Сохранить</button></div></form></section></div>}
-    {cloudListError && !newListDialog && <p role="alert">{cloudListError}</p>}
-    {listError && <p role="alert" className="error">{listError}</p>}
+    {renaming && canEditList && list && <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="rename-title" className="rename-dialog"><h2 id="rename-title">Переименовать список</h2><form onSubmit={event=>{event.preventDefault();if(renameName.trim()){void changeList('rename',list.id,renameName).then(saved=>{if(saved)setRenaming(false)})}}}><label htmlFor="rename-name">Название списка</label><div className="rename-input"><input id="rename-name" autoFocus maxLength={120} value={renameName} onChange={event=>setRenameName(event.target.value)}/><button type="button" aria-label="Очистить название" onClick={()=>setRenameName('')}>🧹</button></div><div className="dialog-buttons"><button type="button" onClick={()=>setRenaming(false)}>Отмена</button><button disabled={listActionsBusy||!renameName.trim()}>Сохранить</button></div>{(cloudListError || listError) && <p role="alert">{cloudListError || listError}</p>}</form></section></div>}
+    {cloudListError && !newListDialog && !renaming && <p role="alert">{cloudListError}</p>}
+    {listError && !renaming && <p role="alert" className="error">{listError}</p>}
     {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
       <div className="section-heading"><div className="list-heading-copy"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>{canCompleteCloud && cloudCompletionOpen && onCompleteCloudList && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'marked_only')}}>Завершить: отмеченные</button>

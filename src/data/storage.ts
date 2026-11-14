@@ -395,15 +395,15 @@ export function createStorage(name = 'shopping-app') {
             tx.objectStore('profileItems').index('byProfile').getAll(guest.id),
             tx.objectStore('profileArchives').index('byProfile').getAll(guest.id),
           ])
-          if (records[1].length || records[2].length || records[0].some(row =>
-              !defaultLists.some(list => list.id === row.record.id && list.name === row.record.name))) {
+          const importableLists = records[0].map(row => row.record).filter(list =>
+            records[1].some(row => row.record.listId === list.id) ||
+            !defaultLists.some((defaultList, position) =>
+              defaultList.id === list.id && defaultList.name === list.name && list.kind === 'permanent' &&
+              defaultList.symbol === list.symbol && position === (list.position ?? position)))
+          if (importableLists.length || records[2].length) {
             await tx.objectStore('guestImports').add({
               key: guest.id, accountId: verifiedAccountId, operationId: crypto.randomUUID(), imported: false,
-              lists: records[0].map(row => row.record).filter(list =>
-                records[1].some(row => row.record.listId === list.id) ||
-                !defaultLists.some(defaultList => defaultList.id === list.id && defaultList.name === list.name && list.kind === 'permanent' &&
-                  defaultList.symbol === list.symbol && defaultLists.indexOf(defaultList) === (list.position ?? defaultLists.indexOf(defaultList)))), items: records[1].map(row => row.record),
-              archives: records[2].map(row => row.record),
+              lists: importableLists, items: records[1].map(row => row.record), archives: records[2].map(row => row.record),
             })
           }
         }
@@ -992,7 +992,7 @@ export function createStorage(name = 'shopping-app') {
     },
     async cacheAccountListMetadata(accountId: string, rows: readonly {
       id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number
-    }[]): Promise<void> {
+    }[], { partial = false } = {}): Promise<void> {
       if (rows.some(row => row.ownerId !== accountId)) throw new Error('Foreign list metadata')
       const byId = new Map(rows.map(row => [row.id, row]))
       const tx = (await database).transaction('accountListMappings', 'readwrite')
@@ -1001,7 +1001,7 @@ export function createStorage(name = 'shopping-app') {
         if (row) {
           const { name, kind, position } = row
           await tx.store.put({ ...mapping, metadata: { name, kind, position } })
-        } else if (mapping.metadata) {
+        } else if (!partial && mapping.metadata) {
           const { metadata: _metadata, ...withoutMetadata } = mapping
           await tx.store.put(withoutMetadata)
         }

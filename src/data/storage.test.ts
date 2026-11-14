@@ -596,6 +596,18 @@ it('stages a guest snapshot for the first verified account only', async () => {
   await storage.close()
 })
 
+it('does not stage untouched starter lists on first sign-in or a repeat sign-in', async () => {
+  const storage = createStorage('untouched-starters-' + crypto.randomUUID())
+  const guest = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  for (let signIn = 0; signIn < 2; signIn++) {
+    await storage.switchLocalProfile(guest)
+    await storage.ensureVerifiedAccountProfile('account-a')
+    expect(await storage.readGuestImports('account-a')).toEqual([])
+  }
+  await storage.close()
+})
+
 it('blocks deleting a cloud cache with queued edits and purges only that account after acknowledgment', async () => {
   const storage = createStorage('delete-account-cache-' + crypto.randomUUID())
   await storage.migrateLegacyGuestToProfile()
@@ -635,4 +647,22 @@ it('rejects duplicate active names within a profile and allows reuse after delet
   expect((await storage.readProfileLists(profile)).find(row => row.id === 'second')?.name).toBe('Для дома')
   await storage.deleteProfileList(profile, 'first')
   await storage.renameProfileList(profile, 'second', list.name)
+})
+
+it('caches a newly discovered cloud list without discarding other verified mappings', async () => {
+  const storage = createStorage('partial-list-metadata-' + crypto.randomUUID())
+  const accountId = 'account-a'
+  const first = crypto.randomUUID()
+  const second = crypto.randomUUID()
+  await storage.bindAccountList(accountId, first, first)
+  await storage.cacheAccountListMetadata(accountId, [
+    { id: first, ownerId: accountId, name: 'First list', kind: 'permanent', position: 0 },
+  ])
+  await storage.bindAccountList(accountId, second, second)
+  await storage.cacheAccountListMetadata(accountId, [
+    { id: second, ownerId: accountId, name: 'Second list', kind: 'oneoff', position: 1 },
+  ], { partial: true })
+  expect((await storage.readAccountListMappings(accountId))
+    .map(mapping => mapping.metadata?.name).sort()).toEqual(['First list', 'Second list'])
+  await storage.close()
 })
