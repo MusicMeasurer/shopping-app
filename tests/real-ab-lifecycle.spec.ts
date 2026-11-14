@@ -66,7 +66,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('dialog', { name: 'Удалить список?' })
       .getByRole('button', { name: 'Удалить', exact: true }).click()
     await expect(page.getByRole('region', { name: 'Облачный архив' })
-      .getByRole('status').filter({ hasText: /^Список удалён/ })).toBeVisible({ timeout: 20000 })
+      .getByRole('status').filter({ hasText: /^(Список удалён|Не удалось удалить)/ })).toHaveText(/^Список удалён/, { timeout: 20000 })
   }
 
   const archivedGuest = 'GUEST_ARCHIVE_' + crypto.randomUUID()
