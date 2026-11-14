@@ -19,6 +19,7 @@ export async function syncGuestImports(
     if (ids.some(id => typeof id !== 'string') || new Set(ids).size !== ids.length)
       throw new Error('Unconfirmed guest import')
     const lists = (await fetchCloudListMetadata(client, accountId)).filter(list => ids.includes(list.id))
+    if (lists.length !== ids.length) throw new Error('Guest import lists are missing from the verified account')
     const items = (await Promise.all(lists.map(list => fetchRemoteItems(client, list.id)))).flat()
     if (!await isActive()) return
     await storage.confirmGuestImport(batch, lists, items.map(row => ({

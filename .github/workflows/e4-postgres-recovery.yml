@@ -152,6 +152,7 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/029_e4_guest_import_RPC_CI_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/030_e4_unique_list_names_CI_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_guest_import.sql
+          python tests/recovery/test_e4_list_name_concurrency.py
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0

@@ -136,6 +136,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const confirmedMappings = await storage.readAccountListMappings(currentAccount)
       if (!cancelled) {
         setCloudMetadata(rows)
+        setCloudLists(rows.map(row => ({ id: row.id, name: row.name })))
         setCloudBindings(Object.fromEntries(confirmedMappings.map(row => [row.localListId, row.remoteListId])))
       }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
@@ -246,7 +247,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     return () => window.removeEventListener('online', recheck)
   }, [offlineAccount, controller])
 
-  // Account changes invalidate all cloud discovery and selection state.
+  // Clear transient controls on identity change; startup publishes verified
+  // metadata and bindings together after the snapshot has been restored.
   useEffect(() => {
     setCloudLists([])
     setCloudMetadata(null)
@@ -256,44 +258,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setSelectedRemote('')
     setCloudPreview(null)
     setDeletionReview(null)
-  }, [view.status === 'account' ? view.accountId : null])
-
-  // Restore existing bindings for the active verified account so completion
-  // actions are available after a restart without a manual cloud-list lookup.
-  useEffect(() => {
-    if (!currentAccount || readyAccount !== currentAccount) return
-    const accountId = currentAccount
-    let cancelled = false
-    void storage.readAccountListMappings(accountId).then(mappings => {
-      if (!cancelled && activeAccount.current === accountId)
-        setCloudBindings(Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])))
-    }).catch(() => {
-      if (!cancelled) setCloudRefreshStatus('Не удалось восстановить привязки облачных списков.')
-    })
-    return () => { cancelled = true }
-  }, [currentAccount, readyAccount, storage])
-
-  // Discover the verified account's active cloud lists on login/restart.
-  // Without this, the shopping workspace falls back to legacy defaults until
-  // the user manually opens the metadata panel.
-  useEffect(() => {
-    if (!client || !currentAccount || readyAccount !== currentAccount) return
-    const accountId = currentAccount
-    let cancelled = false
-    void (async () => {
-      try {
-        if (await verifiedAccountId(client) !== accountId) return
-        const rows = await fetchCloudListMetadata(client, accountId)
-        if (cancelled || activeAccount.current !== accountId ||
-            await verifiedAccountId(client) !== accountId) return
-        setCloudMetadata(rows)
-      } catch {
-        if (!cancelled && activeAccount.current === accountId)
-          setCloudMetadataError('Не удалось загрузить облачные списки. Повторите проверку.')
-      }
-    })()
-    return () => { cancelled = true }
-  }, [client, currentAccount, readyAccount])
+  }, [workspaceAccount])
 
   useEffect(() => {
     if (!currentAccount || readyAccount !== currentAccount || !cloudMetadata ||

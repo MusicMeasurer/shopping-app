@@ -587,6 +587,7 @@ it('stages a guest snapshot for the first verified account only', async () => {
   await storage.ensureVerifiedAccountProfile('account-a')
   const [batch] = await storage.readGuestImports('account-a')
   expect(batch.items).toEqual([item])
+  expect(batch.lists.map(list => list.id)).toEqual(['groceries'])
   await storage.switchLocalProfile(guest)
   await storage.ensureVerifiedAccountProfile('account-b')
   expect(await storage.readGuestImports('account-b')).toEqual([])
