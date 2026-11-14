@@ -309,7 +309,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: true }])
 
   const deletion = page.getByRole('dialog', { name: 'Удалить список?' })
-  const warning = deletion.getByText('Отмеченные товары не попадут в историю покупок.', { exact: false })
+  const warning = deletion.getByText('Отмеченные товары не попадут в историю покупок и будут удалены без записи в архив.', { exact: false })
   const openDeletion = () => page.getByRole('button', { name: 'Удалить список', exact: true }).click()
   await openDeletion()
   await expect(warning).toBeVisible()
