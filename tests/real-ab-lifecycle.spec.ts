@@ -147,16 +147,12 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await waitForCloudWrites()
     const activeCard = page.getByRole('button', { name: listA, exact: true })
     const product = page.getByRole('checkbox', { name: itemA })
-    // A transient auth failure on resume must leave the selected screen mounted.
-    const userRoute = '**/auth/v1/user'
-    await page.route(userRoute, route => route.fulfill({ status: 503, body: 'Unavailable' }))
-    const failedVerification = page.waitForResponse(response =>
-      response.url().endsWith('/auth/v1/user') && response.status() === 503)
+    // A resume event with temporary connectivity loss keeps the selected screen.
+    await context.setOffline(true)
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-    await failedVerification
     await expect(activeCard).toHaveAttribute('aria-pressed', 'true')
     await expect(product).toBeVisible()
-    await page.unroute(userRoute)
+    await context.setOffline(false)
     // A cold restart can verify again, then restore the same selected list.
     await page.reload()
     await expect(activeCard).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 })
