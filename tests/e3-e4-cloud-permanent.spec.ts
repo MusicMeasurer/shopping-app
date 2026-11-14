@@ -44,10 +44,13 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 list creation is absent in authenticated mode').toBeVisible()
   tracePhase('creating a list from a second client while the app is open')
-  const { error: externalCreateError } = await client.rpc('create_e4_list', {
-    p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent',
-  })
-  expect(externalCreateError).toBeNull()
+  const createExternal = async (listName: string) => {
+    const { error } = await client.rpc('create_e4_list', {
+      p_operation: crypto.randomUUID(), p_name: listName, p_kind: 'permanent',
+    })
+    expect(error).toBeNull()
+  }
+  await createExternal(name)
   await page.evaluate(() => window.dispatchEvent(new Event('online')))
   await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 20000 })
   // Discover and bind the existing server-owned list before allowing writes.
@@ -297,7 +300,20 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(metadataRow(otherList)).toBeVisible()
   await expect(metadataRow(renamed)).toBeVisible()
   await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
-  await metadataRow(renamed).getByRole('button', { name: 'Ниже', exact: true }).click()
+  // Relative order of our two lists must change even when another CI run
+  // has inserted a list in between.
+  const metadataRows = metadata.getByRole('listitem')
+  const maxMoves = await metadataRows.count()
+  for (let moves = 0; moves < maxMoves; moves++) {
+    const currentOrder = await metadataRows.allTextContents()
+    if (currentOrder.findIndex(text => text.startsWith(otherList + ' —')) <
+        currentOrder.findIndex(text => text.startsWith(renamed + ' —'))) break
+    const row = metadataRow(renamed)
+    const previous = (await row.textContent())?.match(/позиция (\d+) · версия (\d+)/)?.[0]
+    expect(previous).toBeTruthy()
+    await row.getByRole('button', { name: 'Ниже', exact: true }).click()
+    await expect(row).not.toContainText(previous!)
+  }
 
   const targetButtons = page.getByRole('navigation', { name: 'Списки покупок' })
     .getByRole('button', { name: new RegExp('^(' + renamed + '|' + otherList + ')$') })
