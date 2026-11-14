@@ -15,11 +15,13 @@ test('bound account queues an offline add across browser restart and syncs after
   const api = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
   const { error: authError } = await api.auth.signInWithPassword({ email, password })
   if (authError) throw authError
-  const { data: lists, error: listsError } = await api.from('shopping_lists').select('id,name').eq('name', 'SHOPPINGAPP_HTTP_TEST_A')
-  if (listsError) throw listsError
-  expect(lists?.length).toBe(1)
-  let listId = lists![0].id as string
   const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  let listId = ''
+  if (!integrated) {
+    const { data: list, error } = await api.from('shopping_lists').select('id').eq('name', 'SHOPPINGAPP_HTTP_TEST_A').single()
+    if (error) throw error
+    listId = list.id as string
+  }
   const listName = 'OFFLINE_LIST_' + crypto.randomUUID()
   const name = 'OFFLINE_BROWSER_' + crypto.randomUUID()
   let itemId: string | null = null
@@ -84,7 +86,7 @@ test('bound account queues an offline add across browser restart and syncs after
     }, { timeout: 30000 }).toBe(1)
   } finally {
     await context.setOffline(false)
-    if (!itemId) {
+    if (listId && !itemId) {
       const { data } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
       itemId = data?.[0]?.id ?? null
     }

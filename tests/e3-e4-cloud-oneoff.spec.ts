@@ -115,12 +115,9 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // Acceptance must survive a fresh application boot, not only React state.
   tracePhase('reloading app')
   await page.reload()
-  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
+  await expect(e4Archive.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 30000 })
+  await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off reappeared after reload').toHaveCount(0)
-  tracePhase('reopening archive')
-  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click()
-  await expect(page.getByText(name).last(),
-    'Completed one-off archive must persist after reload').toBeVisible()
   await client.auth.signOut()
 })
