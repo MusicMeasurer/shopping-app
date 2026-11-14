@@ -84,7 +84,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setOfflineLists({
           accountId: offlineAccount,
           bindings: Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])),
-          lists: mappings.filter(row => row.metadata && row.localListId === row.remoteListId)
+          lists: mappings.filter(row => row.metadata)
             .sort((a, b) => a.metadata!.position - b.metadata!.position)
             .map(row => ({ id: row.localListId, name: row.metadata!.name, kind: row.metadata!.kind })),
         })
@@ -107,27 +107,36 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       try {
         await syncGuestImports(storage, client, currentAccount,
           async () => !cancelled && await verifiedAccountId(client) === currentAccount)
-      } catch {
-        if (!cancelled) setCloudRefreshStatus('Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
+      } catch (error) {
+        if (!cancelled) setCloudRefreshStatus((error as { code?: string })?.code === '23505'
+          ? 'Перенос остановлен: в аккаунте уже есть список с таким названием. Локальные данные сохранены.'
+          : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
-      if (await storage.needsAccountCacheRestore(currentAccount)) {
-        const rows = await fetchCloudListMetadata(client, currentAccount)
+      const rows = await fetchCloudListMetadata(client, currentAccount)
+      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      const mappings = await storage.readAccountListMappings(currentAccount)
+      const restore = await storage.needsAccountCacheRestore(currentAccount)
+      const existing = new Set(mappings.filter(row => row.metadata).map(row => row.remoteListId))
+      const missing = rows.filter(row => !existing.has(row.id))
+      const hydrate = restore ? rows : missing
+      for (let offset = 0; offset < hydrate.length; offset += 8) {
         if (cancelled || await verifiedAccountId(client) !== currentAccount) return
-        // Discovery already validated ownership. Restore bounded batches so
-        // accounts with many lists do not pay serial round trips at sign-in.
-        for (let offset = 0; offset < rows.length; offset += 8) {
-          if (cancelled || await verifiedAccountId(client) !== currentAccount) return
-          await Promise.all(rows.slice(offset, offset + 8).map(async row => {
-            await storage.bindAccountList(currentAccount, row.id, row.id)
-            await createAccountSync(storage, client, {
-              accountId: currentAccount, localListId: row.id, remoteListId: row.id,
-              isActive: () => !cancelled,
-            }).importRemoteOnly()
-          }))
-        }
-        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
-        await storage.cacheAccountListMetadata(currentAccount, rows)
-        await storage.confirmAccountCacheRestore(currentAccount)
+        await Promise.all(hydrate.slice(offset, offset + 8).map(async row => {
+          const localListId = mappings.find(mapping => mapping.remoteListId === row.id)?.localListId ?? row.id
+          await storage.bindAccountList(currentAccount, localListId, row.id)
+          await createAccountSync(storage, client, {
+            accountId: currentAccount, localListId, remoteListId: row.id,
+            isActive: () => !cancelled,
+          }).importRemoteOnly()
+        }))
+      }
+      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      await storage.cacheAccountListMetadata(currentAccount, rows)
+      if (restore) await storage.confirmAccountCacheRestore(currentAccount)
+      const confirmedMappings = await storage.readAccountListMappings(currentAccount)
+      if (!cancelled) {
+        setCloudMetadata(rows)
+        setCloudBindings(Object.fromEntries(confirmedMappings.map(row => [row.localListId, row.remoteListId])))
       }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
     })().catch(() => {
@@ -230,7 +239,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (!offlineAccount || !controller) return
     const recheck = () => {
       if (navigator.onLine) {
-        setView({ status: 'checking' })
         void controller.initialize()
       }
     }
@@ -404,9 +412,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
       return true
-    } catch {
+    } catch (error) {
       if (activeAccount.current === accountId)
-        setCloudMetadataError('Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
+        setCloudMetadataError((error as { code?: string })?.code === '23505' ? 'Список с таким названием уже существует.' : 'Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
     } finally { setCloudMutationBusy(false) }
   }
 
@@ -427,10 +435,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(value => ({ id: value.id, name: value.name })))
       return true
-    } catch {
+    } catch (error) {
       if (activeAccount.current === accountId) {
-        setCloudMetadata(null)
-        setCloudMetadataError('Изменение не подтверждено сервером. Проверьте список заново; не повторяйте операцию до проверки состояния.')
+        if ((error as { code?: string })?.code === '23505') setCloudMetadataError('Список с таким названием уже существует.')
+        else setCloudMetadataError('Изменение не подтверждено сервером. Проверьте список заново; не повторяйте операцию до проверки состояния.')
       }
     } finally { setCloudMutationBusy(false) }
   }
@@ -776,10 +784,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
       onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind) => !!await addCloudList(name, kind) : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
-        const row = cloudMetadata.find(list => list.id === id)
+        const row = cloudMetadata.find(list => list.id === (cloudBindings[id] ?? id))
         if (!row) return false
         if (action === 'reorder') {
-          const target = cloudMetadata.find(list => list.id === value)
+          const target = cloudMetadata.find(list => list.id === (cloudBindings[value] ?? value))
           return target ? !!await changeCloudMetadata(row, { action, position: target.position }) : false
         }
         return !!await changeCloudMetadata(row, action === 'rename' ? { action, name: value.trim() } : { action, kind: value === 'oneoff' ? 'oneoff' : 'permanent' })
@@ -804,7 +812,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             </article>)}
         </div>}
       </section>) : undefined}
-      accountCloudLists={currentAccount ? (cloudMetadata ?? []) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
       headerActions={client ? <div className="account-header-control">
         {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
         <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>

@@ -31,7 +31,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
       return
     }
-    emit({ status: 'checking' })
+    const sameAccount = (view.status === 'account' || view.status === 'offline-account') &&
+      view.accountId === accountIdFromSessionCandidate(session)
+    if (!sameAccount) emit({ status: 'checking' })
     try {
       const verifiedId = await verifyIdentity(session)
       if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
@@ -61,7 +63,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
       emit(transitionAuthView(view, { type: 'SIGNED_OUT' }))
     } else {
-      void resolveSession(session, generation)
+      const startedAt = generation
+      if (verifyIdentity) setTimeout(() => { void resolveSession(session, startedAt) }, 0)
+      else void resolveSession(session, startedAt)
     }
   }).data.subscription
 

@@ -16,6 +16,17 @@ begin
     raise exception 'Guest import mismatch';
   end if;
   begin
+    perform public.import_e4_guest_profile(gen_random_uuid(), 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      jsonb_set(payload, '{lists,0,name}', '"  MIGRATED  "'::jsonb));
+    raise exception 'Conflicting name was accepted';
+  exception when unique_violation then
+    null;
+  end;
+  if (select count(*) from public.shopping_lists where name='Migrated') <> 1
+     or (select count(*) from public.e4_archive_items where name='Tea') <> 1 then
+    raise exception 'Name conflict changed stored data';
+  end if;
+  begin
     perform public.import_e4_guest_profile(op, 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', payload || '{"items":[]}'::jsonb);
     raise exception 'Changed replay accepted';
   exception when raise_exception then

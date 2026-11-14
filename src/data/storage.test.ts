@@ -621,3 +621,17 @@ it('blocks deleting a cloud cache with queued edits and purges only that account
   expect(await storage.needsAccountCacheRestore('account-a')).toBe(true)
   await storage.close()
 })
+
+it('rejects duplicate active names within a profile and allows reuse after deletion', async () => {
+  const storage = createStorage('list-names-' + crypto.randomUUID())
+  const profile = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const list = { id: 'first', name: 'Для дачи', symbol: '🛒', kind: 'permanent' as const, createdAt: 1 }
+  await storage.saveProfileList(profile, list)
+  await expect(storage.saveProfileList(profile, { ...list, id: 'duplicate', name: '  ДЛЯ ДАЧИ  ' })).rejects.toThrow('уже существует')
+  await storage.saveProfileList(profile, { ...list, id: 'second', name: 'Для дома' })
+  await expect(storage.renameProfileList(profile, 'second', 'для дачи')).rejects.toThrow('уже существует')
+  expect((await storage.readProfileLists(profile)).find(row => row.id === 'second')?.name).toBe('Для дома')
+  await storage.deleteProfileList(profile, 'first')
+  await storage.renameProfileList(profile, 'second', list.name)
+})

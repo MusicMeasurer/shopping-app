@@ -176,3 +176,16 @@ describe('auth controller', () => {
     expect(views).toEqual([])
   })
 })
+
+it('keeps the verified account mounted during a same-account session refresh', async () => {
+  const fake = fakeClient(session)
+  const views: AuthView[] = []
+  const verify = vi.fn(async () => id)
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+  await controller.initialize()
+  const start = views.length
+  fake.notify('TOKEN_REFRESHED', session)
+  await vi.waitFor(() => expect(verify).toHaveBeenCalledTimes(2))
+  expect(views.slice(start)).toEqual([{ status: 'account', accountId: id }])
+  controller.dispose()
+})

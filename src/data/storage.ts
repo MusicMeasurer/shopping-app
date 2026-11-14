@@ -3,6 +3,15 @@ import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfi
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
+function listNameKey(name: string) {
+  return name.trim().toLowerCase()
+}
+
+function assertFreeListName(lists: readonly { id: string; name: string }[], id: string, name: string) {
+  if (lists.some(list => list.id !== id && listNameKey(list.name) === listNameKey(name)))
+    throw new Error('Список с таким названием уже существует.')
+}
+
 export interface CloudCompletionIntent {
   operationId: string; accountId: string; localListId: string; remoteListId: string;
   expectedRevision: number; mode: 'marked_only' | 'all_purchased' | 'none_purchased' | 'delete_list';
@@ -390,7 +399,10 @@ export function createStorage(name = 'shopping-app') {
               !defaultLists.some(list => list.id === row.record.id && list.name === row.record.name))) {
             await tx.objectStore('guestImports').add({
               key: guest.id, accountId: verifiedAccountId, operationId: crypto.randomUUID(), imported: false,
-              lists: records[0].map(row => row.record), items: records[1].map(row => row.record),
+              lists: records[0].map(row => row.record).filter(list =>
+                records[1].some(row => row.record.listId === list.id) ||
+                !defaultLists.some(defaultList => defaultList.id === list.id && defaultList.name === list.name && list.kind === 'permanent' &&
+                  defaultList.symbol === list.symbol && defaultLists.indexOf(defaultList) === (list.position ?? defaultLists.indexOf(defaultList)))), items: records[1].map(row => row.record),
               archives: records[2].map(row => row.record),
             })
           }
@@ -633,6 +645,8 @@ export function createStorage(name = 'shopping-app') {
         tx.abort(); await tx.done.catch(() => {})
         throw new Error('Unknown local profile')
       }
+      const lists = await tx.objectStore('profileLists').index('byProfile').getAll(profileId)
+      assertFreeListName(lists.map(row => row.record), list.id, list.name)
       await tx.objectStore('profileLists').put({
         key: JSON.stringify([profileId, list.id]), profileId, record: list,
       })
@@ -664,6 +678,10 @@ export function createStorage(name = 'shopping-app') {
       const key = JSON.stringify([profileId, listId])
       const existing = await tx.store.get(key)
       if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
+      if (listNameKey(existing.record.name) !== listNameKey(trimmed)) {
+        const lists = await tx.store.index('byProfile').getAll(profileId)
+        assertFreeListName(lists.map(row => row.record), listId, trimmed)
+      }
       await tx.store.put({ ...existing, record: { ...existing.record, name: trimmed } })
       await tx.done
     },
@@ -746,7 +764,11 @@ export function createStorage(name = 'shopping-app') {
     },
     async readLists(): Promise<ShoppingListRecord[]> { return (await database).getAll('lists') },
     async saveList(list: ShoppingListRecord): Promise<void> {
-      await legacyMutation(['lists'], async tx => { await tx.objectStore('lists').put(list) })
+      await legacyMutation(['lists'], async tx => {
+        const store = tx.objectStore('lists')
+        assertFreeListName(await store.getAll(), list.id, list.name)
+        await store.put(list)
+      })
     },
     async renameList(listId: string, name: string): Promise<void> {
       const trimmed = name.trim()
@@ -755,6 +777,7 @@ export function createStorage(name = 'shopping-app') {
         const store = tx.objectStore('lists')
         const list = await store.get(listId)
         if (!list) throw new Error('Список не найден')
+        if (listNameKey(list.name) !== listNameKey(trimmed)) assertFreeListName(await store.getAll(), listId, trimmed)
         await store.put({ ...list, name: trimmed })
       })
     },

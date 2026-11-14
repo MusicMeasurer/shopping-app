@@ -130,7 +130,8 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     setContentSize(value)
     try { localStorage.setItem('shopping-content-size', value) } catch { /* storage disabled */ }
   }
-  const [active, setActive] = useState<ListId>('groceries')
+  const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
+  const [active, setActive] = useState<ListId>(() => { try { return localStorage.getItem(workspaceKey + ':list') ?? 'groceries' } catch { return 'groceries' } })
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [newListName, setNewListName] = useState('')
@@ -139,7 +140,16 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const [newListKind, setNewListKind] = useState<'permanent' | 'oneoff'>('permanent')
   const [changingList, setChangingList] = useState(false)
   const [archives, setArchives] = useState<ArchivedListRecord[]>([])
-  const [showArchive, setShowArchive] = useState(false)
+  const [showArchive, setShowArchive] = useState(() => { try { return accountId !== null && localStorage.getItem(workspaceKey + ':archive') === 'true' } catch { return false } })
+  useEffect(() => {
+    try { localStorage.setItem(workspaceKey + ':list', active); localStorage.setItem(workspaceKey + ':archive', String(showArchive)) }
+    catch { /* persistence unavailable */ }
+  }, [workspaceKey, active, showArchive])
+  useEffect(() => {
+    if (showArchive && cloudArchiveCount === undefined) onOpenCloudArchive?.()
+  // Restore once when this account workspace mounts.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuPosition, setMenuPosition] = useState({top:0,left:0})
   const [renaming, setRenaming] = useState(false)
@@ -276,7 +286,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if(dx<0&&!showArchive){openArchive();setMenuOpen(false)}
     if(dx>0&&showArchive)setShowArchive(false)
   }
-  const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null && accountCloudLists.length ? accountCloudLists.map(row => ({ ...row, symbol: '🛒' })) : lists)
+  const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? accountCloudLists.map(row => ({ ...row, symbol: '🛒' })) : lists)
   useEffect(() => {
     if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
   }, [visibleLists, active])
