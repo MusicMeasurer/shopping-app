@@ -303,6 +303,46 @@ test('E4 acceptance: deleting active list preserves its completed archive histor
   await expect(page.getByRole('heading', { name: 'Список для удаления' })).toBeVisible()
 })
 
+test('E4: local deletion warns only when purchases are marked', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const create = async (name: string) => {
+    await page.getByRole('button', { name: 'Новый список' }).click()
+    await page.getByRole('dialog').getByLabel('Название списка').fill(name)
+    await page.getByRole('dialog').getByRole('button', { name: 'Создать', exact: true }).click()
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  }
+  const remove = page.getByRole('button', { name: 'Удалить список', exact: true })
+  await create('Пустой тестовый список')
+  const emptyConfirmation = page.waitForEvent('dialog').then(async dialog => {
+    expect(dialog.message()).toBe('Удалить пустой список?')
+    await dialog.accept()
+  })
+  await remove.click()
+  await emptyConfirmation
+  await expect(page.getByRole('button', { name: 'Пустой тестовый список', exact: true })).toHaveCount(0)
+
+  await create('Тест отмеченных покупок')
+  await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Чай\nХлеб')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  const tea = page.getByRole('checkbox', { name: 'Чай' })
+  await expect(tea).toBeVisible()
+  await page.waitForTimeout(2500)
+  await tea.check()
+  await remove.click()
+  const warning = page.getByRole('dialog', { name: 'Удалить список?' })
+  await expect(warning.getByText(/без записи в архив/)).toBeVisible()
+  await warning.getByRole('button', { name: 'Отмена' }).click()
+  await expect(tea).toBeChecked()
+  await remove.click()
+  page.once('dialog', dialog => void dialog.accept())
+  await warning.getByRole('button', { name: 'Завершить отмеченные' }).click()
+  await expect(tea).toHaveCount(0)
+  await page.getByRole('button', { name: /Архив,/ }).click()
+  const archive = page.getByRole('region', { name: 'Архив покупок' })
+  await expect(archive.getByText('Чай', { exact: true })).toBeVisible()
+  await expect(archive.getByText('Хлеб', { exact: true })).toHaveCount(0)
+})
+
 test('E4 acceptance: offline reload preserves local lists and items', async ({ page, context }) => {
   await page.goto('/shopping-app/')
   await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Офлайн покупка')

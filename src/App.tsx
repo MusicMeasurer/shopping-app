@@ -192,14 +192,14 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if (await onCreateCloudList?.(newListName, newListKind)) setNewListDialog(false)
   }
 
-  async function completeLocalList() {
+  async function completeLocalList(markedOnly = false) {
     if (accountId !== null || !list || changingList || shopping.busy || shopping.loading) return
     if (!rows.length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
-    if (!window.confirm('Завершить список и перенести товары в архив?')) return
+    if (!window.confirm(markedOnly ? 'Завершить список и сохранить только отмеченные товары?' : 'Завершить список и перенести товары в архив?')) return
     setChangingList(true)
     try {
-      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now())
-      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now())
+      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), markedOnly)
+      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now(), markedOnly)
       const [updatedLists, snapshots] = await Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()])
       setLocalLists(updatedLists)
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
@@ -209,8 +209,8 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
-  async function deleteLocalList() {
-    if (accountId !== null || !list || changingList || !window.confirm('Удалить список и активные товары? Архив сохранится.')) return
+  async function deleteLocalList(confirmed = false) {
+    if (accountId !== null || !list || changingList || shopping.loading || shopping.busy || (!confirmed && !window.confirm(rows.length ? 'Удалить список и товары в нём?' : 'Удалить пустой список?'))) return
     setChangingList(true)
     try {
       if (guestProfileId) await storage.deleteProfileList(guestProfileId, list.id)
@@ -308,7 +308,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const itemStore = useMemo(() => accountId === null ? (guestProfileId ? profileItemStore(storage, guestProfileId) : itemStoreForAccount(storage, null)) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, guestProfileId, onQueued])
   const shopping = useShopping(itemStore, refreshRevision)
   const rows = itemsForList(shopping.items, active)
-  const [deleteCloudListId, setDeleteCloudListId] = useState<ListId | null>(null)
+  const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [cloudCompletionOpen, setCloudCompletionOpen] = useState(false)
   const canCompleteCloud = accountId !== null && !!cloudBoundLists[active] && !!onCompleteCloudList
   const canEditList = accountId === null || !!onChangeCloudList
@@ -318,8 +318,9 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     else if (canCompleteCloud) setCloudCompletionOpen(true)
   }
   function requestDeletion() {
-    if (accountId === null) void deleteLocalList()
-    else if (canCompleteCloud) setDeleteCloudListId(active)
+    if (shopping.loading || shopping.busy || listActionsBusy || completionBusy) return
+    if (accountId === null && !hasMarkedItems) void deleteLocalList()
+    else if (accountId === null || canCompleteCloud) setDeleteListId(active)
   }
   const editingItem = rows.find(item => item.id === editingId)
   const hasMarkedItems = rows.some(item => item.purchased)
@@ -386,21 +387,23 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'all_purchased')}}>Завершить: всё куплено</button>
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'none_purchased')}}>Завершить: ничего не куплено</button>
         <button type="button" onClick={()=>setCloudCompletionOpen(false)}>Отмена</button></div></section></div>}
-        {canCompleteCloud && onCompleteCloudList && deleteCloudListId === active && <div className="dialog-backdrop">
+        {(accountId === null || canCompleteCloud) && deleteListId === active && <div className="dialog-backdrop">
 
           <section role="dialog" aria-modal="true" aria-labelledby="cloud-delete-title" className="rename-dialog">
             <h2 id="cloud-delete-title">Удалить список?</h2>
-            <p>Активные товары будут удалены. Сохранённые покупки останутся в архиве.</p>
-            {hasMarkedItems && <p>Отмеченные товары не попадут в историю покупок. Чтобы сохранить их, сначала завершите список.</p>}
+            <p>{rows.length ? 'Товары из списка будут удалены.' : 'Список пуст.'}</p>
+            {hasMarkedItems && <p>Отмеченные товары не попадут в историю покупок и будут удалены без записи в архив. Чтобы сохранить их, сначала завершите список.</p>}
             <div className="dialog-buttons">
               {hasMarkedItems && <button type="button" onClick={() => {
-                setDeleteCloudListId(null)
-                onCompleteCloudList(active, 'marked_only')
+                setDeleteListId(null)
+                if (accountId === null) void completeLocalList(true)
+                else onCompleteCloudList?.(active, 'marked_only')
               }}>Завершить отмеченные</button>}
-              <button type="button" onClick={() => setDeleteCloudListId(null)}>Отмена</button>
+              <button type="button" onClick={() => setDeleteListId(null)}>Отмена</button>
               <button type="button" className="danger" disabled={shopping.loading || shopping.busy || completionBusy} onClick={() => {
-                setDeleteCloudListId(null)
-                onCompleteCloudList(active, 'delete_list', hasMarkedItems)
+                setDeleteListId(null)
+                if (accountId === null) void deleteLocalList(true)
+                else onCompleteCloudList?.(active, 'delete_list', hasMarkedItems)
               }}>Удалить</button>
             </div>
           </section>

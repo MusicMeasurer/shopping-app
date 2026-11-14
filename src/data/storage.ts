@@ -677,7 +677,7 @@ export function createStorage(name = 'shopping-app') {
       await tx.store.put({ ...existing, record: { ...existing.record, kind } })
       await tx.done
     },
-    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number): Promise<void> {
+    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, markedOnly = false): Promise<void> {
       const db = await database
       const tx = db.transaction(['profileLists', 'profileItems', 'profileArchives'], 'readwrite')
       const done = tx.done
@@ -689,9 +689,11 @@ export function createStorage(name = 'shopping-app') {
         const rows = (await tx.objectStore('profileItems').index('byProfile').getAll(profileId))
           .filter(row => row.record.listId === listId)
         if (!rows.length) throw new Error('Cannot archive an empty list')
+        const archivedItems = rows.map(row => row.record).filter(item => !markedOnly || item.purchased)
+        if (!archivedItems.length) throw new Error('Нет отмеченных товаров')
         const archive: ArchivedListRecord = {
           id: archiveId, sourceListId: listId, name: list.record.name,
-          kind: list.record.kind, completedAt, items: rows.map(row => row.record),
+          kind: list.record.kind, completedAt, items: archivedItems,
         }
         await tx.objectStore('profileArchives').add({
           key: JSON.stringify([profileId, archiveId]), profileId, record: archive,
@@ -783,12 +785,14 @@ export function createStorage(name = 'shopping-app') {
         await tx.objectStore('lists').delete(listId)
       })
     },
-    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number): Promise<void> {
+    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number, markedOnly = false): Promise<void> {
       await legacyMutation(['lists', 'items', 'archives'], async tx => {
         const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
         if (!items.length) throw new Error('Cannot archive an empty list')
+        const archivedItems = items.filter(item => !markedOnly || item.purchased)
+        if (!archivedItems.length) throw new Error('Нет отмеченных товаров')
         await tx.objectStore('archives').add({
-          id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items,
+          id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items: archivedItems,
         })
         for (const item of items) await tx.objectStore('items').delete(item.id)
         if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
