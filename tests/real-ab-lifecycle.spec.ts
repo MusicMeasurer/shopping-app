@@ -60,8 +60,28 @@ test('real A → B → A isolates local purchases and preserves original guest a
     return archive.getByRole('status').filter({ has: page.locator('ul, p') })
   }
 
+  async function waitForCloudWrites() {
+    await expect.poll(() => page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('shopping-app')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      try {
+        return await new Promise<number>((resolve, reject) => {
+          const request = db.transaction('accountOperations').objectStore('accountOperations').count()
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+      } finally {
+        db.close()
+      }
+    }), { timeout: 30000 }).toBe(0)
+  }
+
   async function removeAccountList() {
     if (!integrated) return
+    await waitForCloudWrites()
     await page.getByRole('button', { name: 'Удалить список', exact: true }).click()
     await page.getByRole('dialog', { name: 'Удалить список?' })
       .getByRole('button', { name: 'Удалить', exact: true }).click()
@@ -124,22 +144,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     // Deletion is tested on a fully synced profile. Local visibility alone
     // does not prove that the cloud receipt has been committed to IndexedDB.
-    await expect.poll(() => page.evaluate(async () => {
-      const db = await new Promise<IDBDatabase>((resolve, reject) => {
-        const request = indexedDB.open('shopping-app')
-        request.onsuccess = () => resolve(request.result)
-        request.onerror = () => reject(request.error)
-      })
-      try {
-        return await new Promise<number>((resolve, reject) => {
-          const request = db.transaction('accountOperations').objectStore('accountOperations').count()
-          request.onsuccess = () => resolve(request.result)
-          request.onerror = () => reject(request.error)
-        })
-      } finally {
-        db.close()
-      }
-    }), { timeout: 30000 }).toBe(0)
+    await waitForCloudWrites()
   }
   await signOut(page)
   if (integrated) {
