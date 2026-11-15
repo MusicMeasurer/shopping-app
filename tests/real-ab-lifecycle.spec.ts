@@ -82,7 +82,8 @@ test('real A → B → A isolates local purchases and preserves original guest a
   async function removeAccountList() {
     if (!integrated) return
     await waitForCloudWrites()
-    await page.getByRole('button', { name: 'Удалить список', exact: true }).click()
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Удалить список/ }).click()
     await page.getByRole('dialog', { name: 'Удалить список?' })
       .getByRole('button', { name: 'Удалить', exact: true }).click()
     await expect(page.getByRole('region', { name: 'Облачный архив' })
@@ -223,13 +224,17 @@ test('real A → B → A isolates local purchases and preserves original guest a
   }
   await signOut(page)
   if (integrated) {
-    await expect(page.getByRole('button', { name: 'Действия со списком' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Действия со списком', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Новый список' })).toBeDisabled()
-    await expect(page.getByRole('button', { name: 'Удалить список', exact: true })).toBeDisabled()
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeDisabled()
+    await page.getByRole('button', { name: 'Закрыть меню' }).click({ position: { x: 4, y: 4 } })
     await page.getByRole('button', { name: 'Настройки' }).click()
     await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: 'Мои покупки' })
     await expect(page.getByRole('button', { name: 'Новый список' })).toBeEnabled()
-    await expect(page.getByRole('button', { name: 'Удалить список', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeEnabled()
+    await page.getByRole('button', { name: 'Закрыть меню' }).click({ position: { x: 4, y: 4 } })
   }
   await selectAccountList(guestList)
   await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()

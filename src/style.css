@@ -36,8 +36,6 @@
 .shopping-e4.content-standard .item{font-size:15px}
 @media(max-width:390px){.shopping-e4 .app-topbar{grid-template-columns:38px minmax(0,1fr) auto;gap:5px}.shopping-e4 .settings-trigger{width:38px}.shopping-e4 .account-header-email{max-width:76px}.shopping-e4 .account-header-button{font-size:12px;padding:8px 6px}}
 
-.shopping-e4 nav.lists-grid .create-list-tile{border:2px dashed #9ebfae;background:#eef4ed;color:#25634c;text-align:center;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;font-weight:700}
-.shopping-e4 nav.lists-grid .create-list-tile span{font-size:30px;line-height:1}
 .shopping-e4 .account-dialog select{min-height:42px;width:100%;border:1px solid #d8dfd6;border-radius:10px;background:white;color:#203b30;padding:8px}
 
 
@@ -148,11 +146,6 @@ nav.lists-grid.standard .menu-trigger span{font-size:12px}
 .section-switch button.current{color:#25634c;font-size:16px}
 
 /* Stage 3: add-list tile and compact dialog */
-nav.lists-grid .create-list-tile{border:1px dashed #9ab8a4;background:#eef3eb;color:#25634c;justify-content:center;align-items:center;text-align:center;gap:3px}
-nav.lists-grid .create-plus{font-size:35px;line-height:1;font-weight:350;margin:0}
-nav.lists-grid.standard .create-plus{font-size:28px}
-nav.lists-grid .create-list-tile .list-name{font-size:12px;text-align:center}
-nav.lists-grid.standard .create-list-tile .list-name{font-size:10px}
 .create-dialog form{display:grid;gap:10px}
 .create-dialog form>label{margin:4px 0 0}
 .create-dialog input,.create-dialog select{width:100%;min-width:0;border:1px solid #d8dfd6;border-radius:12px;padding:12px;background:#fafbf8;color:#203b30;font-size:16px}
@@ -185,7 +178,7 @@ nav.lists-grid{margin-top:8px}
 .shopping-e4.content-large section[aria-labelledby="list-title"]{font-size:1.2em}
 .shopping-e4.content-large section[aria-labelledby="list-title"] h2{font-size:24px}
 .shopping-e4.content-large section[aria-labelledby="list-title"] .item span{font-size:1.2em}
-nav.lists-grid .list-select:not(.create-list-tile){display:grid;grid-template-rows:auto minmax(0,1fr);align-items:stretch}
+nav.lists-grid .list-select{display:grid;grid-template-rows:auto minmax(0,1fr);align-items:stretch}
 nav.lists-grid .list-name-wrap{display:flex;align-items:center;min-height:0;min-width:0;overflow:hidden}
 nav.lists-grid .list-name-wrap .list-name{margin:0}
 .list-toolbar button svg{display:block;flex:none}
@@ -201,8 +194,6 @@ nav.lists-grid .list-name-wrap .list-name{margin:0}
 /* The E4 header has its own top bar above the title and description. */
 
 
-.shopping-e4 > header { display: grid; grid-template-columns: 44px minmax(0, 1fr); align-items: start; }
-.shopping-e4 > header > .account-header-control { grid-column: 2; max-width: 100%; }
 .profile-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .profile-controls select { max-width: 100%; }
 
@@ -245,3 +236,37 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .workspace-dialog::backdrop{background:#17281f88}
 .workspace-dialog .dialog-buttons{flex-wrap:wrap}
 .workspace-dialog.e4-editor form button{min-height:44px}
+
+.shopping-e4 > header{display:block}
+.workspace-topbar{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.workspace-topbar .settings-trigger{margin:0}
+.workspace-topbar .account-header-control{margin-left:auto;max-width:calc(100% - 52px)}
+.workspace-topbar .account-header-email{max-width:none}
+
+.shopping-e4{--large-list-label:9.6px;--standard-list-label:11px}
+.shopping-e4 nav.lists-grid .list-name,.list-create-control .list-name{
+  font-family:inherit;font-size:var(--large-list-label);font-weight:700
+}
+.shopping-e4 nav.lists-grid.standard .list-name,.list-create-control.standard .list-name{
+  font-size:var(--standard-list-label)
+}
+.shopping-e4 nav .menu-trigger{border:0;border-radius:0;background:transparent;color:#203b30;font-size:23px;padding:0}
+.shopping-e4 nav .list-tile:has(.list-select[aria-pressed="true"]) .menu-trigger{color:white}
+.list-create-control{margin:-16px 0 20px}
+.list-create-control .create-list-tile{
+  display:inline-flex;align-items:center;gap:8px;min-height:44px;padding:4px 14px;color:#25634c;
+  background:#eef3eb;border:1px dashed #9ab8a4;border-radius:12px
+}
+.list-create-control .create-plus{font-size:24px}
+
+.shopping-e4 .section-heading{
+  display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;gap:8px
+}
+.list-heading-copy{min-width:0}
+.list-title-row{position:relative;width:100%;margin-bottom:7px}
+.list-title-row.has-rename{padding-right:34px}
+.list-title-row h2{overflow-wrap:anywhere}
+.list-title-edit{
+  position:absolute;left:var(--title-width,0px);top:0;width:34px;min-height:34px;
+  padding:0;background:transparent;color:#25634c;border:0;font-size:22px;line-height:1
+}

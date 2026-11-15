@@ -284,7 +284,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   const metadata = page.getByRole('region', { name: 'Проверенные метаданные облачных списков' })
   const metadataRow = (listName: string) => metadata.getByRole('listitem').filter({ hasText: listName + ' —' })
   await page.getByRole('button', { name, exact: true }).click()
-  await page.getByRole('button', { name: 'Действия со списком' }).click()
+  await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
   await page.getByRole('menuitem', { name: /Переименовать/ }).click()
   const renameList = page.getByRole('dialog', { name: 'Переименовать список' })
   await renameList.getByLabel('Название списка').fill(otherList.toLowerCase())
@@ -294,8 +294,8 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await renameList.getByLabel('Название списка').fill(renamed)
   await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toBeVisible()
-  await page.getByRole('button', { name: /Тип списка: Постоянный/ }).click()
-  await expect(page.getByRole('button', { name: /Тип списка: Разовый/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: /Разовый/ }).click()
   await page.getByText('Служебные операции облака', { exact: true }).click()
   await expect(metadataRow(otherList)).toBeVisible()
   await expect(metadataRow(renamed)).toBeVisible()
@@ -339,7 +339,10 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
 
   const deletion = page.getByRole('dialog', { name: 'Удалить список?' })
   const warning = deletion.getByText('Отмеченные товары не попадут в историю покупок и будут удалены без записи в архив.', { exact: false })
-  const openDeletion = () => page.getByRole('button', { name: 'Удалить список', exact: true }).click()
+  const openDeletion = async () => {
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Удалить список/ }).click()
+  }
   await openDeletion()
   await expect(warning).toBeVisible()
   await expect(deletion.getByRole('button', { name: 'Завершить отмеченные' })).toBeVisible()

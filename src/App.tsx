@@ -1,3 +1,5 @@
+import { version } from '../package.json'
+import { ListHeading } from './ListHeading'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { useEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
@@ -168,9 +170,9 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   // Restore once when this account workspace mounts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const [menuOpen, setMenuOpen] = useState(false)
+  const [menuTarget, setMenuTarget] = useState<{ id: ListId; source: 'card' | 'heading' } | null>(null)
   const [menuPosition, setMenuPosition] = useState({top:0,left:0})
-  const [renaming, setRenaming] = useState(false)
+  const [renaming, setRenaming] = useState<ListId | null>(null)
   const [renameName, setRenameName] = useState('')
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const [overId, setOverId] = useState<string | null>(null)
@@ -237,14 +239,14 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
-  async function deleteLocalList(confirmed = false) {
-    if (accountId !== null || !list || changingList || shopping.loading || shopping.busy || (!confirmed && !window.confirm(rows.length ? 'Удалить список и товары в нём?' : 'Удалить пустой список?'))) return
+  async function deleteLocalList(confirmed = false, id = active) {
+    if (accountId !== null || !id || changingList || shopping.loading || shopping.busy || (!confirmed && !window.confirm(itemsForList(shopping.items, id).length ? 'Удалить список и товары в нём?' : 'Удалить пустой список?'))) return
     setChangingList(true)
     try {
-      if (guestProfileId) await storage.deleteProfileList(guestProfileId, list.id)
-      else await storage.deleteList(list.id)
+      if (guestProfileId) await storage.deleteProfileList(guestProfileId, id)
+      else await storage.deleteList(id)
       const next = guestProfileId ? await storage.readProfileLists(guestProfileId) : await storage.readLists()
-      setLocalLists(orderLists(next)); setActive(next[0]?.id ?? ''); setMenuOpen(false)
+      setLocalLists(orderLists(next)); if (id === active) setActive(next[0]?.id ?? ''); setMenuTarget(null)
       await shopping.reload(); setListError(null)
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось удалить список') }
     finally { setChangingList(false) }
@@ -270,7 +272,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     drag.current.timer=setTimeout(()=>{
       if (drag.current.id!==id) return
       try {element.setPointerCapture(pointerId)} catch {/* pointer ended */}
-      drag.current.started=true;setDraggingId(id);setOverId(id);setMenuOpen(false)
+      drag.current.started=true;setDraggingId(id);setOverId(id);setMenuTarget(null)
       if(navigator.vibrate) navigator.vibrate(15)
     },380)
   }
@@ -288,12 +290,13 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     drag.current={timer:null,id:null,target:null,started:false,x:0,y:0};setDraggingId(null);setOverId(null)
   }
   function openArchive() {
+    setMenuTarget(null)
     setShowArchive(true)
     onOpenCloudArchive?.()
   }
   function startSwipe(event:ReactTouchEvent<HTMLElement>){
     const target=event.target as HTMLElement
-    if((accountId!==null&&!cloudArchive)||event.touches.length!==1||target.closest('input,textarea,select,[role="dialog"],.list-menu,.menu-anchor,.settings-panel,.dialog-backdrop')||menuOpen||settingsOpen||newListDialog||renaming||editingId){swipe.current=null;return}
+    if((accountId!==null&&!cloudArchive)||event.touches.length!==1||target.closest('input,textarea,select,[role="dialog"],.list-menu,.menu-anchor,.settings-panel,.dialog-backdrop')||menuTarget||settingsOpen||newListDialog||renaming||editingId){swipe.current=null;return}
     swipe.current={x:event.touches[0].clientX,y:event.touches[0].clientY}
   }
   function endSwipe(event:ReactTouchEvent<HTMLElement>){
@@ -301,7 +304,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if(!origin||event.changedTouches.length!==1||draggingId)return
     const dx=event.changedTouches[0].clientX-origin.x,dy=event.changedTouches[0].clientY-origin.y
     if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.2)return
-    if(dx<0&&!showArchive){openArchive();setMenuOpen(false)}
+    if(dx<0&&!showArchive){openArchive();setMenuTarget(null)}
     if(dx>0&&showArchive)setShowArchive(false)
   }
   const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? accountCloudLists.map(row => ({ ...row, symbol: '🛒' })) : lists)
@@ -341,27 +344,58 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const canCompleteCloud = accountId !== null && !!cloudBoundLists[active] && !!onCompleteCloudList
   const canEditList = accountId === null || !!onChangeCloudList
   const listActionsBusy = changingList || cloudListBusy
-  const completionDisabled = shopping.loading || shopping.busy || listActionsBusy || completionBusy ||
-    (accountId !== null && !canCompleteCloud)
-  function requestCompletion() {
-    if (!list || completionDisabled) return
-    if (!rows.length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
-    if (accountId === null || canCompleteCloud) setCloudCompletionOpen(true)
+  const listMutationBusy = shopping.loading || shopping.busy || listActionsBusy || completionBusy
+  function canComplete(id: ListId) {
+    return accountId === null || (!!cloudBoundLists[id] && !!onCompleteCloudList)
+  }
+  const completionDisabled = listMutationBusy || !canComplete(active)
+  function requestCompletion(id: ListId) {
+    if (listMutationBusy || !canComplete(id)) return
+    if (!itemsForList(shopping.items, id).length) {
+      window.alert('Список пуст. Его нельзя поместить в архив.')
+      return
+    }
+    setActive(id)
+    setCloudCompletionOpen(true)
   }
   function confirmCompletion(mode: Exclude<CompletionMode, 'delete_list'>) {
     setCloudCompletionOpen(false)
     if (accountId === null) void completeLocalList(mode)
     else if (canCompleteCloud) onCompleteCloudList?.(active, mode)
   }
-  function requestDeletion() {
-    if (shopping.loading || shopping.busy || listActionsBusy || completionBusy) return
-    if (accountId === null && !hasMarkedItems) void deleteLocalList()
-    else if (accountId === null || canCompleteCloud) setDeleteListId(active)
+  function requestDeletion(id: ListId) {
+    if (listMutationBusy || !canComplete(id)) return
+    if (accountId === null && !itemsForList(shopping.items, id).some(item => item.purchased)) {
+      void deleteLocalList(false, id)
+      return
+    }
+    setActive(id)
+    setDeleteListId(id)
   }
   const editingItem = rows.find(item => item.id === editingId)
   const hasMarkedItems = rows.some(item => item.purchased)
   const remaining = rows.filter(item => !item.purchased).length
   const list = visibleLists.find(list => list.id === active)
+  const menuList = menuTarget && visibleLists.find(row => row.id === menuTarget.id)
+  const renameList = renaming && visibleLists.find(row => row.id === renaming)
+  function openRename(row: (typeof visibleLists)[number]) {
+    setRenameName(row.name)
+    setRenaming(row.id)
+    setMenuTarget(null)
+  }
+  function menuTrigger(row: (typeof visibleLists)[number], source: 'card' | 'heading') {
+    const expanded = menuTarget?.id === row.id && menuTarget.source === source
+    return <button type="button" className="menu-trigger"
+      aria-label={source === 'heading' ? 'Действия со списком' : `Действия со списком «${row.name}»`}
+      aria-expanded={expanded} aria-haspopup="menu" onClick={event => {
+        const rect = event.currentTarget.getBoundingClientRect()
+        setMenuPosition({
+          top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340)),
+          left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)),
+        })
+        setMenuTarget(expanded ? null : { id: row.id, source })
+      }}>⋯</button>
+  }
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (accountId !== null && !cloudBoundLists[active]) { setItemError('Для добавления товаров сначала требуется безопасная привязка облачного списка.'); return }
@@ -375,7 +409,14 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     }
   }
   return <main className={`shopping-e4 content-${contentSize}`} onTouchStart={startSwipe} onTouchEnd={endSwipe}>
-    <header><button className="settings-trigger" type="button" aria-label="Настройки" aria-expanded={settingsOpen} onClick={openSettings}>☰</button><div className="header-copy"><div className="brand">ПОКУПКИ · E4 (разработка)</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></div>{headerActions}</header>
+    <header>
+      <div className="workspace-topbar">
+        <button className="settings-trigger" type="button" aria-label="Настройки"
+          aria-expanded={settingsOpen} onClick={openSettings}>☰</button>
+        {headerActions}
+      </div>
+      <div className="header-copy"><h1>Надо купить</h1><p>Версия {version}</p></div>
+    </header>
     {settingsOpen && <WorkspaceDialog className="settings-panel" label="Настройки приложения" onDismiss={() => setSettingsOpen(false)}>
       <h2>Настройки</h2>
       <fieldset><legend>Размер карточек списков</legend>
@@ -402,11 +443,35 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     {!showArchive && accountId !== null && !onCreateCloudList && <p role="status">Для создания, переименования и удаления облачных списков войдите в этот аккаунт. Товары в сохранённых списках доступны.</p>}
     {!showArchive && <nav className={`lists-grid ${cardSize}`} aria-label="Списки покупок" onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
       {visibleLists.map(row => <div className={`list-tile${draggingId===row.id?' dragging':''}${overId===row.id&&draggingId!==row.id?' drag-over':''}`} data-list-id={row.id} key={row.id} onPointerDown={event=>startPress(event,row.id)} onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
-        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={event=>{if(suppressClick.current){event.preventDefault();return}setActive(row.id);setName('');setMenuOpen(false)}}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
-        {active===row.id&&<div className="menu-anchor"><button type="button" className="menu-trigger" aria-label="Действия со списком" aria-expanded={menuOpen} aria-haspopup="menu" onClick={event=>{const rect=event.currentTarget.getBoundingClientRect();setMenuPosition({top:Math.max(8,Math.min(rect.bottom+8,window.innerHeight-340)),left:Math.max(12,Math.min(rect.right-280,window.innerWidth-292))});setMenuOpen(open=>!open)}}><span aria-hidden="true">•••</span></button>{createPortal(<><button type="button" className="menu-dismiss" aria-label="Закрыть меню" style={{visibility:menuOpen?'visible':'hidden'}} onClick={()=>setMenuOpen(false)}/><div className="list-menu" role="menu" aria-label="Действия со списком" style={{top:menuPosition.top,left:menuPosition.left,visibility:menuOpen?'visible':'hidden',opacity:menuOpen?1:0,pointerEvents:menuOpen?'auto':'none'}}><button disabled={!canEditList || listActionsBusy} role="menuitem" onClick={()=>{setRenameName(row.name);setRenaming(true);setMenuOpen(false)}}>✎ Переименовать</button><div className="menu-caption">ТИП СПИСКА</div><button disabled={!canEditList || listActionsBusy} role="menuitemradio" aria-checked={'kind' in row && row.kind==='oneoff'} onClick={()=>{setMenuOpen(false);void changeList('kind',row.id,'oneoff')}}>⌛ Разовый {'kind' in row && row.kind==='oneoff'?'✓':''}</button><button disabled={!canEditList || listActionsBusy} role="menuitemradio" aria-checked={'kind' in row && row.kind==='permanent'} onClick={()=>{setMenuOpen(false);void changeList('kind',row.id,'permanent')}}>∞ Постоянный {'kind' in row && row.kind==='permanent'?'✓':''}</button><div className="menu-separator"/><button disabled={completionDisabled} role="menuitem" onClick={()=>{setMenuOpen(false);requestCompletion()}}>✓ Завершить список</button><button disabled={accountId !== null && !canCompleteCloud} role="menuitem" className="danger" onClick={()=>{setMenuOpen(false);requestDeletion()}}>▤ Удалить список</button></div></>,document.body)}</div>}
+        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={event=>{if(suppressClick.current){event.preventDefault();return}setActive(row.id);setName('');setMenuTarget(null)}}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
+        <div className="menu-anchor">{menuTrigger(row, 'card')}</div>
       </div>)}
-      <div className="list-tile create-tile"><button type="button" className="list-select create-list-tile" aria-label="Новый список" disabled={accountId !== null && !onCreateCloudList} onClick={()=>{setNewListName('');setNewListKind('permanent');setNewListDialog(true)}}><span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span></button></div>
     </nav>}
+    {!showArchive && <div className={`list-create-control ${cardSize}`}>
+      <button type="button" className="create-list-tile" aria-label="Новый список"
+        disabled={accountId !== null && !onCreateCloudList}
+        onClick={() => { setNewListName(''); setNewListKind('permanent'); setNewListDialog(true) }}>
+        <span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span>
+      </button>
+    </div>}
+    {!showArchive && menuList && createPortal(<>
+      <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
+      <div className="list-menu" role="menu" aria-label="Действия со списком" style={menuPosition}>
+        <button disabled={!canEditList || listActionsBusy} role="menuitem" onClick={() => openRename(menuList)}>✎ Переименовать</button>
+        <div className="menu-caption">ТИП СПИСКА</div>
+        <button disabled={!canEditList || listActionsBusy} role="menuitemradio"
+          aria-checked={'kind' in menuList && menuList.kind === 'oneoff'}
+          onClick={() => { setMenuTarget(null); void changeList('kind', menuList.id, 'oneoff') }}>⌛ Разовый {'kind' in menuList && menuList.kind === 'oneoff' ? '✓' : ''}</button>
+        <button disabled={!canEditList || listActionsBusy} role="menuitemradio"
+          aria-checked={'kind' in menuList && menuList.kind === 'permanent'}
+          onClick={() => { setMenuTarget(null); void changeList('kind', menuList.id, 'permanent') }}>∞ Постоянный {'kind' in menuList && menuList.kind === 'permanent' ? '✓' : ''}</button>
+        <div className="menu-separator"/>
+        <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem"
+          onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>✓ Завершить список</button>
+        <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem" className="danger"
+          onClick={() => { setMenuTarget(null); requestDeletion(menuList.id) }}>▤ Удалить список</button>
+      </div>
+    </>, document.body)}
     {newListDialog && <div className="dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setNewListDialog(false) }}>
       <section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="new-list-title">
         <div className="account-dialog-heading"><h2 id="new-list-title">Создать список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
@@ -423,11 +488,18 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
         </form>
       </section>
     </div>}
-    {renaming && canEditList && list && <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="rename-title" className="rename-dialog"><h2 id="rename-title">Переименовать список</h2><form onSubmit={event=>{event.preventDefault();if(renameName.trim()){void changeList('rename',list.id,renameName).then(saved=>{if(saved)setRenaming(false)})}}}><label htmlFor="rename-name">Название списка</label><div className="rename-input"><input id="rename-name" autoFocus maxLength={120} value={renameName} onChange={event=>setRenameName(event.target.value)}/><button type="button" aria-label="Очистить название" onClick={()=>setRenameName('')}>🧹</button></div><div className="dialog-buttons"><button type="button" onClick={()=>setRenaming(false)}>Отмена</button><button disabled={listActionsBusy||!renameName.trim()}>Сохранить</button></div>{(cloudListError || listError) && <p role="alert">{cloudListError || listError}</p>}</form></section></div>}
+    {renameList && canEditList && <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="rename-title" className="rename-dialog"><h2 id="rename-title">Переименовать список</h2><form onSubmit={event=>{event.preventDefault();if(renameName.trim()){void changeList('rename',renameList.id,renameName).then(saved=>{if(saved)setRenaming(null)})}}}><label htmlFor="rename-name">Название списка</label><div className="rename-input"><input id="rename-name" autoFocus maxLength={120} value={renameName} onChange={event=>setRenameName(event.target.value)}/><button type="button" aria-label="Очистить название" onClick={()=>setRenameName('')}>🧹</button></div><div className="dialog-buttons"><button type="button" onClick={()=>setRenaming(null)}>Отмена</button><button disabled={listActionsBusy||!renameName.trim()}>Сохранить</button></div>{(cloudListError || listError) && <p role="alert">{cloudListError || listError}</p>}</form></section></div>}
     {cloudListError && !newListDialog && !renaming && <p role="alert">{cloudListError}</p>}
     {listError && !renaming && <p role="alert" className="error">{listError}</p>}
     {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
-      <div className="section-heading"><div className="list-heading-copy"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>{(accountId === null || canCompleteCloud) && cloudCompletionOpen && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
+      <ListHeading name={list?.name ?? 'Списки покупок'} remaining={remaining}
+        rename={list ? { disabled: !canEditList || !!listActionsBusy, open: () => openRename(list) } : undefined}
+        actions={list && <div className="list-toolbar" aria-label="Управление текущим списком">
+          <button type="button" aria-label="Завершить список" title="Завершить список"
+            disabled={completionDisabled} onClick={() => requestCompletion(list.id)}>✓</button>
+          {menuTrigger(list, 'heading')}
+        </div>}/>
+      {(accountId === null || canCompleteCloud) && cloudCompletionOpen && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('marked_only')}>Завершить: отмеченные</button>
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('all_purchased')}>Завершить: всё куплено</button>
         <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('none_purchased')}>Завершить: ничего не куплено</button>
@@ -452,11 +524,12 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
             </div>
           </section>
         </div>}
-      {accountId!==null&&completionStatus&&<p role="status">{completionStatus}</p>}{list&&<div className="list-toolbar" aria-label="Управление текущим списком"><button type="button" aria-label="Переименовать список" title="Переименовать" disabled={!canEditList || listActionsBusy} onClick={()=>{setRenameName(list.name);setRenaming(true)}}>✎</button><button type="button" aria-label={`Тип списка: ${'kind' in list&&list.kind==='oneoff'?'Разовый':'Постоянный'}. Изменить тип`} title="Изменить тип" disabled={!canEditList || listActionsBusy} onClick={()=>void changeList('kind',list.id,'kind' in list&&list.kind==='oneoff'?'permanent':'oneoff')}>{'kind' in list&&list.kind==='oneoff'?'⌛':'∞'}</button><button type="button" aria-label="Завершить список" title="Завершить список" disabled={completionDisabled} onClick={requestCompletion}>✓</button><button type="button" className="danger" aria-label="Удалить список" title="Удалить список" disabled={listActionsBusy || (accountId !== null && (!canCompleteCloud || completionBusy))} onClick={requestDeletion}><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M8 6V4h8v2m3 0-1 14H6L5 6m5 4v7m4-7v7"/></svg></button></div>}</div>
+
       {accountId !== null && list && !cloudBoundLists[active] && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
-      <form onSubmit={submit}><label htmlFor="item-name">Что нужно купить? (можно несколько строк)</label><div className="input-row"><textarea id="item-name" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Например, молоко" rows={2} disabled={shopping.loading || shopping.busy}/><button className="add" disabled={shopping.loading || shopping.busy || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>
+      <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy}/><button className="add" disabled={shopping.loading || shopping.busy || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>
       {shopping.error && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
       {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div> : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy} onClick={() => { setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
+      {accountId !== null && completionStatus && <p role="status">{completionStatus}</p>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
     {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) setEditingId(null) }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/><button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => setEditingId(null)} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
