@@ -45,7 +45,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     'E4 oneoff creation is absent in authenticated mode').toBeVisible()
   tracePhase('creating oneoff')
   await page.getByRole('button', { name: 'Новый список' }).click()
-  await page.getByLabel('Название списка').fill(name)
+  await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
   await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name })).toBeVisible()

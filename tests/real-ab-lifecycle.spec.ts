@@ -48,7 +48,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     if (!integrated) return
     if (create) {
       await page.getByRole('button', { name: 'Новый список', exact: true }).click()
-      await page.getByLabel('Название списка').fill(name)
+      await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
       await page.getByRole('button', { name: 'Создать', exact: true }).click()
     }
     await page.getByRole('button', { name, exact: true }).click()

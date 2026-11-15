@@ -51,8 +51,9 @@ test('E4: list type changes both ways, preserves items, persists and controls co
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
   await page.getByRole('menuitemradio', { name: /Постоянный/ }).click()
-  // Wait for the durable IndexedDB update, not just the menu closing.
-  await expect(page.getByRole('heading', { name: 'Для ремонта', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+  await expect(page.getByRole('menuitemradio', { name: /Постоянный/ })).toHaveAttribute('aria-checked', 'true')
+  await page.mouse.click(5, 5)
   await expect(page.getByText('Краска · 2 л')).toBeVisible()
   await page.reload()
   await page.getByRole('button', { name: 'Для ремонта', exact: true }).click()
@@ -173,7 +174,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
 
 test('E4: new-list tile opens a reversible creation dialog', async ({ page }) => {
   await page.goto('/shopping-app/')
-  await expect(page.locator('nav .create-tile')).toHaveCount(1)
+  await expect(page.locator('.list-create-control')).toHaveCount(1)
   await page.getByRole('button', { name: 'Новый список' }).click()
   await expect(page.getByRole('dialog', { name: 'Создать список' })).toBeVisible()
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Создать' })).toBeDisabled()
