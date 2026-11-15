@@ -32,6 +32,8 @@ test('browser E4: oneoff completion disappears from active lists but survives in
   await page.getByRole('dialog').getByLabel('Название списка').fill('Разовая проверка')
   await page.getByRole('dialog').getByLabel('Тип списка').selectOption('oneoff')
   await page.getByRole('dialog').getByRole('button', { name: 'Создать', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Создать список' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Разовая проверка' })).toBeVisible()
   await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Сыр')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await page.getByRole('checkbox', { name: 'Сыр' }).click()
