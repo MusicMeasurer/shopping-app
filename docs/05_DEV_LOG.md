@@ -1051,3 +1051,5 @@ Following user instruction to maintain `cloud/drafts/E4_CLOUD_CONTRACT_PREFLIGHT
 ## 2026-11-16 · Согласованный объём локального режима
 
 Илья согласовал ограничение текущего этапа: создание и завершение списков в локальной копии аккаунта после выхода пока недоступны. К обоим сценариям возвращаемся при работе над общими списками (E8).
+
+- Архив после выхода и общий диалог завершения опубликованы на [полигоне iPhone `/integration/`](https://musicmeasurer.github.io/shopping-app-preview/integration/?v=fffdd5b). [GitHub Pages](https://github.com/MusicMeasurer/shopping-app-preview/actions/runs/43759299803) завершился успешно. Публичный `revision.txt` подтвердил `fffdd5bab2f6a7d12c6cd89d5f8933c19dcbc763`. Ручная приёмка на iPhone впереди.
