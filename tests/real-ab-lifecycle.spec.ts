@@ -116,8 +116,8 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await add(page, archivedGuest)
     await page.getByRole('checkbox', { name: archivedGuest, exact: true }).click()
     await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toBeChecked()
-    page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+    await page.getByRole('button', { name: 'Завершить: отмеченные' }).click()
     await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toHaveCount(0)
   }
   await add(page, guest)
@@ -176,6 +176,10 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) {
     await selectAccountList(listA)
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
+    await page.getByRole('button', { name: /^Архив,/ }).click()
+    const cachedArchive = page.getByRole('region', { name: 'Архив покупок' })
+    await expect(cachedArchive.getByText(archivedGuest, { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Основные списки' }).click()
     await page.getByRole('button', { name: 'Настройки' }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: 'Удалить локальный профиль', exact: true }).click()
