@@ -1,10 +1,12 @@
 import { useLayoutEffect, useRef, type ReactNode } from 'react'
 
-export function ListHeading({ name, remaining, rename, actions }: {
+export function ListHeading({ name, remaining, rename, actions, indicators, syncHint }: {
   name: string
   remaining: number
   rename?: { disabled: boolean; open: () => void }
   actions?: ReactNode
+  indicators?: ReactNode
+  syncHint?: boolean
 }) {
   const title = useRef<HTMLHeadingElement>(null)
 
@@ -30,7 +32,11 @@ export function ListHeading({ name, remaining, rename, actions }: {
         {rename && <button type="button" className="list-title-edit" aria-label="Переименовать список"
           disabled={rename.disabled} onClick={rename.open}>✎</button>}
       </div>
-      <span className="count" aria-live="polite">Осталось: {remaining}</span>
+      <div className="list-heading-status">
+        <span className="count" aria-live="polite">Осталось: {remaining}</span>
+        {indicators}
+        {syncHint && <span className="list-sync-hint">Войдите для синхронизации</span>}
+      </div>
     </div>
     {actions}
   </div>

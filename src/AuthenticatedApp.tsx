@@ -772,7 +772,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         {error && <p role="alert">{error}</p>}
       </section>
     </div>}
-    <App storage={storage} accountId={workspaceAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+    <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
       onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind) => !!await addCloudList(name, kind) : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {

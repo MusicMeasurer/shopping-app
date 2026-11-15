@@ -137,6 +137,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   if (integrated) {
     await selectAccountList(guestList)
+    await expect(page.locator('.list-heading-status').getByRole('img', { name: 'Облачный список', exact: true })).toBeVisible()
     await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
     await expect((await openCloudArchive()).getByText(archivedGuest, { exact: true })).toBeVisible()
   } else await expect(page.getByRole('checkbox', { name: guest })).toHaveCount(0)
@@ -176,6 +177,9 @@ test('real A → B → A isolates local purchases and preserves original guest a
   }
   if (integrated) {
     await selectAccountList(listA)
+    const listStatus = page.locator('.list-heading-status')
+    await expect(listStatus.getByRole('img', { name: /синхронизация приостановлена/ })).toBeVisible()
+    await expect(listStatus.getByText('Войдите для синхронизации')).toBeVisible()
     await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
     await page.getByRole('button', { name: /^Архив,/ }).click()
     const cachedArchive = page.getByRole('region', { name: 'Архив покупок' })
