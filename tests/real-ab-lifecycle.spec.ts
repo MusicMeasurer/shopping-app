@@ -95,7 +95,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   const itemB = 'B_LIFECYCLE_' + crypto.randomUUID()
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки' }).click()
-  await expect(page.getByRole('region', { name: 'Настройки приложения' })).toBeVisible()
+  await expect(page.getByRole('dialog', { name: 'Настройки приложения' })).toBeVisible()
   await page.getByLabel('Стандартный (3 в ряд)').check()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await page.getByLabel('Стандартный', { exact: true }).check()

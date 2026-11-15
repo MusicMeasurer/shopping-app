@@ -1,3 +1,4 @@
+import { WorkspaceDialog } from './WorkspaceDialog'
 import { useEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
@@ -132,6 +133,13 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     try { return localStorage.getItem('shopping-content-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [draftCardSize, setDraftCardSize] = useState(cardSize)
+  const [draftContentSize, setDraftContentSize] = useState(contentSize)
+  function openSettings() {
+    setDraftCardSize(cardSize)
+    setDraftContentSize(contentSize)
+    setSettingsOpen(true)
+  }
   function chooseCardSize(value: 'large' | 'standard') {
     setCardSize(value)
     try { localStorage.setItem('shopping-card-size', value) } catch { /* storage disabled */ }
@@ -367,20 +375,29 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     }
   }
   return <main className={`shopping-e4 content-${contentSize}`} onTouchStart={startSwipe} onTouchEnd={endSwipe}>
-    <header><button className="settings-trigger" type="button" aria-label="Настройки" aria-expanded={settingsOpen} onClick={() => setSettingsOpen(open => !open)}>☰</button><div className="header-copy"><div className="brand">ПОКУПКИ · E4 (разработка)</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></div>{headerActions}</header>
-    {settingsOpen && <section className="settings-panel" aria-label="Настройки приложения">
+    <header><button className="settings-trigger" type="button" aria-label="Настройки" aria-expanded={settingsOpen} onClick={openSettings}>☰</button><div className="header-copy"><div className="brand">ПОКУПКИ · E4 (разработка)</div><h1>Всё по списку</h1><p>Меньше держать в голове. Больше успевать.</p></div>{headerActions}</header>
+    {settingsOpen && <WorkspaceDialog className="settings-panel" label="Настройки приложения" onDismiss={() => setSettingsOpen(false)}>
       <h2>Настройки</h2>
       <fieldset><legend>Размер карточек списков</legend>
-        <label><input type="radio" name="card-size" checked={cardSize === 'standard'} onChange={() => chooseCardSize('standard')}/> Стандартный (3 в ряд)</label>
-        <label><input type="radio" name="card-size" checked={cardSize === 'large'} onChange={() => chooseCardSize('large')}/> Крупный (2 в ряд)</label>
+        <label><input type="radio" name="card-size" checked={draftCardSize === 'standard'} onChange={() => setDraftCardSize('standard')}/> Стандартный (3 в ряд)</label>
+        <label><input type="radio" name="card-size" checked={draftCardSize === 'large'} onChange={() => setDraftCardSize('large')}/> Крупный (2 в ряд)</label>
       </fieldset>
       <fieldset><legend>Размер содержимого списка покупок</legend>
-        <label><input type="radio" name="content-size" checked={contentSize === 'standard'} onChange={() => chooseContentSize('standard')}/> Стандартный</label>
-        <label><input type="radio" name="content-size" checked={contentSize === 'large'} onChange={() => chooseContentSize('large')}/> Крупный</label>
+        <label><input type="radio" name="content-size" checked={draftContentSize === 'standard'} onChange={() => setDraftContentSize('standard')}/> Стандартный</label>
+        <label><input type="radio" name="content-size" checked={draftContentSize === 'large'} onChange={() => setDraftContentSize('large')}/> Крупный</label>
       </fieldset>
       {profileControls}
-      <button type="button" onClick={() => setSettingsOpen(false)}>Закрыть</button>
-    </section>}
+      <div className="dialog-buttons">
+        <button type="button" onClick={() => setSettingsOpen(false)}>
+          {draftCardSize === cardSize && draftContentSize === contentSize ? 'Закрыть' : 'Отмена'}
+        </button>
+        <button type="button" disabled={draftCardSize === cardSize && draftContentSize === contentSize} onClick={() => {
+          chooseCardSize(draftCardSize)
+          chooseContentSize(draftContentSize)
+          setSettingsOpen(false)
+        }}>Сохранить</button>
+      </div>
+    </WorkspaceDialog>}
     {(accountId === null || cloudArchive) && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-label="Основные списки" aria-current={!showArchive ? 'page' : undefined} className={!showArchive ? 'current' : ''} onClick={() => setShowArchive(false)}>●</button><button type="button" aria-label={`Архив, ${accountId === null ? archives.length : (cloudArchiveCount ?? 0)} завершённых списков`} aria-current={showArchive ? 'page' : undefined} className={showArchive ? 'current' : ''} onClick={openArchive}>●</button></div>}
     {!showArchive && accountId !== null && !onCreateCloudList && <p role="status">Для создания, переименования и удаления облачных списков войдите в этот аккаунт. Товары в сохранённых списках доступны.</p>}
     {!showArchive && <nav className={`lists-grid ${cardSize}`} aria-label="Списки покупок" onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
@@ -442,7 +459,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
       {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div> : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy} onClick={() => { setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
-    {!showArchive && editingItem && <section className="e4-editor" aria-label="Редактирование товара"><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/><button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => setEditingId(null)} disabled={shopping.busy}>Отмена</button></form></section>}
+    {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) setEditingId(null) }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/><button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => setEditingId(null)} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
   </main>
 }

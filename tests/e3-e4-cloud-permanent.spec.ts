@@ -113,7 +113,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
       has: page.getByRole('checkbox', { name: current, exact: false }),
     })
     await row.getByRole('button', { name: 'Изменить ' + current, exact: true }).click()
-    const editor = page.getByRole('region', { name: 'Редактирование товара' })
+    const editor = page.getByRole('dialog', { name: 'Редактирование товара' })
     await editor.getByLabel('Название').fill(name)
     await editor.getByLabel('Количество').fill(quantity)
     await editor.getByLabel('Единица измерения').fill(unit)

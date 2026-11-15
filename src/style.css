@@ -231,3 +231,17 @@ section[aria-label="Облачные списки"] li {
 section[aria-label="Облачные списки"] li > button {
   margin: 6px 6px 0 0;
 }
+
+/* Match the list-creation overlay and stay inside the visible area above the keyboard. */
+html:has(.workspace-dialog[open]){overflow:hidden}
+.shopping-e4 .workspace-dialog{
+  position:fixed;inset:var(--visible-top,0px) 0 auto;margin:0 auto;
+  top:calc(var(--visible-top,0px) + 12px);
+  width:min(calc(100% - 32px),420px);max-width:none;
+  max-height:calc(var(--visible-height,100dvh) - 24px);
+  overflow:auto;overscroll-behavior:contain;padding:20px;
+  border:1px solid #e1e6dd;border-radius:22px;color:inherit;background:white;
+}
+.workspace-dialog::backdrop{background:#17281f88}
+.workspace-dialog .dialog-buttons{flex-wrap:wrap}
+.workspace-dialog.e4-editor form button{min-height:44px}
