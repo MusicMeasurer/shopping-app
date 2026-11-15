@@ -286,3 +286,13 @@ html:has(.workspace-dialog[open]){overflow:hidden}
   padding:8px 12px;border:1px solid #cbd9cd;border-radius:10px;background:white;color:#203b30;text-align:left
 }
 .list-kind-options button[aria-checked="true"]{background:#eef3eb;border-color:#799d88}
+
+.shopping-e4 nav.lists-grid .list-symbol{font-size:28.75px}
+.shopping-e4 nav.lists-grid.standard .list-symbol{font-size:22.5px}
+.list-symbol-picker{display:flex;flex-wrap:wrap;gap:4px;margin:0;padding:0;border:0}
+.list-symbol-picker legend{margin-bottom:6px;font-size:13px;font-weight:650}
+.list-symbol-picker button{
+  min-width:38px;min-height:38px;padding:3px;border:1px solid #cbd9cd;
+  border-radius:8px;background:white;font-size:20px;line-height:1
+}
+.list-symbol-picker button[aria-pressed="true"]{border-color:#25634c;background:#e4f0e8}

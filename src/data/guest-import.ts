@@ -22,7 +22,8 @@ export async function syncGuestImports(
     if (lists.length !== ids.length) throw new Error('Guest import lists are missing from the verified account')
     const items = (await Promise.all(lists.map(list => fetchRemoteItems(client, list.id)))).flat()
     if (!await isActive()) return
-    await storage.confirmGuestImport(batch, lists, items.map(row => ({
+    const symbols = new Map(ids.map((id, index) => [id, batch.lists[index].symbol]))
+    await storage.confirmGuestImport(batch, lists.map(list => ({ ...list, symbol: symbols.get(list.id) })), items.map(row => ({
       version: row.version,
       item: { id: row.id, listId: row.listId, name: row.name, purchased: row.purchased,
         createdAt: Date.parse(row.createdAt), quantity: row.quantity, unit: row.unit },

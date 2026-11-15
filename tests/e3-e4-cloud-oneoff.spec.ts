@@ -47,10 +47,14 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
+  await page.getByRole('dialog').getByRole('button', { name: 'Подарок', exact: true }).click()
   await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
+  const cardSymbol = page.locator('.list-tile')
+    .filter({ has: page.getByRole('button', { name, exact: true }) }).locator('.list-symbol')
+  await expect(cardSymbol).toHaveText('🎁')
   tracePhase('selecting oneoff')
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()

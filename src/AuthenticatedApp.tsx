@@ -369,7 +369,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCloudLoading(false) }
   }
 
-  async function addCloudList(newCloudListName: string, newCloudListKind: 'permanent' | 'oneoff') {
+  async function addCloudList(newCloudListName: string, newCloudListKind: 'permanent' | 'oneoff', symbol?: string) {
     if (!client || !currentAccount || readyAccount !== currentAccount ||
         cloudMutationBusy || cloudLoading || !newCloudListName.trim()) return
     const accountId = currentAccount
@@ -391,6 +391,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         () => activeAccount.current === accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
+      if (symbol && symbol !== '🛒') {
+        try {
+          await storage.setAccountListSymbol(accountId, created.id, created.id, symbol)
+        } catch {
+          if (activeAccount.current === accountId)
+            setCloudMetadataError('Список создан. Не удалось сохранить пиктограмму на устройстве.')
+        }
+      }
+      if (activeAccount.current !== accountId) return
       setCloudBindings(previous => ({ ...previous, [created.id]: created.id }))
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
@@ -774,7 +783,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </div>}
     <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
-      onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind) => !!await addCloudList(name, kind) : undefined}
+      onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind, symbol) => !!await addCloudList(name, kind, symbol) : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
         const row = cloudMetadata.find(list => list.id === (cloudBindings[id] ?? id))
         if (!row) return false

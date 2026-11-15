@@ -1,3 +1,4 @@
+import { defaultListSymbol, ListSymbolPicker } from './ListSymbolPicker'
 import { ListIndicators, listKindLabels, type ListKind, type CloudStatus } from './ListIndicators'
 import { version } from '../package.json'
 import { ListHeading } from './ListHeading'
@@ -14,7 +15,7 @@ import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
 import type { LocalProfileRegistry } from './data/local-profiles'
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff') => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -130,7 +131,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, profileControls, cloudArchive, cloudArchiveCount, onOpenCloudArchive }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff') => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; profileControls?: ReactNode; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, profileControls, cloudArchive, cloudArchiveCount, onOpenCloudArchive }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; profileControls?: ReactNode; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
@@ -158,6 +159,21 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [listError, setListError] = useState<string | null>(null)
   const [newListName, setNewListName] = useState('')
+  const [newListSymbol, setNewListSymbol] = useState(defaultListSymbol)
+  const [editListSymbol, setEditListSymbol] = useState(defaultListSymbol)
+  const [symbolOnly, setSymbolOnly] = useState(false)
+  const [savingList, setSavingList] = useState(false)
+  const [accountSymbols, setAccountSymbols] = useState<Record<string, string>>({})
+  useEffect(() => {
+    if (!accountId) return
+    let cancelled = false
+    void storage.readAccountListMappings(accountId).then(rows => {
+      if (!cancelled) setAccountSymbols(Object.fromEntries(rows
+        .filter(row => row.symbol)
+        .map(row => [row.localListId, row.symbol!])))
+    }).catch(() => { if (!cancelled) setListError('Не удалось загрузить пиктограммы списков.') })
+    return () => { cancelled = true }
+  }, [storage, accountId, cloudBoundLists])
   const [creatingList, setCreatingList] = useState(false)
   const [newListDialog, setNewListDialog] = useState(false)
   const [newListKind, setNewListKind] = useState<'permanent' | 'oneoff'>('permanent')
@@ -197,13 +213,13 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     })
     return () => { cancelled = true }
   }, [storage, accountId, guestProfileId])
-  async function updateLocalList(action: 'rename' | 'kind', listId: string, value: string) {
+  async function updateLocalList(action: 'rename' | 'kind', listId: string, value: string | null, symbol?: string) {
     if (accountId !== null || changingList) return false
     setChangingList(true)
     try {
       if (action === 'rename') {
-        if (guestProfileId) await storage.renameProfileList(guestProfileId, listId, value)
-        else await storage.renameList(listId, value)
+        if (guestProfileId) await storage.renameProfileList(guestProfileId, listId, value, symbol)
+        else await storage.renameList(listId, value, symbol)
       } else {
         if (guestProfileId) await storage.changeProfileListKind(guestProfileId, listId, value as ShoppingListRecord['kind'])
         else await storage.changeListKind(listId, value as ShoppingListRecord['kind'])
@@ -225,7 +241,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   async function submitNewList(event: FormEvent) {
     if (accountId === null) return createLocalList(event)
     event.preventDefault()
-    if (await onCreateCloudList?.(newListName, newListKind)) setNewListDialog(false)
+    if (await onCreateCloudList?.(newListName, newListKind, newListSymbol)) setNewListDialog(false)
   }
 
   async function completeLocalList(mode: Exclude<CompletionMode, 'delete_list'>) {
@@ -312,7 +328,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if(dx<0&&!showArchive){openArchive();setMenuTarget(null)}
     if(dx>0&&showArchive)setShowArchive(false)
   }
-  const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? accountCloudLists.map(row => ({ ...row, symbol: '🛒' })) : lists.map(row => ({ ...row, kind: 'permanent' as const })))
+  const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })) : lists.map(row => ({ ...row, kind: 'permanent' as const })))
   useEffect(() => {
     if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
   }, [visibleLists, active])
@@ -321,7 +337,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if (accountId !== null || !localLists || creatingList) return
     const trimmed = newListName.trim()
     if (!trimmed || trimmed.length > 120) { setListError('Введите название списка от 1 до 120 символов.'); return }
-    const list: ShoppingListRecord = { id: crypto.randomUUID(), name: trimmed, symbol: '🛒', kind: newListKind, createdAt: Date.now(), position: localLists.length }
+    const list: ShoppingListRecord = { id: crypto.randomUUID(), name: trimmed, symbol: newListSymbol, kind: newListKind, createdAt: Date.now(), position: localLists.length }
     setCreatingList(true)
     try {
       if (guestProfileId) await storage.saveProfileList(guestProfileId, list)
@@ -393,7 +409,36 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       setTypeSaving(false)
     }
   }
-  function openRename(row: (typeof visibleLists)[number]) {
+  async function submitListEdit(event: FormEvent) {
+    event.preventDefault()
+    if (!renameList || !renameName.trim() || savingList) return
+    setSavingList(true)
+    setListError(null)
+    try {
+      const name = symbolOnly ? renameList.name : renameName.trim()
+      if (accountId === null) {
+        if (!await updateLocalList('rename', renameList.id, symbolOnly ? null : name, editListSymbol)) return
+      } else {
+        const savingSymbol = editListSymbol !== renameList.symbol
+        const remoteId = cloudBoundLists[renameList.id]
+        if (savingSymbol && !remoteId) throw new Error('Локальная копия списка ещё не готова.')
+        if (name !== renameList.name && !await changeList('rename', renameList.id, name)) return
+        if (savingSymbol) {
+          await storage.setAccountListSymbol(accountId, renameList.id, remoteId, editListSymbol)
+          setAccountSymbols(previous => ({ ...previous, [renameList.id]: editListSymbol }))
+        }
+      }
+      setRenaming(null)
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Не удалось сохранить список.')
+    } finally {
+      setSavingList(false)
+    }
+  }
+  function openRename(row: (typeof visibleLists)[number], onlySymbol = false) {
+    setListError(null)
+    setSymbolOnly(onlySymbol)
+    setEditListSymbol(row.symbol)
     setRenameName(row.name)
     setRenaming(row.id)
     setMenuTarget(null)
@@ -466,7 +511,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!showArchive && <div className={`list-create-control ${cardSize}`}>
       <button type="button" className="create-list-tile" aria-label="Новый список"
         disabled={accountId !== null && !onCreateCloudList}
-        onClick={() => { setNewListName(''); setNewListKind('permanent'); setNewListDialog(true) }}>
+        onClick={() => { setNewListName(''); setNewListKind('permanent'); setNewListSymbol(defaultListSymbol); setNewListDialog(true) }}>
         <span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span>
       </button>
     </div>}
@@ -474,6 +519,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
       <div className="list-menu" role="menu" aria-label="Действия со списком" style={menuPosition}>
         <button disabled={!canEditList || listActionsBusy} role="menuitem" onClick={() => openRename(menuList)}>✎ Переименовать</button>
+        <button disabled={!canEditList || listActionsBusy} role="menuitem"
+          onClick={() => openRename(menuList, true)}>Изменить пиктограмму</button>
         <button disabled={!canEditList || listActionsBusy} role="menuitem" onClick={() => {
           setTypeListId(menuList.id)
           setMenuTarget(null)
@@ -485,23 +532,43 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           onClick={() => { setMenuTarget(null); requestDeletion(menuList.id) }}>▤ Удалить список</button>
       </div>
     </>, document.body)}
-    {newListDialog && <div className="dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setNewListDialog(false) }}>
-      <section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="new-list-title">
+    {newListDialog && <WorkspaceDialog label="Создать список" className="create-dialog"
+      onDismiss={() => { if (!creatingList && !cloudListBusy) setNewListDialog(false) }}>
         <div className="account-dialog-heading"><h2 id="new-list-title">Создать список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
         <form onSubmit={event => void submitNewList(event)}>
           <label htmlFor="new-list-name">Название списка</label>
-          <input id="new-list-name" autoFocus value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} required disabled={creatingList || cloudListBusy || (accountId === null && localLists === null)}/>
+          <input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} required disabled={creatingList || cloudListBusy || (accountId === null && localLists === null)}/>
           <label htmlFor="new-list-kind">Тип списка</label>
           <select id="new-list-kind" value={newListKind} onChange={event => setNewListKind(event.target.value as 'permanent' | 'oneoff')}>
             <option value="permanent">Постоянный</option><option value="oneoff">Разовый</option>
           </select>
+          <ListSymbolPicker value={newListSymbol} onChange={setNewListSymbol} disabled={creatingList || cloudListBusy}/>
           <button disabled={creatingList || cloudListBusy || (accountId === null && localLists === null) || !newListName.trim()}>Создать</button>
           <button type="button" onClick={() => setNewListDialog(false)}>Отмена</button>
           {cloudListError && <p role="alert">{cloudListError}</p>}
         </form>
-      </section>
-    </div>}
-    {renameList && canEditList && <div className="dialog-backdrop"><section role="dialog" aria-modal="true" aria-labelledby="rename-title" className="rename-dialog"><h2 id="rename-title">Переименовать список</h2><form onSubmit={event=>{event.preventDefault();if(renameName.trim()){void changeList('rename',renameList.id,renameName).then(saved=>{if(saved)setRenaming(null)})}}}><label htmlFor="rename-name">Название списка</label><div className="rename-input"><input id="rename-name" autoFocus maxLength={120} value={renameName} onChange={event=>setRenameName(event.target.value)}/><button type="button" aria-label="Очистить название" onClick={()=>setRenameName('')}>🧹</button></div><div className="dialog-buttons"><button type="button" onClick={()=>setRenaming(null)}>Отмена</button><button disabled={listActionsBusy||!renameName.trim()}>Сохранить</button></div>{(cloudListError || listError) && <p role="alert">{cloudListError || listError}</p>}</form></section></div>}
+    </WorkspaceDialog>}
+    {renameList && canEditList && <WorkspaceDialog
+      label={symbolOnly ? 'Изменить пиктограмму' : 'Переименовать список'} className="create-dialog"
+      onDismiss={() => { if (!savingList) setRenaming(null) }}>
+      <h2>{symbolOnly ? 'Изменить пиктограмму' : 'Переименовать список'}</h2>
+      <form onSubmit={event => void submitListEdit(event)}>
+        {!symbolOnly && <>
+          <label htmlFor="rename-name">Название списка</label>
+          <div className="rename-input">
+            <input id="rename-name" maxLength={120} value={renameName} disabled={savingList}
+              onChange={event => setRenameName(event.target.value)}/>
+            <button type="button" aria-label="Очистить название" disabled={savingList} onClick={() => setRenameName('')}>🧹</button>
+          </div>
+        </>}
+        <ListSymbolPicker value={editListSymbol} onChange={setEditListSymbol} disabled={savingList}/>
+        <div className="dialog-buttons">
+          <button type="button" disabled={savingList} onClick={() => setRenaming(null)}>Отмена</button>
+          <button disabled={savingList || listActionsBusy || !renameName.trim()}>Сохранить</button>
+        </div>
+        {(listError || (!symbolOnly && cloudListError)) && <p role="alert">{listError || cloudListError}</p>}
+      </form>
+    </WorkspaceDialog>}
     {typeList && <WorkspaceDialog label="Изменить тип списка" className="list-kind-dialog"
       onDismiss={() => { if (!typeSaving) setTypeListId(null) }}>
       <h2>Изменить тип списка</h2>

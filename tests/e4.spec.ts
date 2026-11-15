@@ -454,3 +454,38 @@ test('E4: an inactive card menu renames only its own list and header actions sta
   await expect(page.locator('nav.lists-grid').getByRole('button', { name: 'Новый список' })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'Новый список' })).toBeVisible()
 })
+
+test('E4: list symbol is chosen at creation and saved from all edit entry points', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const select = (label: string) => page.getByRole('dialog').getByRole('button', { name: label, exact: true })
+  await page.getByRole('button', { name: 'Новый список' }).click()
+  await expect(select('Корзина')).toHaveAttribute('aria-pressed', 'true')
+  await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill('Уход')
+  await select('Флакон').click()
+  await select('Создать').click()
+
+  const symbol = page.locator('.list-tile').filter({ has: page.getByRole('button', { name: 'Уход', exact: true }) }).locator('.list-symbol')
+  await expect(symbol).toHaveText('🧴')
+  await page.getByRole('button', { name: 'Переименовать список', exact: true }).click()
+  await expect(select('Флакон')).toHaveAttribute('aria-pressed', 'true')
+  await select('Растение').click()
+  await select('Сохранить').click()
+  await expect(symbol).toHaveText('🪴')
+
+  for (const [menu, choice, expected] of [
+    ['Действия со списком «Уход»', 'Лапы', '🐾'],
+    ['Действия со списком', 'Лекарства', '💊'],
+  ]) {
+    await page.getByRole('button', { name: menu, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Изменить пиктограмму' }).click()
+    await select(choice).click()
+    await select('Сохранить').click()
+    await expect(symbol).toHaveText(expected)
+  }
+  await page.getByRole('button', { name: 'Переименовать список', exact: true }).click()
+  await select('Рюкзак').click()
+  await select('Отмена').click()
+  await expect(symbol).toHaveText('💊')
+  await page.reload()
+  await expect(symbol).toHaveText('💊')
+})

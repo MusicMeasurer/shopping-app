@@ -110,6 +110,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(newListDialog).toBeVisible()
   await newListDialog.getByLabel('Название списка', { exact: true }).fill(guestList)
   await newListDialog.getByLabel('Тип списка', { exact: true }).selectOption('permanent')
+  if (integrated) await newListDialog.getByRole('button', { name: 'Инструменты', exact: true }).click()
   await newListDialog.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name: guestList, exact: true })).toBeVisible()
   await page.getByRole('button', { name: integrated ? guestList : 'Продукты', exact: true }).click()
@@ -137,6 +138,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   if (integrated) {
     await selectAccountList(guestList)
+    await expect(page.locator('.list-tile').filter({ has: page.getByRole('button', { name: guestList, exact: true }) }).locator('.list-symbol')).toHaveText('🧰')
     await expect(page.locator('.list-heading-status').getByRole('img', { name: 'Облачный список', exact: true })).toBeVisible()
     await expect(page.getByRole('checkbox', { name: guest })).toBeVisible()
     await expect((await openCloudArchive()).getByText(archivedGuest, { exact: true })).toBeVisible()

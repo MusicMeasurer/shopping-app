@@ -20,7 +20,7 @@ export interface CloudCompletionIntent {
   itemIds: string[]; createdAt: number
 }
 interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
-interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string; metadata?: { name: string; kind: 'permanent' | 'oneoff'; position: number } }
+interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string; symbol?: string; metadata?: { name: string; kind: 'permanent' | 'oneoff'; position: number } }
 interface ScopedOperation {
   key: string
   accountId: string
@@ -434,7 +434,7 @@ export function createStorage(name = 'shopping-app') {
       return (await (await database).getAll('guestImports')).filter(row => row.accountId === accountId && !row.imported)
     },
     async confirmGuestImport(batch: GuestImport, mappings: readonly {
-      id: string; name: string; kind: 'permanent' | 'oneoff'; position: number
+      id: string; name: string; kind: 'permanent' | 'oneoff'; position: number; symbol?: string
     }[], items: readonly { item: Item; version: number }[]): Promise<void> {
       const tx = (await database).transaction(['guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions'], 'readwrite')
       const done = tx.done
@@ -444,10 +444,10 @@ export function createStorage(name = 'shopping-app') {
         if (!current || current.accountId !== batch.accountId || current.operationId !== batch.operationId)
           throw new Error('Guest import ownership changed')
         if (!current.imported) {
-          for (const { id, name, kind, position } of mappings) {
+          for (const { id, name, kind, position, symbol } of mappings) {
             const key = accountKey(batch.accountId, id)
             await tx.objectStore('accountListMappings').add({
-              key, accountId: batch.accountId, localListId: id, remoteListId: id, metadata: { name, kind, position },
+              key, accountId: batch.accountId, localListId: id, remoteListId: id, symbol, metadata: { name, kind, position },
             })
           }
           for (const { item, version } of items) {
@@ -682,19 +682,19 @@ export function createStorage(name = 'shopping-app') {
         await done
       } catch (error) {tx.abort();await done.catch(()=>{});throw error}
     },
-    async renameProfileList(profileId: string, listId: string, name: string): Promise<void> {
-      const trimmed = name.trim()
-      if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+    async renameProfileList(profileId: string, listId: string, name: string | null, symbol?: string): Promise<void> {
+      const trimmed = name?.trim()
+      if (name !== null && (!trimmed || trimmed.length > 120)) throw new Error('Введите название списка от 1 до 120 символов.')
       const db = await database
       const tx = db.transaction('profileLists', 'readwrite')
       const key = JSON.stringify([profileId, listId])
       const existing = await tx.store.get(key)
       if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
-      if (listNameKey(existing.record.name) !== listNameKey(trimmed)) {
+      if (trimmed !== undefined && listNameKey(existing.record.name) !== listNameKey(trimmed)) {
         const lists = await tx.store.index('byProfile').getAll(profileId)
         assertFreeListName(lists.map(row => row.record), listId, trimmed)
       }
-      await tx.store.put({ ...existing, record: { ...existing.record, name: trimmed } })
+      await tx.store.put({ ...existing, record: { ...existing.record, name: trimmed ?? existing.record.name, symbol: symbol ?? existing.record.symbol } })
       await tx.done
     },
     async changeProfileListKind(profileId: string, listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
@@ -781,15 +781,15 @@ export function createStorage(name = 'shopping-app') {
         await store.put(list)
       })
     },
-    async renameList(listId: string, name: string): Promise<void> {
-      const trimmed = name.trim()
-      if (!trimmed || trimmed.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+    async renameList(listId: string, name: string | null, symbol?: string): Promise<void> {
+      const trimmed = name?.trim()
+      if (name !== null && (!trimmed || trimmed.length > 120)) throw new Error('Введите название списка от 1 до 120 символов.')
       await legacyMutation(['lists'], async tx => {
         const store = tx.objectStore('lists')
         const list = await store.get(listId)
         if (!list) throw new Error('Список не найден')
-        if (listNameKey(list.name) !== listNameKey(trimmed)) assertFreeListName(await store.getAll(), listId, trimmed)
-        await store.put({ ...list, name: trimmed })
+        if (trimmed !== undefined && listNameKey(list.name) !== listNameKey(trimmed)) assertFreeListName(await store.getAll(), listId, trimmed)
+        await store.put({ ...list, name: trimmed ?? list.name, symbol: symbol ?? list.symbol })
       })
     },
     async changeListKind(listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
@@ -1027,6 +1027,17 @@ export function createStorage(name = 'shopping-app') {
           await tx.store.put(withoutMetadata)
         }
       }
+      await tx.done
+    },
+    async setAccountListSymbol(accountId: string, localListId: string, remoteListId: string, symbol: string): Promise<void> {
+      const key = accountKey(accountId, localListId)
+      const tx = (await database).transaction('accountListMappings', 'readwrite')
+      const row = await tx.store.get(key)
+      if (!row || row.remoteListId !== remoteListId) {
+        await tx.done
+        throw new Error('Локальная копия списка ещё не готова.')
+      }
+      await tx.store.put({ ...row, symbol })
       await tx.done
     },
     async bindAccountList(accountId: string, localListId: string, remoteListId: string): Promise<void> {
