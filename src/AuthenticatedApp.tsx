@@ -712,7 +712,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const snapshots = await fetchCloudArchive(client)
       const { data: { user: stillCurrent }, error: recheckError } = await client.auth.getUser()
       if (recheckError || stillCurrent?.id !== currentAccount) throw new Error('Аккаунт изменился')
-      setCloudArchives(snapshots)
+      if (activeAccount.current !== currentAccount) return
+      await storage.cacheAccountArchive(currentAccount, snapshots)
+      if (activeAccount.current === currentAccount) setCloudArchives(snapshots)
     } catch (err) {
       setCloudArchives(null)
       setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
@@ -723,6 +725,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudArchiveError('')
     setCompletionPreflight('')
   }, [workspaceAccount])
+
+  useEffect(() => {
+    if (currentAccount && readyAccount === currentAccount) void loadCloudArchive()
+    // Refresh once when this account's workspace is ready.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentAccount, readyAccount])
 
   async function signOut() {
     if (!controller || busy) return

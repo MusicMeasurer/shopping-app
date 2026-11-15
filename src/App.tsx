@@ -6,6 +6,7 @@ import { useShopping } from './hooks/useShopping'
 import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
 import { itemStoreForAccount } from './data/account-item-store'
 import { cloudAwareItemStore } from './data/cloud-aware-item-store'
+import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
 import type { LocalProfileRegistry } from './data/local-profiles'
@@ -17,7 +18,7 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
   const [upgradeBlocked, setUpgradeBlocked] = useState(false)
   const [registry, setRegistry] = useState<LocalProfileRegistry | null>(null)
   const [savedAccount, setSavedAccount] = useState<{
-    profileId: string; id: string; bindings: Record<string, string>;
+    profileId: string; id: string; bindings: Record<string, string>; archive: CloudArchiveCompletion[] | null;
     lists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[]
   } | null>(null)
   useEffect(() => {
@@ -25,12 +26,12 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
     const id = profile?.cloudAccountId
     if (!id || !profile) { setSavedAccount(null); return }
     let cancelled = false
-    void storage.readAccountListMappings(id).then(mappings => {
+    void Promise.all([storage.readAccountListMappings(id), storage.readAccountArchive(id)]).then(([mappings, archive]) => {
       if (cancelled) return
       const bindings = Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId]))
       const lists = mappings.filter(row => row.metadata).sort((a, b) => a.metadata!.position - b.metadata!.position)
         .map(row => ({ id: row.localListId, name: row.metadata!.name, kind: row.metadata!.kind }))
-      setSavedAccount({ profileId: profile.id, id, bindings, lists })
+      setSavedAccount({ profileId: profile.id, id, bindings, lists, archive })
     }).catch(() => { if (!cancelled) setStartupError('Не удалось открыть локальный профиль аккаунта.') })
     return () => { cancelled = true }
   }, [storage, accountId, registry, guestProfile])
@@ -110,7 +111,16 @@ export function App({ storage, accountId = null, onQueued, refreshRevision = 0, 
     {accountId === null && profileActionError && <p role="alert">{profileActionError}</p>}
   </>
   return <>
-    {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} completionBusy={completionBusy} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={headerActions} profileControls={profileControls} cloudArchive={cloudArchive} cloudArchiveCount={cloudArchiveCount} onOpenCloudArchive={onOpenCloudArchive} />}
+    {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} completionBusy={completionBusy} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={headerActions} profileControls={profileControls} cloudArchive={localAccount ? <section aria-label="Архив покупок">
+      <h2>Завершённые списки</h2>
+      {localAccount.archive === null ? <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>
+        : localAccount.archive.length === 0 ? <p>Архив пока пуст.</p>
+        : localAccount.archive.map(snapshot => <article className="archive-entry" key={snapshot.id}>
+          <h3>{snapshot.sourceListName}</h3>
+          <p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p>
+          <ul>{snapshot.items.map(item => <li key={item.ordinal}>{item.name}{item.quantity != null || item.unit ? ` — ${[item.quantity, item.unit].filter(value => value != null).join(' ')}` : ''}</li>)}</ul>
+        </article>)}
+    </section> : cloudArchive} cloudArchiveCount={localAccount ? localAccount.archive?.length : cloudArchiveCount} onOpenCloudArchive={localAccount ? undefined : onOpenCloudArchive} />}
   </>
 }
 
@@ -203,14 +213,13 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     if (await onCreateCloudList?.(newListName, newListKind)) setNewListDialog(false)
   }
 
-  async function completeLocalList(markedOnly = false) {
+  async function completeLocalList(mode: Exclude<CompletionMode, 'delete_list'>) {
     if (accountId !== null || !list || changingList || shopping.busy || shopping.loading) return
     if (!rows.length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
-    if (!window.confirm(markedOnly ? 'Завершить список и сохранить только отмеченные товары?' : 'Завершить список и перенести товары в архив?')) return
     setChangingList(true)
     try {
-      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), markedOnly)
-      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now(), markedOnly)
+      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), mode)
+      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now(), mode)
       const [updatedLists, snapshots] = await Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()])
       setLocalLists(updatedLists)
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
@@ -325,8 +334,14 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
   const canEditList = accountId === null || !!onChangeCloudList
   const listActionsBusy = changingList || cloudListBusy
   function requestCompletion() {
-    if (accountId === null) void completeLocalList()
-    else if (canCompleteCloud) setCloudCompletionOpen(true)
+    if (!list || shopping.loading || shopping.busy || listActionsBusy || completionBusy) return
+    if (!rows.length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
+    if (accountId === null || canCompleteCloud) setCloudCompletionOpen(true)
+  }
+  function confirmCompletion(mode: Exclude<CompletionMode, 'delete_list'>) {
+    setCloudCompletionOpen(false)
+    if (accountId === null) void completeLocalList(mode)
+    else if (canCompleteCloud) onCompleteCloudList?.(active, mode)
   }
   function requestDeletion() {
     if (shopping.loading || shopping.busy || listActionsBusy || completionBusy) return
@@ -393,10 +408,10 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
     {cloudListError && !newListDialog && !renaming && <p role="alert">{cloudListError}</p>}
     {listError && !renaming && <p role="alert" className="error">{listError}</p>}
     {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
-      <div className="section-heading"><div className="list-heading-copy"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>{canCompleteCloud && cloudCompletionOpen && onCompleteCloudList && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'marked_only')}}>Завершить: отмеченные</button>
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'all_purchased')}}>Завершить: всё куплено</button>
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>{setCloudCompletionOpen(false);onCompleteCloudList(active,'none_purchased')}}>Завершить: ничего не куплено</button>
+      <div className="section-heading"><div className="list-heading-copy"><h2 id="list-title">{list?.name ?? 'Списки покупок'}</h2><span className="count" aria-live="polite">Осталось: {remaining}</span></div>{(accountId === null || canCompleteCloud) && cloudCompletionOpen && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('marked_only')}>Завершить: отмеченные</button>
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('all_purchased')}>Завершить: всё куплено</button>
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('none_purchased')}>Завершить: ничего не куплено</button>
         <button type="button" onClick={()=>setCloudCompletionOpen(false)}>Отмена</button></div></section></div>}
         {(accountId === null || canCompleteCloud) && deleteListId === active && <div className="dialog-backdrop">
 
@@ -407,8 +422,7 @@ function ShoppingWorkspace({ storage, accountId, guestProfileId, onQueued, refre
             <div className="dialog-buttons">
               {hasMarkedItems && <button type="button" onClick={() => {
                 setDeleteListId(null)
-                if (accountId === null) void completeLocalList(true)
-                else onCompleteCloudList?.(active, 'marked_only')
+                confirmCompletion('marked_only')
               }}>Завершить отмеченные</button>}
               <button type="button" onClick={() => setDeleteListId(null)}>Отмена</button>
               <button type="button" className="danger" disabled={shopping.loading || shopping.busy || completionBusy} onClick={() => {

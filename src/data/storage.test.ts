@@ -261,7 +261,7 @@ it('scopes list changes and archive completion to one profile', async () => {
   await storage.completeProfileList(friend, 'groceries', 'archive-friend', 100)
   expect(await storage.readProfileItems(friend)).toEqual([])
   expect(await storage.readProfileLists(friend)).toEqual([])
-  expect((await storage.readProfileArchives(friend))[0].items).toEqual([item])
+  expect((await storage.readProfileArchives(friend))[0].items).toEqual([{ ...item, purchased: true }])
   expect(await storage.readProfileArchives(owner)).toEqual([])
   expect((await storage.readProfileLists(owner)).find(list => list.id === 'groceries')?.name).not.toBe('Покупки друга')
   await storage.close()
@@ -664,5 +664,36 @@ it('caches a newly discovered cloud list without discarding other verified mappi
   ], { partial: true })
   expect((await storage.readAccountListMappings(accountId))
     .map(mapping => mapping.metadata?.name).sort()).toEqual(['First list', 'Second list'])
+  await storage.close()
+})
+
+it('keeps downloaded archives separate per account and removes the deleted profile cache', async () => {
+  const storage = createStorage('account-archive-cache-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const first = await storage.ensureVerifiedAccountProfile('account-a')
+  await storage.ensureVerifiedAccountProfile('account-b')
+  const archive = [{
+    id: 'archive-a', sourceListId: 'list-a', sourceListName: 'Покупки A',
+    completedAt: new Date(0).toISOString(), items: [{ ordinal: 0, name: 'Чай', quantity: null, unit: null }],
+  }]
+  await storage.cacheAccountArchive('account-a', archive)
+  expect(await storage.readAccountArchive('account-a')).toEqual(archive)
+  expect(await storage.readAccountArchive('account-b')).toBeNull()
+  await storage.deleteLocalProfile(first.activeProfileId, first.activeProfileId)
+  await storage.cacheAccountArchive('account-a', archive)
+  expect(await storage.readAccountArchive('account-a')).toBeNull()
+  await storage.close()
+})
+
+it('completes a local cycle without adding an empty archive record', async () => {
+  const storage = createStorage('empty-purchase-cycle-' + crypto.randomUUID())
+  const profile = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  await storage.saveProfileItem(profile, createItem('groceries', 'Вода'))
+  await storage.completeProfileList(profile, 'groceries', 'cycle', 100, 'none_purchased')
+  expect(await storage.readProfileItems(profile)).toEqual([])
+  expect(await storage.readProfileArchives(profile)).toEqual([])
+  expect((await storage.readProfileLists(profile)).some(list => list.id === 'groceries')).toBe(true)
   await storage.close()
 })

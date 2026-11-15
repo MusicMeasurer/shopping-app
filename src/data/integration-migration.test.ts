@@ -67,7 +67,7 @@ describe('E3/E4 additive migration to v7', () => {
     await storage.saveAccountItem('account-1', { ...item, id: 'account-trip' })
     await storage.completeList(list, 'archive-trip', 3)
     expect(await storage.read()).toEqual([])
-    expect((await storage.readArchives())[0].items).toEqual([item])
+    expect((await storage.readArchives())[0].items).toEqual([{ ...item, purchased: true }])
     expect((await storage.readLists()).some(x => x.id === 'trip')).toBe(false)
     expect((await storage.readAccountItems('account-1')).map(x => x.id)).toEqual(['account-trip'])
     await storage.close()

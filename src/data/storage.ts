@@ -1,6 +1,8 @@
 import { openDB, type DBSchema } from 'idb'
 import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
+import type { CloudArchiveCompletion } from './cloud-archive'
+import type { CompletionMode } from './cloud-completion-rpc'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
 function listNameKey(name: string) {
@@ -32,6 +34,13 @@ export interface ShoppingListRecord {
 export interface ArchivedListRecord {
   id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
 }
+function itemsForCompletion(items: Item[], mode: Exclude<CompletionMode, 'delete_list'>): Item[] {
+  if (mode === 'none_purchased') return []
+  if (mode === 'all_purchased') return items.map(item => ({ ...item, purchased: true }))
+  const marked = items.filter(item => item.purchased)
+  if (!marked.length) throw new Error('Нет отмеченных товаров')
+  return marked
+}
 interface ProfileOwnedRecord<T> { key: string; profileId: string; record: T }
 interface GuestImport {
   key: string; accountId: string; operationId: string; imported: boolean
@@ -52,6 +61,7 @@ interface ShoppingDB extends DBSchema {
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
+  accountArchiveCache: { key: string; value: { accountId: string; snapshots: CloudArchiveCompletion[] } }
   accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
   accountItemVersions: { key: string; value: ScopedVersion; indexes: { byAccount: string } }
@@ -63,11 +73,12 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 12, {
+  const database = openDB<ShoppingDB>(name, 13, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      if (!db.objectStoreNames.contains('accountArchiveCache')) db.createObjectStore('accountArchiveCache', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('accountCompletions')) {
         const store = db.createObjectStore('accountCompletions', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
@@ -486,7 +497,7 @@ export function createStorage(name = 'shopping-app') {
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
         'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
-        'accountItems', 'accountOperations', 'accountCompletions', 'accountListMappings', 'accountItemVersions',
+        'accountItems', 'accountOperations', 'accountCompletions', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache',
       ], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
@@ -508,6 +519,7 @@ export function createStorage(name = 'shopping-app') {
           await tx.objectStore('profileMigrations').put({
             key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
           })
+          await tx.objectStore('accountArchiveCache').delete(accountId)
           for (const storeName of ['accountItems', 'accountListMappings', 'accountItemVersions'] as const) {
             const store = tx.objectStore(storeName)
             for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
@@ -695,7 +707,7 @@ export function createStorage(name = 'shopping-app') {
       await tx.store.put({ ...existing, record: { ...existing.record, kind } })
       await tx.done
     },
-    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, markedOnly = false): Promise<void> {
+    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased'): Promise<void> {
       const db = await database
       const tx = db.transaction(['profileLists', 'profileItems', 'profileArchives'], 'readwrite')
       const done = tx.done
@@ -707,13 +719,12 @@ export function createStorage(name = 'shopping-app') {
         const rows = (await tx.objectStore('profileItems').index('byProfile').getAll(profileId))
           .filter(row => row.record.listId === listId)
         if (!rows.length) throw new Error('Cannot archive an empty list')
-        const archivedItems = rows.map(row => row.record).filter(item => !markedOnly || item.purchased)
-        if (!archivedItems.length) throw new Error('Нет отмеченных товаров')
+        const archivedItems = itemsForCompletion(rows.map(row => row.record), mode)
         const archive: ArchivedListRecord = {
           id: archiveId, sourceListId: listId, name: list.record.name,
           kind: list.record.kind, completedAt, items: archivedItems,
         }
-        await tx.objectStore('profileArchives').add({
+        if (archivedItems.length) await tx.objectStore('profileArchives').add({
           key: JSON.stringify([profileId, archiveId]), profileId, record: archive,
         })
         for (const row of rows) await tx.objectStore('profileItems').delete(row.key)
@@ -808,13 +819,12 @@ export function createStorage(name = 'shopping-app') {
         await tx.objectStore('lists').delete(listId)
       })
     },
-    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number, markedOnly = false): Promise<void> {
+    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased'): Promise<void> {
       await legacyMutation(['lists', 'items', 'archives'], async tx => {
         const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
         if (!items.length) throw new Error('Cannot archive an empty list')
-        const archivedItems = items.filter(item => !markedOnly || item.purchased)
-        if (!archivedItems.length) throw new Error('Нет отмеченных товаров')
-        await tx.objectStore('archives').add({
+        const archivedItems = itemsForCompletion(items, mode)
+        if (archivedItems.length) await tx.objectStore('archives').add({
           id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items: archivedItems,
         })
         for (const item of items) await tx.objectStore('items').delete(item.id)
@@ -829,6 +839,17 @@ export function createStorage(name = 'shopping-app') {
       await legacyMutation(['items'], async tx => { await tx.objectStore('items').delete(id) })
     },
     // Guest items remain in the original store until explicit migration.
+    async cacheAccountArchive(accountId: string, snapshots: CloudArchiveCompletion[]): Promise<void> {
+      const tx = (await database).transaction(['localProfileRegistry', 'accountArchiveCache'], 'readwrite')
+      const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+      if (registry?.profiles.some(profile => profile.cloudAccountId === accountId)) {
+        await tx.objectStore('accountArchiveCache').put({ accountId, snapshots })
+      }
+      await tx.done
+    },
+    async readAccountArchive(accountId: string): Promise<CloudArchiveCompletion[] | null> {
+      return (await (await database).get('accountArchiveCache', accountId))?.snapshots ?? null
+    },
     async readAccountItems(accountId: string): Promise<Item[]> {
       accountKey(accountId, 'check')
       const rows = await (await database).getAllFromIndex('accountItems', 'byAccount', accountId)
