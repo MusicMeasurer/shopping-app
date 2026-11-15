@@ -48,7 +48,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
   await page.getByRole('button', { name: 'Создать', exact: true }).click()
-  await expect(page.getByRole('button', { name })).toBeVisible()
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
   // Creation does not implicitly change the active shopping workspace list.
   // Explicitly select the newly created, verified and bound account list.
   tracePhase('selecting oneoff')
@@ -106,7 +106,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   const completionMessages = await page.locator('[role="status"]').allTextContents()
   const completionMessage = completionMessages.find(message => /Список завершён\.|Не удалось завершить:/.test(message)) ?? ''
   expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/Список завершён\. Сервер подтвердил операцию/)
-  await expect(page.getByRole('button', { name }),
+  await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: /^Архив,/ }).click()
   const e4Archive = page.getByRole('region', { name: 'Архив покупок' })
