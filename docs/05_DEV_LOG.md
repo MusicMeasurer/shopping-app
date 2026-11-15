@@ -1053,3 +1053,9 @@ Following user instruction to maintain `cloud/drafts/E4_CLOUD_CONTRACT_PREFLIGHT
 Илья согласовал ограничение текущего этапа: создание и завершение списков в локальной копии аккаунта после выхода пока недоступны. К обоим сценариям возвращаемся при работе над общими списками (E8).
 
 - Архив после выхода и общий диалог завершения опубликованы на [полигоне iPhone `/integration/`](https://musicmeasurer.github.io/shopping-app-preview/integration/?v=fffdd5b). [GitHub Pages](https://github.com/MusicMeasurer/shopping-app-preview/actions/runs/43759299803) завершился успешно. Публичный `revision.txt` подтвердил `fffdd5bab2f6a7d12c6cd89d5f8933c19dcbc763`. Ручная приёмка на iPhone впереди.
+
+## 2026-11-16 · Ручная приёмка окна завершения и интерфейсная задача 1
+
+- Илья подтвердил ручную проверку окна «Завершить список» на iPhone на полигоне `fffdd5b`. Все варианты и отмена доступны. Ручная приёмка этого окна пройдена.
+- По Инструкции 1 в [рабочей ветке](https://github.com/MusicMeasurer/shopping-app/commit/70684ceef2945320f02c15a009d6706d71ef6b2b) редактор товара и настройки теперь открываются модально поверх текущего экрана. Окна учитывают высоту видимой области, содержимое прокручивается внутри диалога. Настройки оформления сохраняются по явному подтверждению; отмена отбрасывает черновик. Действия с локальными профилями сохраняют прежнее поведение.
+- [Регрессии E4](https://github.com/MusicMeasurer/shopping-app/actions/runs/43760185615), [облачный WebKit](https://github.com/MusicMeasurer/shopping-app/actions/runs/43760161738) и [перепроверка A/B](https://github.com/MusicMeasurer/shopping-app/actions/runs/43760185630). Проверка физической клавиатуры iPhone и ручная приёмка новых окон впереди.
