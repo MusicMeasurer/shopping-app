@@ -14,6 +14,10 @@ on:
       - 'tests/e3-e4-cloud-oneoff.spec.ts'
       - 'tests/e3-e4-cloud-permanent.spec.ts'
       - '.github/workflows/e3-e4-cloud-browser.yml'
+concurrency:
+  group: shoppingapp-migration-lab-account-a
+  cancel-in-progress: false
+
 permissions:
   contents: read
 jobs:

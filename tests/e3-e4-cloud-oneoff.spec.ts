@@ -123,5 +123,5 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off reappeared after reload').toHaveCount(0)
-  await client.auth.signOut()
+  await client.auth.signOut({ scope: 'local' })
 })

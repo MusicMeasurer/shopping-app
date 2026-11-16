@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { createCloudClient, fetchWithAuthTimeout } from './cloud-client'
+import { createCloudClient, fetchWithCloudTimeout } from './cloud-client'
 
 describe('Supabase browser client setup', () => {
   it('keeps the existing app local-only without cloud configuration', () => {
@@ -22,15 +22,18 @@ it('sets an abort deadline for Auth and preserves the caller signal', async () =
   const spy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
   const request = vi.fn<typeof fetch>().mockResolvedValue(new Response())
   try {
-    const boundedFetch = fetchWithAuthTimeout('https://example.supabase.co', request)
+    const boundedFetch = fetchWithCloudTimeout('https://example.supabase.co', request)
     await boundedFetch('https://example.supabase.co/auth/v1/logout', { signal: caller.signal })
     const signal = request.mock.calls[0][1]?.signal
     expect(spy).toHaveBeenCalledWith(8000)
     expect(signal?.aborted).toBe(false)
     caller.abort()
     expect(signal?.aborted).toBe(true)
+    await boundedFetch('https://example.supabase.co/rest/v1/e4_archive_items?select=name')
+    expect(spy).toHaveBeenLastCalledWith(12000)
+    expect(request.mock.calls[1][1]?.signal).toBe(deadline.signal)
     await boundedFetch('https://example.supabase.co/rest/v1/shopping_lists')
-    expect(request.mock.calls[1][1]).toBeUndefined()
+    expect(request.mock.calls[2][1]).toBeUndefined()
   } finally {
     spy.mockRestore()
   }

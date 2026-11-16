@@ -39,6 +39,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
+  const loadingArchiveFor = useRef<string | null>(null)
   const [completionPreflight, setCompletionPreflight] = useState('')
   const [completionBusy, setCompletionBusy] = useState(false)
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
@@ -711,7 +712,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCompletionBusy(false) }
   }
   async function loadCloudArchive() {
-    if (!client || !currentAccount || cloudArchiveBusy) return
+    if (!client || !currentAccount || loadingArchiveFor.current === currentAccount) return
+    loadingArchiveFor.current = currentAccount
     setCloudArchiveBusy(true)
     setCloudArchiveError('')
     try {
@@ -725,9 +727,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       await storage.cacheAccountArchive(currentAccount, snapshots)
       if (activeAccount.current === currentAccount) setCloudArchives(snapshots)
     } catch (err) {
-      setCloudArchives(null)
-      setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
-    } finally { setCloudArchiveBusy(false) }
+      if (activeAccount.current === currentAccount)
+        setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
+    } finally {
+      if (loadingArchiveFor.current === currentAccount) {
+        loadingArchiveFor.current = null
+        setCloudArchiveBusy(false)
+      }
+    }
   }
   useEffect(() => {
     setCloudArchives(null)
@@ -799,7 +806,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onOpenCloudArchive={loadCloudArchive}
       cloudArchive={currentAccount ? (<section aria-label="Архив покупок">
         <h2>Завершённые списки</h2>
-        <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
+        <button type="button" aria-label="Показать завершённые покупки" aria-busy={cloudArchiveBusy}
+          disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
           {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
         </button>
         {cloudArchiveError && <p role="alert">{cloudArchiveError}</p>}
@@ -857,7 +865,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <button type="button" disabled={completionBusy} onClick={() => void recoverCloudCompletions()}>
           {completionBusy ? 'Проверяем завершение…' : 'Восстановить незавершённое завершение'}
         </button>
-        <button type="button" disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
+        <button type="button" aria-label="Показать завершённые покупки" aria-busy={cloudArchiveBusy}
+          disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
           {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
         </button>
         {cloudArchiveError && <p role="alert">{cloudArchiveError}</p>}

@@ -113,6 +113,6 @@ test('bound account queues an offline add across browser restart and syncs after
         if (deleteError) throw deleteError
       }
     }
-    await api.auth.signOut()
+    await api.auth.signOut({ scope: 'local' })
   }
 })

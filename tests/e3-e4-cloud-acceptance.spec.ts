@@ -123,5 +123,5 @@ test('authenticated cloud E3/E4: cancel leaves cloud state unchanged; marked-onl
   await page.reload()
   await expect(page.getByRole('button', { name: 'Продукты', exact: true })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: prefix })).toHaveCount(0)
-  await client.auth.signOut()
+  await client.auth.signOut({ scope: 'local' })
 })

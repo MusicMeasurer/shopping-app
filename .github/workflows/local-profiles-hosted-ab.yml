@@ -18,7 +18,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: local-profiles-hosted-ab
+  group: shoppingapp-migration-lab-account-a
   cancel-in-progress: false
 
 jobs:

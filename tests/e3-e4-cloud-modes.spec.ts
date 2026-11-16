@@ -78,5 +78,5 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
   await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: purchasedName })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: unpurchasedName })).toHaveCount(0)
-  await client.auth.signOut()
+  await client.auth.signOut({ scope: 'local' })
 })
