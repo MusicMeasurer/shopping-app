@@ -10,7 +10,7 @@ import { createItem } from './domain/shopping'
 const labEnv = (globalThis as typeof globalThis & { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
 
 describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt integration (disposable lab)', () => {
-  it('sends a queued add, persists its server version, and acknowledges atomically', async () => {
+  it('replays a receipt, merges independent edits and resolves a competing deletion', async () => {
     const url = labEnv.E3_LAB_URL
     const key = labEnv.E3_LAB_PUBLISHABLE_KEY
     const email = labEnv.E3_USER_A_EMAIL
@@ -88,8 +88,7 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
       expect(rows).toHaveLength(1)
       expect(versions[0].version).toBe(rows![0].version)
       expect(await sync.flush()).toBe(0)
-      // A second device changes the item first. Our queued edit still carries
-      // the previous server version and must fail without being acknowledged.
+      // A second device changes the purchase mark. Merge the independent local name.
       const originalVersion = rows![0].version as number
       const external = await client.rpc('apply_item_change', {
         p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
@@ -104,19 +103,34 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
         localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
         expectedVersion: originalVersion, item: { ...item, name: item.name + '_local' },
       })
-      await expect(sync.flush()).rejects.toThrow()
-      const stillPending = await storage.readAccountPending(accountId)
-      expect(stillPending).toHaveLength(1)
-      expect(stillPending[0].operationId).toBe(conflictOperationId)
-      const versionsAfterConflict = await storage.readAccountItemVersions(accountId)
-      expect(versionsAfterConflict[0].version).toBe(originalVersion)
+      expect(await sync.flush()).toBe(1)
+      expect(await storage.readAccountPending(accountId)).toEqual([])
+      const [merged] = await storage.readAccountItems(accountId)
+      expect(merged).toMatchObject({ name: item.name + '_local', purchased: true })
       const { data: serverAfterConflict, error: conflictReadError } = await client.from('shopping_items')
-        .select('name,purchased,version').eq('id', item.id)
+        .select('name,purchased,version').eq('id', item.id).single()
       if (conflictReadError) throw conflictReadError
-      expect(serverAfterConflict).toHaveLength(1)
-      expect(serverAfterConflict![0]).toEqual({
-        name: item.name, purchased: true, version: originalVersion + 1,
+      expect(serverAfterConflict).toEqual({
+        name: merged.name, purchased: true, version: originalVersion + 2,
       })
+
+      await storage.saveAccountEdit(accountId, {
+        kind: 'cloud-delete', operationId: crypto.randomUUID(),
+        localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
+        expectedVersion: serverAfterConflict.version,
+      })
+      const cloudEdit = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
+        p_item: item.id, p_name: merged.name, p_purchased: false,
+        p_expected_version: serverAfterConflict.version,
+      })
+      if (cloudEdit.error) throw cloudEdit.error
+      expect(await sync.flush()).toBe(0)
+      const [conflict] = await storage.readItemDeletionConflicts(accountId)
+      expect(conflict).toMatchObject({ deleted: 'local', item: { id: item.id, purchased: false } })
+      await sync.resolveItemDeletion(conflict, true)
+      expect(await storage.readAccountPending(accountId)).toEqual([])
+      expect(await storage.readAccountItems(accountId)).toEqual([{ ...merged, purchased: false }])
     } finally {
       if (remoteCreated) {
         const { data: rows, error } = await client.from('shopping_items')
