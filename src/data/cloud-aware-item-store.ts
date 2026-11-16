@@ -30,7 +30,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         return
       }
       validateCloudItem(item)
-      if (waitForSync && await storage.mergeUnsentAccountEdit(accountId, item, binding.remoteListId)) {
+      if (await storage.mergeUnsentAccountEdit(accountId, item, binding.remoteListId)) {
         onQueued?.()
         return
       }

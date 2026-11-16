@@ -274,7 +274,7 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .list-indicators,.list-heading-status{display:flex;align-items:center;gap:4px}
 .list-indicators svg{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
 .list-card-indicators{position:absolute;top:14px;right:47px;color:#426456;pointer-events:none}
-.lists-grid.standard .list-card-indicators{top:10px;right:36px}
+.lists-grid.standard .list-card-indicators{top:10px;right:33px}
 .lists-grid.standard .list-indicators{gap:2px}
 .lists-grid.standard .list-indicators svg{width:13px;height:13px}
 .list-tile:has(.list-select[aria-pressed="true"]) .list-card-indicators{color:white}
@@ -287,8 +287,9 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 }
 .list-kind-options button[aria-checked="true"]{background:#eef3eb;border-color:#799d88}
 
-.shopping-e4 nav.lists-grid .list-symbol{font-size:28.75px}
-.shopping-e4 nav.lists-grid.standard .list-symbol{font-size:22.5px}
+.shopping-e4 nav.lists-grid{--card-symbol-size:34.5px}
+.shopping-e4 nav.lists-grid .list-symbol{font-size:var(--card-symbol-size)}
+.shopping-e4 nav.lists-grid.standard{--card-symbol-size:27px}
 .list-symbol-picker{display:flex;flex-wrap:wrap;gap:4px;margin:0;padding:0;border:0}
 .list-symbol-picker legend{margin-bottom:6px;font-size:13px;font-weight:650}
 .list-symbol-picker button{
@@ -300,7 +301,13 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 /* Keep the full line boxes inside the card even on narrow screens. */
 .shopping-e4 nav.lists-grid:not(.standard) .list-select{
   grid-template-rows:auto minmax(calc(var(--large-list-label) * 2.5),1fr);
-  min-height:calc(34px + 8px + var(--large-list-label) * 2.5 + 26px)
+  min-height:calc(var(--card-symbol-size) * 1.15 + 8px + var(--large-list-label) * 2.5 + 26px)
 }
 .shopping-e4 nav.lists-grid:not(.standard) .list-name-wrap{margin:0;overflow:visible}
 .shopping-e4 nav.lists-grid:not(.standard) .list-name{width:100%;max-height:2lh}
+
+.shopping-e4 nav.lists-grid.standard .list-select{
+  aspect-ratio:auto;min-height:0;padding:6px;gap:3px;
+  grid-template-rows:auto minmax(calc(var(--standard-list-label) * 2.5),1fr)
+}
+.shopping-e4 nav.lists-grid.standard .list-name-wrap{margin:0}
