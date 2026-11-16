@@ -585,7 +585,7 @@ test('E4: a saved deletion conflict marks the list and opens directly from the a
   await page.reload()
   const navigation = page.getByRole('navigation', { name: 'Списки покупок' })
   await expect(navigation.getByRole('img', { name: 'Конфликт удаления товара' })).toBeVisible()
-  await navigation.getByRole('button', { name: 'Продукты с конфликтом' }).click()
+  await navigation.getByRole('button', { name: 'Продукты с конфликтом', exact: true }).click()
   await page.getByRole('button', { name: /Молоко с конфликтом.*Удалён здесь/ }).click()
   const dialog = page.getByRole('dialog', { name: 'Конфликт удаления' })
   await expect(dialog.getByText('2 л', { exact: true })).toBeVisible()
