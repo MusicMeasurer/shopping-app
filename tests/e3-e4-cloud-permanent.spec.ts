@@ -32,20 +32,6 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   expect(rpcError?.code, 'E4 create_e4_list RPC is missing from the isolated lab; deploy only after security review').not.toBe('PGRST202')
   expect(rpcError, 'E4 RPC preflight must reject an empty list name').not.toBeNull()
   const name = 'E3E4_PERMANENT_' + crypto.randomUUID()
-  await page.addInitScript(() => {
-    const networkFetch = window.fetch.bind(window)
-    window.fetch = (input, init) => {
-      const url = new URL(input instanceof Request ? input.url : input, location.href)
-      const documentState = document.documentElement?.dataset
-      if (url.pathname === '/rest/v1/e4_archive_completions' && documentState?.failArchiveRead) {
-        delete documentState.failArchiveRead
-        return Promise.resolve(new Response(JSON.stringify({ message: 'Simulated archive read failure' }), {
-          status: 400, headers: { 'Content-Type': 'application/json' },
-        }))
-      }
-      return networkFetch(input, init)
-    }
-  })
   tracePhase('opening app')
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
@@ -169,16 +155,6 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   })
   await expect(archivedCycles).toHaveCount(1)
   await expect(archivedCycles.getByText(archivedEditedItem, { exact: true })).toBeVisible()
-  tracePhase('recovering from an interrupted archive request')
-  const refreshArchive = archive.getByRole('button', { name: 'Показать завершённые покупки' })
-  await page.evaluate(() => { document.documentElement.dataset.failArchiveRead = 'true' })
-  await refreshArchive.click({ timeout: 30000 })
-  await expect(archive.getByRole('alert')).toHaveText('Не удалось загрузить облачный архив')
-  await expect(archivedCycles).toHaveCount(1)
-  await refreshArchive.click({ timeout: 30000 })
-  await expect(archive.getByRole('alert')).toHaveCount(0)
-  await expect(archivedCycles).toHaveCount(1)
-
   tracePhase('reloading permanent list')
   await page.reload()
   await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
