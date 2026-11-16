@@ -20,13 +20,13 @@ export async function drainConfirmedQueue<T extends { operationId: string }>(
     if (!next) break
     if (!next.operationId.trim()) throw new Error('Missing operation ID')
     if (!canContinue()) break
-    await send(next)
+    const sent = await send(next)
     // A sign-out during the request must not acknowledge an operation under
     // an account that is no longer active; retrying is safe via idempotency.
     if (!canContinue()) break
-    await acknowledge(next.operationId)
+    if (sent !== false) await acknowledge(next.operationId)
     processed.add(next.operationId)
-    completed++
+    if (sent !== false) completed++
   }
   return completed
 }

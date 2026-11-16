@@ -312,3 +312,14 @@ html:has(.workspace-dialog[open]){overflow:hidden}
   grid-template-rows:auto minmax(calc(var(--standard-list-label) * 2.5),1fr)
 }
 .shopping-e4 nav.lists-grid.standard .list-name-wrap{margin:0}
+
+nav .list-conflict-marker{
+  position:absolute;bottom:3px;right:4px;display:grid;place-items:center;
+  width:16px;height:16px;margin:0;border-radius:50%;background:#fae6cd;color:#822f16;
+  font-size:12px;font-weight:700;pointer-events:none
+}
+.item-conflicts li{margin-bottom:8px;border:1px solid #e7af75;border-radius:12px;background:#fff5e9}
+.item-conflicts button{
+  width:100%;min-height:44px;border:0;background:none;text-align:left;padding:10px 12px;color:#822f16
+}
+.item-conflicts button span{display:block;margin-top:4px}

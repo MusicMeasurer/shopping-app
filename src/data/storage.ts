@@ -1,3 +1,4 @@
+import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema } from 'idb'
 import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
@@ -26,6 +27,7 @@ interface ScopedOperation {
   accountId: string
   operation: PendingItemOperation
   neverDispatched?: boolean
+  conflict?: ItemDeletionConflict
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
@@ -160,7 +162,7 @@ export function createStorage(name = 'shopping-app') {
     }
     const key = accountKey(accountId, operation.operationId)
     const db = await database
-    const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+    const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountItemVersions'], 'readwrite')
     const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
     if (!mapping || mapping.remoteListId !== operation.remoteListId) {
       tx.abort()
@@ -176,7 +178,9 @@ export function createStorage(name = 'shopping-app') {
     const operations = tx.objectStore('accountOperations')
     const existing = await operations.get(key)
     if (existing) {
-      if (JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
+      const { base: _base, editTimes: _times, ...payload } =
+        existing.operation as CloudPendingOperation & { base?: Item; editTimes?: unknown }
+      if (JSON.stringify(payload) !== JSON.stringify(operation)) {
         tx.abort()
         await tx.done.catch(() => {})
         throw new Error('Operation ID collision with different payload')
@@ -189,11 +193,14 @@ export function createStorage(name = 'shopping-app') {
     if (mergeOnly) {
       const row = queued.length === 1 ? queued[0] : undefined
       const pending = row?.operation
-      if (row?.neverDispatched && (pending?.kind === 'cloud-add' || pending?.kind === 'cloud-update') &&
+      if (row?.neverDispatched && !row.conflict && (pending?.kind === 'cloud-add' || pending?.kind === 'cloud-update') &&
           operation.kind !== 'cloud-delete' && pending.remoteListId === operation.remoteListId &&
           pending.localListId === operation.localListId) {
         await tx.objectStore('accountItems').put({ key: accountKey(accountId, operation.itemId), accountId, item: operation.item })
-        await operations.put({ ...row, operation: { ...pending, item: operation.item } })
+        const editTimes = pending.kind === 'cloud-update'
+          ? { editTimes: recordEditTimes(pending.item, operation.item, pending.editTimes) }
+          : {}
+        await operations.put({ ...row, operation: { ...pending, item: operation.item, ...editTimes } })
         await tx.done
         return true
       }
@@ -207,6 +214,19 @@ export function createStorage(name = 'shopping-app') {
     }
     const itemKey = accountKey(accountId, operation.itemId)
     const items = tx.objectStore('accountItems')
+    const old = await items.get(itemKey)
+    const confirmed = await tx.objectStore('accountItemVersions').get(itemKey)
+    if (operation.kind !== 'cloud-add' && confirmed &&
+        (confirmed.remoteListId !== operation.remoteListId || confirmed.version !== operation.expectedVersion)) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      throw new Error('Item version changed while saving')
+    }
+    if (old && operation.kind === 'cloud-update') {
+      operation = { ...operation, base: old.item, editTimes: recordEditTimes(old.item, operation.item) }
+    } else if (old && operation.kind === 'cloud-delete') {
+      operation = { ...operation, base: old.item }
+    }
     if (operation.kind === 'cloud-delete') {
       await items.delete(itemKey)
     } else {
@@ -1070,6 +1090,54 @@ export function createStorage(name = 'shopping-app') {
       }
       if (!existing) await operations.add({ key, accountId, operation })
       await tx.done
+    },
+    async readItemDeletionConflicts(accountId: string): Promise<ItemDeletionConflict[]> {
+      const rows = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
+      return rows.flatMap(row => row.conflict ? [row.conflict] : [])
+    },
+    async reconcileRejectedEdit(
+      accountId: string, operation: CloudPendingOperation,
+      decision: { conflict: ItemDeletionConflict } | {
+        serverVersion: number; serverItem?: Item; replacement?: CloudPendingOperation
+      },
+    ): Promise<void> {
+      const tx = (await database).transaction(['accountOperations', 'accountItems', 'accountItemVersions', 'accountListMappings'], 'readwrite')
+      try {
+        const queue = tx.objectStore('accountOperations')
+        const key = accountKey(accountId, operation.operationId)
+        const current = await queue.get(key)
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
+        if (!current || JSON.stringify(current.operation) !== JSON.stringify(operation) ||
+            mapping?.remoteListId !== operation.remoteListId ||
+            (current.conflict && 'serverVersion' in decision && current.conflict.remoteVersion !== decision.serverVersion))
+          throw new Error('Cloud item changed during reconciliation')
+        if ('conflict' in decision) {
+          await queue.put({ ...current, conflict: decision.conflict })
+        } else {
+          const { serverVersion, serverItem, replacement } = decision
+          const itemKey = accountKey(accountId, operation.itemId)
+          const versions = tx.objectStore('accountItemVersions')
+          const known = await versions.get(itemKey)
+          if (known && (known.remoteListId !== operation.remoteListId || known.version > serverVersion))
+            throw new Error('Cloud item version changed during reconciliation')
+          await versions.put({ key: itemKey, accountId, itemId: operation.itemId, remoteListId: operation.remoteListId, version: serverVersion })
+          const items = tx.objectStore('accountItems')
+          if (serverItem && !replacement) await items.put({ key: itemKey, accountId, item: serverItem })
+          else await items.delete(itemKey)
+          if (replacement) {
+            await queue.add({ key: accountKey(accountId, replacement.operationId), accountId, operation: replacement, neverDispatched: true })
+            if (replacement.kind !== 'cloud-delete') await items.put({
+              key: accountKey(accountId, replacement.itemId), accountId, item: replacement.item,
+            })
+          }
+          await queue.delete(key)
+        }
+        await tx.done
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await tx.done.catch(() => {})
+        throw error
+      }
     },
     /** Freeze the payload before the first request, including retries after a restart. */
     async claimAccountPending(accountId: string, operationId: string): Promise<PendingItemOperation> {

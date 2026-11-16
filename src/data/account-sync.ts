@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ListId, Item } from '../domain/shopping'
 import type { Storage } from './storage'
+import { mergeItemEdit, type ItemDeletionConflict } from './item-conflict'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
 import { fetchRemoteItems, fetchRemoteTombstones } from './remote-snapshot'
@@ -18,13 +19,14 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readItemDeletionConflicts'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
     remoteListId: string
     localListId: ListId
     isActive: () => boolean
+    onReconciled?: () => void
     resolveMutation?: (operation: PendingItemOperation) => RemoteMutation
   },
 ) {
@@ -144,6 +146,88 @@ export function createAccountSync(
     await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
     return entries.length
   }
+  async function fetchItemState(itemId: string) {
+    const rows = await fetchRemoteItems(client, remoteListId)
+    const row = rows.find(item => item.id === itemId)
+    const tombstone = row ? undefined : (await fetchRemoteTombstones(client, remoteListId)).find(item => item.id === itemId)
+    assertActive()
+    const item: Item | undefined = row && {
+      id: row.id, listId: localListId, name: row.name, purchased: row.purchased,
+      quantity: row.quantity, unit: row.unit, createdAt: Date.parse(row.createdAt),
+    }
+    return { item, version: row?.version ?? tombstone?.version, timestamp: Date.parse(row?.updatedAt ?? '') }
+  }
+
+  async function handleRejected(operation: PendingItemOperation, error: unknown): Promise<boolean> {
+    if (operation.kind !== 'cloud-update' && operation.kind !== 'cloud-delete') return false
+    const message = (error as { message?: string } | null)?.message
+    if (message !== 'Version conflict' && message !== 'Item unavailable') return false
+    const state = await fetchItemState(operation.itemId)
+    if (state.version === undefined || state.version <= operation.expectedVersion) return false
+    const serverVersion = state.version
+    const serverItem = state.item
+    const identifiers = {
+      operationId: crypto.randomUUID(), itemId: operation.itemId, remoteListId, localListId,
+    }
+    if (operation.kind === 'cloud-delete' && !serverItem) {
+      await storage.reconcileRejectedEdit(accountId, operation, { serverVersion })
+    } else if (!serverItem || operation.kind === 'cloud-delete') {
+      const item = operation.kind === 'cloud-update' ? operation.item : serverItem
+      if (!item) return false
+      await storage.reconcileRejectedEdit(accountId, operation, { conflict: {
+        ...identifiers, operationId: operation.operationId, item, remoteVersion: serverVersion,
+        deleted: serverItem ? 'local' : 'cloud',
+      } })
+    } else {
+      if (!operation.base || !operation.editTimes || !Number.isFinite(state.timestamp)) return false
+      const item = mergeItemEdit(operation.base, operation.item, serverItem, operation.editTimes, state.timestamp)
+      const changed = item.name !== serverItem.name || item.purchased !== serverItem.purchased ||
+        item.quantity !== serverItem.quantity || item.unit !== serverItem.unit
+      await storage.reconcileRejectedEdit(accountId, operation, {
+        serverVersion, serverItem,
+        replacement: changed ? {
+          ...identifiers, kind: 'cloud-update', expectedVersion: serverVersion, item,
+          base: serverItem, editTimes: operation.editTimes,
+        } : undefined,
+      })
+    }
+    options.onReconciled?.()
+    return true
+  }
+
+  async function resolveItemDeletion(conflict: ItemDeletionConflict, keepItem: boolean) {
+    await verifyMapping()
+    const operation = (await storage.readAccountPending(accountId))
+      .find(row => row.operationId === conflict.operationId)
+    if (!operation || (operation.kind !== 'cloud-delete' && operation.kind !== 'cloud-update') ||
+        operation.remoteListId !== remoteListId || operation.localListId !== localListId)
+      throw new Error('Conflict is no longer available')
+    const state = await fetchItemState(operation.itemId)
+    if (state.version === undefined || Boolean(state.item) !== (conflict.deleted === 'local'))
+      throw new Error('Cloud item changed; synchronize again')
+    if (state.version !== conflict.remoteVersion) {
+      if (!state.item) throw new Error('Cloud deletion changed; synchronize again')
+      await storage.reconcileRejectedEdit(accountId, operation, { conflict: {
+        ...conflict, item: state.item, remoteVersion: state.version,
+      } })
+      throw new Error('Cloud item changed; review the latest version')
+    }
+    const identifiers = { operationId: crypto.randomUUID(), remoteListId, localListId }
+    let replacement
+    if (keepItem && !state.item) {
+      const item = { ...conflict.item, id: crypto.randomUUID(), createdAt: Date.now() }
+      replacement = { ...identifiers, kind: 'cloud-add' as const, itemId: item.id, item }
+    } else if (!keepItem && state.item) {
+      replacement = {
+        ...identifiers, kind: 'cloud-delete' as const, itemId: operation.itemId,
+        expectedVersion: state.version, base: state.item,
+      }
+    }
+    await storage.reconcileRejectedEdit(accountId, operation, {
+      serverVersion: state.version, serverItem: keepItem ? state.item : undefined, replacement,
+    })
+  }
+
   const coordinator = createSyncCoordinator({
     accountId,
     listId: remoteListId,
@@ -158,7 +242,11 @@ export function createAccountSync(
     readPending: async () => {
       assertActive()
       await verifyMapping()
-      const rows = await storage.readAccountPending(accountId)
+      const [rows, conflicts] = await Promise.all([
+        storage.readAccountPending(accountId),
+        storage.readItemDeletionConflicts(accountId),
+      ])
+      const parked = new Set(conflicts.map(conflict => conflict.operationId))
       assertActive()
       // Versioned operations carry durable list identity and can safely
       // be processed one list at a time. Legacy deletes have no list
@@ -167,6 +255,7 @@ export function createAccountSync(
         throw new Error('Pending deletion requires a durable list mapping')
       }
       return rows.filter(operation => {
+        if (parked.has(operation.operationId)) return false
         if (operation.kind === 'upsert') return operation.item.listId === localListId
         if (operation.kind === 'delete') throw new Error('Pending deletion requires a durable list mapping')
         return operation.localListId === localListId && operation.remoteListId === remoteListId
@@ -184,9 +273,10 @@ export function createAccountSync(
       await storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
     },
     resolveMutation,
+    handleRejected,
   }, list => {
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions }
+  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion }
 }

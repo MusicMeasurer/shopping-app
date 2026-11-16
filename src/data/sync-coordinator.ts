@@ -24,6 +24,7 @@ export interface SyncDependencies {
   commitReceipt?: (mutation: RemoteMutation, receipt: RemoteMutationReceipt) => Promise<void>
   fetch: () => ReturnType<ReadRemote>
   send: (mutation: RemoteMutation) => ReturnType<SendRemote>
+  handleRejected?: (operation: PendingItemOperation, error: unknown) => Promise<boolean>
   resolveMutation: (operation: PendingItemOperation) => RemoteMutation
 }
 
@@ -73,6 +74,7 @@ export function createSyncCoordinator(
       running = true
       try {
         const confirmed = new Map<string, { mutation: RemoteMutation; receipt: RemoteMutationReceipt }>()
+        const reconciled = new Set<string>()
         return await drainConfirmedQueue(
           dependencies.readPending,
           async operation => {
@@ -83,7 +85,13 @@ export function createSyncCoordinator(
             if (mutation.operationId !== operation.operationId || mutation.listId !== dependencies.listId) {
               throw new Error('Operation is not bound to the active list')
             }
-            const receipt = await dependencies.send(mutation)
+            const receipt = await dependencies.send(mutation).catch(async error => {
+              assertActive()
+              if (reconciled.has(mutation.itemId) || !await dependencies.handleRejected?.(claimed, error)) throw error
+              reconciled.add(mutation.itemId)
+              return null
+            })
+            if (!receipt) return false
             if (receipt.operationId !== mutation.operationId) throw new Error('Server receipt operation mismatch')
             confirmed.set(operation.operationId, { mutation, receipt })
           },

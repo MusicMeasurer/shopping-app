@@ -544,3 +544,54 @@ test('E4: completing an inactive list preserves the open list', async ({ page })
   await page.getByRole('button', { name: /^Архив,/ }).click()
   await expect(page.getByText('Губки', { exact: true })).toBeVisible()
 })
+
+test('E4: a saved deletion conflict marks the list and opens directly from the affected item', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('shopping-app')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    const accountId = crypto.randomUUID()
+    const profileId = crypto.randomUUID()
+    const remoteListId = crypto.randomUUID()
+    const operationId = crypto.randomUUID()
+    const item = { id: crypto.randomUUID(), listId: 'groceries', name: 'Молоко с конфликтом', createdAt: Date.now(), purchased: false, quantity: 2, unit: 'л' }
+    const key = (id: string) => JSON.stringify([accountId, id])
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(['localProfileRegistry', 'accountListMappings', 'accountOperations'], 'readwrite')
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => reject(tx.error)
+        const profileStore = tx.objectStore('localProfileRegistry')
+        const registryRequest = profileStore.get('device')
+        registryRequest.onsuccess = () => {
+          const record = registryRequest.result
+          record.registry.profiles.push({ id: profileId, cloudAccountId: accountId, createdAt: Date.now() })
+          record.registry.activeProfileId = profileId
+          profileStore.put(record)
+        }
+        tx.objectStore('accountListMappings').put({ key: key('groceries'), accountId, localListId: 'groceries', remoteListId,
+          metadata: { name: 'Продукты с конфликтом', kind: 'permanent', position: 0 },
+        })
+        tx.objectStore('accountOperations').put({ key: key(operationId), accountId, operation: {
+          operationId, kind: 'cloud-delete', localListId: 'groceries', remoteListId, itemId: item.id, expectedVersion: 1,
+        }, conflict: { operationId, localListId: 'groceries', remoteListId, item, deleted: 'local', remoteVersion: 2 } })
+      })
+    } finally { db.close() }
+  })
+  await page.reload()
+  const navigation = page.getByRole('navigation', { name: 'Списки покупок' })
+  await expect(navigation.getByRole('img', { name: 'Конфликт удаления товара' })).toBeVisible()
+  await navigation.getByRole('button', { name: 'Продукты с конфликтом' }).click()
+  await page.getByRole('button', { name: /Молоко с конфликтом.*Удалён здесь/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'Конфликт удаления' })
+  await expect(dialog.getByText('2 л', { exact: true })).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Сохранить товар с правкой' })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: 'Подтвердить удаление' })).toBeDisabled()
+  await dialog.getByRole('button', { name: 'Позже' }).click()
+  await expect(dialog).toHaveCount(0)
+  await expect(navigation.getByRole('img', { name: 'Конфликт удаления товара' })).toBeVisible()
+})

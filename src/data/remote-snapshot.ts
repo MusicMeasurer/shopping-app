@@ -11,6 +11,7 @@ export interface RemoteItem {
   name: string
   purchased: boolean
   createdAt: string
+  updatedAt?: string
   version: number
   quantity?: number
   unit?: string
@@ -21,7 +22,7 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
     throw new Error('Invalid remote list ID')
   }
   const { data, error } = await client.from('shopping_items')
-    .select('id,list_id,name,purchased,created_at,version,quantity,unit')
+    .select('id,list_id,name,purchased,created_at,updated_at,version,quantity,unit')
     .eq('list_id', listId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
@@ -46,6 +47,7 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
       id: value.id, listId: value.list_id, name: value.name,
       purchased: value.purchased, createdAt: value.created_at,
       version: value.version as number,
+      updatedAt: typeof value.updated_at === 'string' ? value.updated_at : undefined,
     }
   })
 }

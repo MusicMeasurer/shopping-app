@@ -118,7 +118,7 @@ describe('IndexedDB v5 cloud edit migration', () => {
     }
     await storage.saveAccountEdit('a', operation)
     expect(await storage.readAccountItems('a')).toEqual([])
-    expect(await storage.readAccountPending('a')).toEqual([operation])
+    expect(await storage.readAccountPending('a')).toEqual([{ ...operation, base: item }])
     await storage.close()
   })
 })

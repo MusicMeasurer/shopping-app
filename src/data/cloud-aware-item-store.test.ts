@@ -159,7 +159,7 @@ describe('cloud-aware account item store', () => {
     const finalItem = { ...renamed, purchased: true }
     await reopenedStore.save(finalItem)
     const claimed = await reopened.claimAccountPending('account-a', firstEdit.operationId)
-    expect(claimed).toEqual({ ...firstEdit, expectedVersion: 1, item: { ...item, quantity: 2, unit: 'л', name: 'Молоко 2%', purchased: true } })
+    expect(claimed).toMatchObject({ ...firstEdit, editTimes: expect.objectContaining({ amount: expect.any(Number), name: expect.any(Number), purchased: expect.any(Number) }), expectedVersion: 1, item: { ...item, quantity: 2, unit: 'л', name: 'Молоко 2%', purchased: true } })
     await expect(reopenedStore.save({ ...finalItem, quantity: 3 }, true)).rejects.toThrow('ещё синхронизируется')
     expect(await reopenedStore.read()).toEqual([finalItem])
     expect(await reopened.readAccountPending('account-a')).toEqual([claimed])

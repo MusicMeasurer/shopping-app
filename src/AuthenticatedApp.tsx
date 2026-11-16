@@ -176,6 +176,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             accountId, localListId: mapping.localListId as ListId,
             remoteListId: mapping.remoteListId,
             isActive: () => activeAccount.current === accountId,
+            onReconciled: () => setWorkspaceRevision(value => value + 1),
           }).flush()
           }
         } while (flushRequested.current && activeAccount.current === accountId)
@@ -490,7 +491,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
       const sync = createAccountSync(storage, client, {
         accountId, remoteListId, localListId: selectedLocal,
-        isActive: () => view.status === 'account' && view.accountId === accountId,
+        isActive: () => activeAccount.current === accountId,
+        onReconciled: () => setWorkspaceRevision(value => value + 1),
       })
       const count = await sync.flush()
       if ((await verifiedAccountId(client)) !== accountId) throw new Error('Account changed')
@@ -789,6 +791,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       </section>
     </div>}
     <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      onResolveItemDeletion={client && currentAccount && readyAccount === currentAccount ? async (conflict, keepItem) => {
+        if (activeAccount.current !== currentAccount || await verifiedAccountId(client) !== currentAccount) throw new Error('Account changed')
+        try {
+          await createAccountSync(storage, client, {
+            accountId: currentAccount, localListId: conflict.localListId, remoteListId: conflict.remoteListId,
+            isActive: () => activeAccount.current === currentAccount,
+          }).resolveItemDeletion(conflict, keepItem)
+          onQueued()
+        } finally {
+          setWorkspaceRevision(value => value + 1)
+        }
+      } : undefined}
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
       onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind, symbol) => !!await addCloudList(name, kind, symbol) : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
