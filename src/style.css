@@ -296,3 +296,11 @@ html:has(.workspace-dialog[open]){overflow:hidden}
   border-radius:8px;background:white;font-size:20px;line-height:1
 }
 .list-symbol-picker button[aria-pressed="true"]{border-color:#25634c;background:#e4f0e8}
+
+/* Keep the full line boxes inside the card even on narrow screens. */
+.shopping-e4 nav.lists-grid:not(.standard) .list-select{
+  grid-template-rows:auto minmax(calc(var(--large-list-label) * 2.5),1fr);
+  min-height:calc(34px + 8px + var(--large-list-label) * 2.5 + 26px)
+}
+.shopping-e4 nav.lists-grid:not(.standard) .list-name-wrap{overflow:visible}
+.shopping-e4 nav.lists-grid:not(.standard) .list-name{width:100%;max-height:2lh}

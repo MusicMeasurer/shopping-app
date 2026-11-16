@@ -30,6 +30,10 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         return
       }
       validateCloudItem(item)
+      if (waitForSync && await storage.mergeUnsentAccountEdit(accountId, item, binding.remoteListId)) {
+        onQueued?.()
+        return
+      }
       const hasPendingEdit = async () => (await storage.readAccountPending(accountId)).some(operation =>
         operation.kind !== 'delete' && (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id)
       if (waitForSync && await hasPendingEdit()) {

@@ -450,7 +450,22 @@ test('E4: an inactive card menu renames only its own list and header actions sta
   await rename.getByLabel('Название списка').fill(longName)
   await rename.getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.getByRole('heading', { name: 'Продукты', exact: true })).toBeVisible()
-  await page.getByRole('button', { name: longName, exact: true }).click()
+  const card = page.getByRole('button', { name: longName, exact: true })
+  const geometry = await card.evaluate(button => {
+    const label = button.querySelector<HTMLElement>('.list-name')!
+    const slot = button.querySelector<HTMLElement>('.list-name-wrap')!
+    const style = getComputedStyle(label)
+    const linesHeight = Number.parseFloat(style.lineHeight) * 2
+    const labelBounds = label.getBoundingClientRect()
+    const slotBounds = slot.getBoundingClientRect()
+    return {
+      font: style.fontSize,
+      twoLines: Math.abs(labelBounds.height - linesHeight) < 1,
+      insideSlot: labelBounds.top >= slotBounds.top && labelBounds.bottom <= slotBounds.bottom,
+    }
+  })
+  expect(geometry).toEqual({ font: '24px', twoLines: true, insideSlot: true })
+  await card.click()
   const after = await toolbar.boundingBox()
   expect(after?.x).toBeCloseTo(before!.x, 0)
   expect(after?.y).toBeCloseTo(before!.y, 0)

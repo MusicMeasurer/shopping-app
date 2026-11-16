@@ -19,6 +19,7 @@ export interface SyncDependencies {
   isActive: () => boolean
   readLocal: () => Promise<Item[]>
   readPending: () => Promise<PendingItemOperation[]>
+  claimPending?: (operationId: string) => Promise<PendingItemOperation>
   acknowledge: (operationId: string) => Promise<void>
   commitReceipt?: (mutation: RemoteMutation, receipt: RemoteMutationReceipt) => Promise<void>
   fetch: () => ReturnType<ReadRemote>
@@ -76,7 +77,9 @@ export function createSyncCoordinator(
           dependencies.readPending,
           async operation => {
             assertActive()
-            const mutation = dependencies.resolveMutation(operation)
+            const claimed = dependencies.claimPending ? await dependencies.claimPending(operation.operationId) : operation
+            assertActive()
+            const mutation = dependencies.resolveMutation(claimed)
             if (mutation.operationId !== operation.operationId || mutation.listId !== dependencies.listId) {
               throw new Error('Operation is not bound to the active list')
             }

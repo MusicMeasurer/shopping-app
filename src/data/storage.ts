@@ -25,6 +25,7 @@ interface ScopedOperation {
   key: string
   accountId: string
   operation: PendingItemOperation
+  neverDispatched?: boolean
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
@@ -150,6 +151,72 @@ export function createStorage(name = 'shopping-app') {
       throw error
     }
   }
+  async function writeAccountEdit(accountId: string, operation: CloudPendingOperation, mergeOnly = false): Promise<boolean> {
+    if (!operation.itemId.trim() || !operation.localListId.trim() ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operation.remoteListId) ||
+        (operation.kind !== 'cloud-add' && (!Number.isSafeInteger(operation.expectedVersion) || operation.expectedVersion < 0)) ||
+        (operation.kind !== 'cloud-delete' && (operation.item.id !== operation.itemId || operation.item.listId !== operation.localListId))) {
+      throw new Error('Invalid account edit operation')
+    }
+    const key = accountKey(accountId, operation.operationId)
+    const db = await database
+    const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+    const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
+    if (!mapping || mapping.remoteListId !== operation.remoteListId) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      throw new Error('Missing verified list mapping')
+    }
+    const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+    if (intents.some(row => row.intent.remoteListId === operation.remoteListId)) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      throw new Error('Completion pending; list edits are temporarily locked')
+    }
+    const operations = tx.objectStore('accountOperations')
+    const existing = await operations.get(key)
+    if (existing) {
+      if (JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Operation ID collision with different payload')
+      }
+      await tx.done
+      return true
+    }
+    const queued = (await operations.index('byAccount').getAll(accountId)).filter(({ operation: pending }) =>
+      (pending.kind === 'upsert' ? pending.item.id : pending.itemId) === operation.itemId)
+    if (mergeOnly) {
+      const row = queued.length === 1 ? queued[0] : undefined
+      const pending = row?.operation
+      if (row?.neverDispatched && (pending?.kind === 'cloud-add' || pending?.kind === 'cloud-update') &&
+          operation.kind !== 'cloud-delete' && pending.remoteListId === operation.remoteListId &&
+          pending.localListId === operation.localListId) {
+        await tx.objectStore('accountItems').put({ key: accountKey(accountId, operation.itemId), accountId, item: operation.item })
+        await operations.put({ ...row, operation: { ...pending, item: operation.item } })
+        await tx.done
+        return true
+      }
+      await tx.done
+      return false
+    }
+    if (queued.some(row => row.operation.kind !== 'delete')) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      throw new Error('Item has an unconfirmed cloud change')
+    }
+    const itemKey = accountKey(accountId, operation.itemId)
+    const items = tx.objectStore('accountItems')
+    if (operation.kind === 'cloud-delete') {
+      await items.delete(itemKey)
+    } else {
+      await items.put({ key: itemKey, accountId, item: operation.item })
+    }
+    await operations.add({ key, accountId, operation, neverDispatched: true })
+    await tx.done
+    return true
+  }
+
   return {
     /** Immediately notifies late subscribers if an older open tab blocks schema upgrade. */
     subscribeUpgradeBlocked(listener: () => void): () => void {
@@ -1004,6 +1071,19 @@ export function createStorage(name = 'shopping-app') {
       if (!existing) await operations.add({ key, accountId, operation })
       await tx.done
     },
+    /** Freeze the payload before the first request, including retries after a restart. */
+    async claimAccountPending(accountId: string, operationId: string): Promise<PendingItemOperation> {
+      const key = accountKey(accountId, operationId)
+      const tx = (await database).transaction('accountOperations', 'readwrite')
+      const row = await tx.store.get(key)
+      if (!row) {
+        await tx.done
+        throw new Error('Cloud operation no longer pending')
+      }
+      if (row.neverDispatched) await tx.store.put({ ...row, neverDispatched: false })
+      await tx.done
+      return row.operation
+    },
     async acknowledgeAccountPending(accountId: string, operationId: string): Promise<void> {
       await (await database).delete('accountOperations', accountKey(accountId, operationId))
     },
@@ -1074,7 +1154,7 @@ export function createStorage(name = 'shopping-app') {
             remoteListId: mapping.remoteListId, itemId: item.id, item,
           }
           await tx.objectStore('accountItems').add({ key: accountKey(accountId, item.id), accountId, item })
-          await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation })
+          await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
         }
         await tx.done
       } catch (error) {
@@ -1084,60 +1164,13 @@ export function createStorage(name = 'shopping-app') {
       }
     },
     async saveAccountEdit(accountId: string, operation: CloudPendingOperation): Promise<void> {
-      if (!operation.itemId.trim() || !operation.localListId.trim() ||
-          !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(operation.remoteListId) ||
-          (operation.kind !== 'cloud-add' && (!Number.isSafeInteger(operation.expectedVersion) || operation.expectedVersion < 0)) ||
-          (operation.kind !== 'cloud-delete' && (operation.item.id !== operation.itemId || operation.item.listId !== operation.localListId))) {
-        throw new Error('Invalid account edit operation')
-      }
-      const key = accountKey(accountId, operation.operationId)
-      const db = await database
-      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
-      const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
-      if (!mapping || mapping.remoteListId !== operation.remoteListId) {
-        tx.abort()
-        await tx.done.catch(() => {})
-        throw new Error('Missing verified list mapping')
-      }
-      const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
-      if (intents.some(row => row.intent.remoteListId === operation.remoteListId)) {
-        tx.abort()
-        await tx.done.catch(() => {})
-        throw new Error('Completion pending; list edits are temporarily locked')
-      }
-      const operations = tx.objectStore('accountOperations')
-      const existing = await operations.get(key)
-      if (existing) {
-        if (JSON.stringify(existing.operation) !== JSON.stringify(operation)) {
-          tx.abort()
-          await tx.done.catch(() => {})
-          throw new Error('Operation ID collision with different payload')
-        }
-        await tx.done
-        return
-      }
-      // Until sequential edits can be rebased from confirmed receipts, a
-      // second pending mutation for the same item would reuse a stale version.
-      // Reject it atomically rather than silently overwrite or lose an edit.
-      const queued = await operations.index('byAccount').getAll(accountId)
-      if (queued.some(row => {
-        const pending = row.operation
-        return pending.kind !== 'delete' &&
-          (pending.kind === 'upsert' ? pending.item.id : pending.itemId) === operation.itemId
-      })) {
-        tx.abort()
-        await tx.done.catch(() => {})
-        throw new Error('Item has an unconfirmed cloud change')
-      }
-      const itemKey = accountKey(accountId, operation.itemId)
-      const items = tx.objectStore('accountItems')
-      if (operation.kind === 'cloud-delete') {
-        await items.delete(itemKey)
-      } else {
-        await items.put({ key: itemKey, accountId, item: operation.item })
-      }
-      await operations.add({ key, accountId, operation })
-      await tx.done
+      await writeAccountEdit(accountId, operation)
+    },
+    async mergeUnsentAccountEdit(accountId: string, item: Item, remoteListId: string): Promise<boolean> {
+      return writeAccountEdit(accountId, {
+        kind: 'cloud-add', operationId: crypto.randomUUID(), itemId: item.id,
+        localListId: item.listId, remoteListId, item,
+      }, true)
     },
     /** Atomically record an acknowledged RPC receipt and remove its exact queued operation. */
     async commitAccountReceipt(accountId: string, operationId: string, remoteListId: string, itemId: string, version: number): Promise<void> {

@@ -128,11 +128,40 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
+  it('combines unsent edits across a restart while preserving the original cloud version', async () => {
+    const databaseName = 'cloud-aware-' + crypto.randomUUID()
+    const storage = createStorage(databaseName)
+    await storage.bindAccountList('account-a', 'groceries', listId)
+    const store = cloudAwareItemStore(storage, 'account-a')
+    const item = createItem('groceries', 'Молоко')
+    await store.save(item)
+    const [add] = await storage.readAccountPending('account-a')
+    await storage.claimAccountPending('account-a', add.operationId)
+    await storage.commitAccountReceipt('account-a', add.operationId, listId, item.id, 1)
+    await store.save({ ...item, quantity: 2 }, true)
+    const [firstEdit] = await storage.readAccountPending('account-a')
+    await store.save({ ...item, quantity: 2, unit: 'л' }, true)
+    await storage.close()
+
+    const reopened = createStorage(databaseName)
+    const reopenedStore = cloudAwareItemStore(reopened, 'account-a')
+    const [draft] = await reopenedStore.read()
+    const finalItem = { ...draft, name: 'Молоко 2%' }
+    await reopenedStore.save(finalItem, true)
+    const claimed = await reopened.claimAccountPending('account-a', firstEdit.operationId)
+    expect(claimed).toEqual({ ...firstEdit, expectedVersion: 1, item: { ...item, quantity: 2, unit: 'л', name: 'Молоко 2%' } })
+    await expect(reopenedStore.save({ ...finalItem, quantity: 3 }, true)).rejects.toThrow('ещё синхронизируется')
+    expect(await reopenedStore.read()).toEqual([finalItem])
+    expect(await reopened.readAccountPending('account-a')).toEqual([claimed])
+    await reopened.close()
+  })
+
   it('waits for an earlier add receipt when saving an item from the editor', async () => {
     const storage = await setup()
     const item = createItem('groceries', 'Молоко')
     await cloudAwareItemStore(storage, 'account-a').save(item)
     const [queued] = await storage.readAccountPending('account-a')
+    await storage.claimAccountPending('account-a', queued.operationId)
     const store = cloudAwareItemStore(storage, 'account-a', () => {
       void storage.commitAccountReceipt('account-a', queued.operationId, listId, item.id, 1).catch(() => {})
     })

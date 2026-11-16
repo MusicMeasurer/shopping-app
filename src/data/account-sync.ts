@@ -18,7 +18,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -172,6 +172,7 @@ export function createAccountSync(
         return operation.localListId === localListId && operation.remoteListId === remoteListId
       })
     },
+    claimPending: operationId => storage.claimAccountPending(accountId, operationId),
     acknowledge: async operationId => {
       assertActive()
       await storage.acknowledgeAccountPending(accountId, operationId)

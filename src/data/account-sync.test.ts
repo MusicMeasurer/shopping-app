@@ -24,7 +24,8 @@ function setup(pending: PendingItemOperation[] = []) {
   const tombstoneRead = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
   const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }), not: tombstoneRead }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
-  const storage = { readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>
+  const claimAccountPending = vi.fn(async (_accountId: string, id: string) => pending.find(row => row.operationId === id)!)
+  const storage = { claimAccountPending, readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
   let active = true
   const sync = createAccountSync(storage, client, {
