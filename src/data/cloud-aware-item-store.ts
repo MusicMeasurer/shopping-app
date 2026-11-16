@@ -1,12 +1,13 @@
+import { ItemSaveError } from './item-save-error'
 import type { Item } from '../domain/shopping'
 import type { Storage } from './storage'
 
 function validateCloudItem(item: Item) {
   if (item.quantity !== undefined && (!Number.isFinite(item.quantity) || item.quantity <= 0 ||
       item.quantity >= 1e9 || Number(item.quantity.toFixed(3)) !== item.quantity))
-    throw new Error('Введите положительное количество с точностью до трёх знаков после запятой')
+    throw new ItemSaveError('Введите положительное количество с точностью до трёх знаков после запятой')
   if (item.unit !== undefined && item.unit.trim().length > 30)
-    throw new Error('Единица измерения должна содержать не более 30 символов')
+    throw new ItemSaveError('Единица измерения должна содержать не более 30 символов')
 }
 
 /**
@@ -21,7 +22,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
       await storage.saveAccountItemsToSync(accountId, items)
       onQueued?.()
     },
-    async save(item: Item): Promise<void> {
+    async save(item: Item, waitForSync = false): Promise<void> {
       const bindings = await storage.readAccountListMappings(accountId)
       const binding = bindings.find(row => row.localListId === item.listId)
       if (!binding) {
@@ -29,13 +30,24 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         return
       }
       validateCloudItem(item)
+      const hasPendingEdit = async () => (await storage.readAccountPending(accountId)).some(operation =>
+        operation.kind !== 'delete' && (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id)
+      if (waitForSync && await hasPendingEdit()) {
+        onQueued?.()
+        for (let attempt = 0; onQueued && attempt < 20 && await hasPendingEdit(); attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 200))
+        }
+        if (await hasPendingEdit()) {
+          throw new ItemSaveError('Предыдущее изменение товара ещё синхронизируется. Повторите сохранение после синхронизации.')
+        }
+      }
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)
       if (known && known.remoteListId !== binding.remoteListId) {
         throw new Error('Item version belongs to a different cloud list')
       }
       const existing = (await storage.readAccountItems(accountId)).some(row => row.id === item.id)
-      if (existing && !known) throw new Error('Existing item has no confirmed cloud version')
+      if (existing && !known) throw new ItemSaveError('Версия товара ещё не подтверждена. Дождитесь синхронизации и повторите сохранение.')
       await storage.saveAccountEdit(accountId, known ? {
         kind: 'cloud-update', operationId: crypto.randomUUID(),
         localListId: item.listId, remoteListId: binding.remoteListId,

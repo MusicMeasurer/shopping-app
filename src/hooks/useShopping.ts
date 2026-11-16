@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItem, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
+import { ItemSaveError } from '../data/item-save-error'
 import type { ItemStore } from '../data/account-item-store'
 export function useShopping(storage: ItemStore, refreshRevision = 0) {
   const [items, setItems] = useState<Item[]>([])
@@ -18,10 +19,10 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
     if (locked.current || loading) return false
     locked.current = true; setBusy(true); setError('')
     try { await action(); setItems(update); return true }
-    catch { setError('Не удалось сохранить изменение. Данные на экране не изменены. Попробуйте ещё раз.'); return false }
+    catch (error) { setError(error instanceof ItemSaveError ? error.message : 'Не удалось сохранить изменение. Данные на экране не изменены. Попробуйте ещё раз.'); return false }
     finally { locked.current = false; setBusy(false) }
   }
-  return { items, loading, busy, error, reload,
+  return { items, loading, busy, error, reload, clearError: () => setError(''),
     add: async (listId: ListId, name: string) => {
       try {
         if (!storage.saveMany) {
@@ -52,7 +53,7 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
         const normalizedUnit = unit?.trim() || undefined
         const updated = { ...item, name, quantity, unit: normalizedUnit }
         if (name === item.name && quantity === item.quantity && normalizedUnit === item.unit) return true
-        return await mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row))
+        return await mutate(() => storage.save(updated, true), current => current.map(row => row.id === item.id ? updated : row))
       } catch (error) { setError((error as Error).message); return false }
     },
     toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },

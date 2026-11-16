@@ -244,9 +244,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if (await onCreateCloudList?.(newListName, newListKind, newListSymbol)) setNewListDialog(false)
   }
 
-  async function completeLocalList(mode: Exclude<CompletionMode, 'delete_list'>) {
+  async function completeLocalList(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>) {
+    const list = localLists?.find(row => row.id === id)
     if (accountId !== null || !list || changingList || shopping.busy || shopping.loading) return
-    if (!rows.length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
+    if (!itemsForList(shopping.items, id).length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
     setChangingList(true)
     try {
       if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), mode)
@@ -256,7 +257,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
       setListError(null)
       await shopping.reload()
-      if ('kind' in list && list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
+      if (id === active && list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
@@ -361,8 +362,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const shopping = useShopping(itemStore, refreshRevision)
   const rows = itemsForList(shopping.items, active)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
-  const [cloudCompletionOpen, setCloudCompletionOpen] = useState(false)
-  const canCompleteCloud = accountId !== null && !!cloudBoundLists[active] && !!onCompleteCloudList
+  const [completionListId, setCompletionListId] = useState<ListId | null>(null)
   const canEditList = accountId === null || !!onChangeCloudList
   const listActionsBusy = changingList || cloudListBusy
   const listMutationBusy = shopping.loading || shopping.busy || listActionsBusy || completionBusy
@@ -376,13 +376,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       window.alert('Список пуст. Его нельзя поместить в архив.')
       return
     }
-    setActive(id)
-    setCloudCompletionOpen(true)
+    setCompletionListId(id)
   }
-  function confirmCompletion(mode: Exclude<CompletionMode, 'delete_list'>) {
-    setCloudCompletionOpen(false)
-    if (accountId === null) void completeLocalList(mode)
-    else if (canCompleteCloud) onCompleteCloudList?.(active, mode)
+  function confirmCompletion(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>) {
+    setCompletionListId(null)
+    if (accountId === null) void completeLocalList(id, mode)
+    else if (canComplete(id)) onCompleteCloudList?.(id, mode)
   }
   function requestDeletion(id: ListId) {
     if (listMutationBusy || !canComplete(id)) return
@@ -390,11 +389,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       void deleteLocalList(false, id)
       return
     }
-    setActive(id)
     setDeleteListId(id)
   }
   const editingItem = rows.find(item => item.id === editingId)
-  const hasMarkedItems = rows.some(item => item.purchased)
+  const deletionItems = deleteListId ? itemsForList(shopping.items, deleteListId) : []
+  const hasMarkedItems = deletionItems.some(item => item.purchased)
   const remaining = rows.filter(item => !item.purchased).length
   const list = visibleLists.find(list => list.id === active)
   const menuList = menuTarget && visibleLists.find(row => row.id === menuTarget.id)
@@ -597,27 +596,27 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             disabled={completionDisabled} onClick={() => requestCompletion(list.id)}>✓</button>
           {menuTrigger(list, 'heading')}
         </div>}/>
-      {(accountId === null || canCompleteCloud) && cloudCompletionOpen && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('marked_only')}>Завершить: отмеченные</button>
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('all_purchased')}>Завершить: всё куплено</button>
-        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion('none_purchased')}>Завершить: ничего не куплено</button>
-        <button type="button" onClick={()=>setCloudCompletionOpen(false)}>Отмена</button></div></section></div>}
-        {(accountId === null || canCompleteCloud) && deleteListId === active && <div className="dialog-backdrop">
+      {completionListId && canComplete(completionListId) && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion(completionListId, 'marked_only')}>Завершить: отмеченные</button>
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion(completionListId, 'all_purchased')}>Завершить: всё куплено</button>
+        <button type="button" disabled={shopping.loading || shopping.busy || completionBusy} onClick={()=>confirmCompletion(completionListId, 'none_purchased')}>Завершить: ничего не куплено</button>
+        <button type="button" onClick={()=>setCompletionListId(null)}>Отмена</button></div></section></div>}
+        {deleteListId && canComplete(deleteListId) && <div className="dialog-backdrop">
 
           <section role="dialog" aria-modal="true" aria-labelledby="cloud-delete-title" className="rename-dialog">
             <h2 id="cloud-delete-title">Удалить список?</h2>
-            <p>{rows.length ? 'Товары из списка будут удалены.' : 'Список пуст.'}</p>
+            <p>{deletionItems.length ? 'Товары из списка будут удалены.' : 'Список пуст.'}</p>
             {hasMarkedItems && <p>Отмеченные товары не попадут в историю покупок и будут удалены без записи в архив. Чтобы сохранить их, сначала завершите список.</p>}
             <div className="dialog-buttons">
               {hasMarkedItems && <button type="button" onClick={() => {
                 setDeleteListId(null)
-                confirmCompletion('marked_only')
+                confirmCompletion(deleteListId, 'marked_only')
               }}>Завершить отмеченные</button>}
               <button type="button" onClick={() => setDeleteListId(null)}>Отмена</button>
               <button type="button" className="danger" disabled={shopping.loading || shopping.busy || completionBusy} onClick={() => {
                 setDeleteListId(null)
-                if (accountId === null) void deleteLocalList(true)
-                else onCompleteCloudList?.(active, 'delete_list', hasMarkedItems)
+                if (accountId === null) void deleteLocalList(true, deleteListId)
+                else onCompleteCloudList?.(deleteListId, 'delete_list', hasMarkedItems)
               }}>Удалить</button>
             </div>
           </section>
@@ -625,12 +624,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
 
       {accountId !== null && list && !cloudBoundLists[active] && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
       <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy}/><button className="add" disabled={shopping.loading || shopping.busy || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>
-      {shopping.error && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
-      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div> : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy} onClick={() => { setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
+      {shopping.error && !editingItem && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
+      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div> : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
       {accountId !== null && completionStatus && <p role="status">{completionStatus}</p>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
-    {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) setEditingId(null) }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/><button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => setEditingId(null)} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
+    {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) { shopping.clearError(); setEditingId(null) } }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
   </main>
 }

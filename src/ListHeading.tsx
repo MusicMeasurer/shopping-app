@@ -17,7 +17,7 @@ export function ListHeading({ name, remaining, rename, actions, indicators, sync
       range.selectNodeContents(heading)
       const { left } = heading.getBoundingClientRect()
       const right = Math.max(left, ...Array.from(range.getClientRects(), line => line.right))
-      heading.style.setProperty('--title-width', Math.ceil(right - left) + 'px')
+      heading.parentElement?.style.setProperty('--title-width', Math.ceil(right - left) + 'px')
     }
     const observer = new ResizeObserver(measure)
     observer.observe(heading)

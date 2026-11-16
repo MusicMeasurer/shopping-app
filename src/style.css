@@ -243,7 +243,7 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .workspace-topbar .account-header-control{margin-left:auto;max-width:calc(100% - 52px)}
 .workspace-topbar .account-header-email{max-width:none}
 
-.shopping-e4{--large-list-label:9.6px;--standard-list-label:11px}
+.shopping-e4{--large-list-label:calc(30px * .8);--standard-list-label:calc(10px * 1.1)}
 .shopping-e4 nav.lists-grid .list-name,.list-create-control .list-name{
   font-family:inherit;font-size:var(--large-list-label);font-weight:700
 }

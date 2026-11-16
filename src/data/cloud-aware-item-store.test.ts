@@ -122,9 +122,25 @@ describe('cloud-aware account item store', () => {
     const store = cloudAwareItemStore(storage, 'account-a')
     const item = createItem('groceries', 'Хлеб')
     await store.save(item)
-    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('no confirmed cloud version')
+    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('Версия товара ещё не подтверждена')
     expect(await store.read()).toEqual([item])
     expect(await storage.readAccountPending('account-a')).toHaveLength(1)
+    await storage.close()
+  })
+
+  it('waits for an earlier add receipt when saving an item from the editor', async () => {
+    const storage = await setup()
+    const item = createItem('groceries', 'Молоко')
+    await cloudAwareItemStore(storage, 'account-a').save(item)
+    const [queued] = await storage.readAccountPending('account-a')
+    const store = cloudAwareItemStore(storage, 'account-a', () => {
+      void storage.commitAccountReceipt('account-a', queued.operationId, listId, item.id, 1).catch(() => {})
+    })
+    await store.save({ ...item, name: 'Молоко 2%' }, true)
+    expect(await store.read()).toEqual([{ ...item, name: 'Молоко 2%' }])
+    expect(await storage.readAccountPending('account-a')).toEqual([
+      expect.objectContaining({ kind: 'cloud-update', expectedVersion: 1 }),
+    ])
     await storage.close()
   })
 
