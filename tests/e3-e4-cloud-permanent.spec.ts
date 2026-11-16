@@ -157,10 +157,14 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(archivedCycles.getByText(archivedEditedItem, { exact: true })).toBeVisible()
   tracePhase('recovering from an interrupted archive request')
   const refreshArchive = archive.getByRole('button', { name: 'Показать завершённые покупки' })
-  await page.route('**/rest/v1/e4_archive_completions?*', route => route.abort('failed'), { times: 1 })
+  const archiveEndpoint = /\/rest\/v1\/e4_archive_completions(?:\?|$)/
+  await page.route(archiveEndpoint, route => route.fulfill({
+    status: 400, json: { message: 'Simulated archive read failure' },
+  }))
   await refreshArchive.click({ timeout: 30000 })
   await expect(archive.getByRole('alert')).toHaveText('Не удалось загрузить облачный архив')
   await expect(archivedCycles).toHaveCount(1)
+  await page.unroute(archiveEndpoint)
   await refreshArchive.click({ timeout: 30000 })
   await expect(archive.getByRole('alert')).toHaveCount(0)
   await expect(archivedCycles).toHaveCount(1)
