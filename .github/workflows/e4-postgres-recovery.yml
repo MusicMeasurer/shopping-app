@@ -146,6 +146,7 @@ jobs:
       - name: Apply and test versioned E4 item attributes and list ordering
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/028_e4_item_attributes_RPC_CI_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/031_e4_item_field_clocks.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_item_attributes.sql
       - name: Check atomic guest import and replay
         run: |

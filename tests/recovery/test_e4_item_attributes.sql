@@ -12,6 +12,9 @@ declare
   i constant uuid := 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
   a constant uuid := 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
   r jsonb;
+  initial_clocks jsonb;
+  amount_clocks jsonb;
+  mark_clocks jsonb;
 begin
   r := public.apply_e4_item_change(a,l,'add',i,'Rice',false,null,2.5,'kg');
   if r is distinct from public.apply_e4_item_change(a,l,'add',i,'Rice',false,null,2.5,'kg') then
@@ -26,6 +29,25 @@ begin
   r := public.apply_e4_item_change(gen_random_uuid(),l,'update',i,'Edited',null,(r->>'item_version')::bigint,null,null);
   if not exists(select 1 from public.shopping_items where id=i and name='Edited' and quantity is null and unit is null) then
     raise exception 'Attributes not cleared';
+  end if;
+  r := public.apply_e4_item_change(gen_random_uuid(),l,'update',i,null,null,(r->>'item_version')::bigint,3,'l');
+  select field_changed_at into initial_clocks from public.shopping_items where id=i;
+  if initial_clocks is null or initial_clocks->>'amount' is null then
+    raise exception 'Missing field timestamps';
+  end if;
+  r := public.apply_e4_item_change(gen_random_uuid(),l,'update',i,null,null,(r->>'item_version')::bigint,4,'l');
+  select field_changed_at into amount_clocks from public.shopping_items where id=i;
+  if (amount_clocks->>'amount')::timestamptz <= (initial_clocks->>'amount')::timestamptz or
+     amount_clocks->>'name' is distinct from initial_clocks->>'name' or
+     amount_clocks->>'purchased' is distinct from initial_clocks->>'purchased' then
+    raise exception 'Amount update changed an unrelated timestamp';
+  end if;
+  r := public.apply_item_change(gen_random_uuid(),l,'update',i,null,true,(r->>'item_version')::bigint);
+  select field_changed_at into mark_clocks from public.shopping_items where id=i;
+  if (mark_clocks->>'purchased')::timestamptz <= (amount_clocks->>'purchased')::timestamptz or
+     mark_clocks->>'amount' is distinct from amount_clocks->>'amount' or
+     mark_clocks->>'name' is distinct from amount_clocks->>'name' then
+    raise exception 'Purchase mark changed an unrelated timestamp';
   end if;
   r := public.apply_e4_item_change(gen_random_uuid(),l,'update',i,null,null,(r->>'item_version')::bigint,3,'l');
   r := public.apply_e4_list_metadata(gen_random_uuid(),l,(r->>'list_revision')::bigint,'Renamed','oneoff',3);
