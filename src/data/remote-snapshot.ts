@@ -1,3 +1,4 @@
+import type { EditTimes } from './item-conflict'
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 /**
@@ -11,18 +12,19 @@ export interface RemoteItem {
   name: string
   purchased: boolean
   createdAt: string
-  updatedAt?: string
+  fieldChangedAt?: EditTimes
   version: number
   quantity?: number
   unit?: string
 }
 
-export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, listId: string): Promise<RemoteItem[]> {
+export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, listId: string, includeFieldClocks = false): Promise<RemoteItem[]> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(listId)) {
     throw new Error('Invalid remote list ID')
   }
+  const columns = 'id,list_id,name,purchased,created_at,version,quantity,unit'
   const { data, error } = await client.from('shopping_items')
-    .select('id,list_id,name,purchased,created_at,updated_at,version,quantity,unit')
+    .select(includeFieldClocks ? columns + ',updated_at,field_changed_at' : columns)
     .eq('list_id', listId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
@@ -41,13 +43,21 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
     const quantity = value.quantity == null ? undefined : Number(value.quantity)
     if ((quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0)) ||
         (value.unit != null && typeof value.unit !== 'string')) throw new Error('Invalid remote item attributes')
+    const fieldChangedAt: EditTimes = {}
+    if (includeFieldClocks) {
+      const clocks = value.field_changed_at as Partial<Record<keyof EditTimes, string>> | null
+      for (const key of ['name', 'amount', 'purchased'] as const) {
+        const stamp = Date.parse(clocks?.[key] ?? (typeof value.updated_at === 'string' ? value.updated_at : ''))
+        if (Number.isFinite(stamp)) fieldChangedAt[key] = stamp
+      }
+    }
     return {
+      ...(includeFieldClocks ? { fieldChangedAt } : {}),
       ...(quantity !== undefined ? { quantity } : {}),
       ...(typeof value.unit === 'string' && value.unit.trim() ? { unit: value.unit } : {}),
       id: value.id, listId: value.list_id, name: value.name,
       purchased: value.purchased, createdAt: value.created_at,
       version: value.version as number,
-      updatedAt: typeof value.updated_at === 'string' ? value.updated_at : undefined,
     }
   })
 }

@@ -19,7 +19,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readItemDeletionConflicts'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readSyncableAccountPending'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -147,7 +147,7 @@ export function createAccountSync(
     return entries.length
   }
   async function fetchItemState(itemId: string) {
-    const rows = await fetchRemoteItems(client, remoteListId)
+    const rows = await fetchRemoteItems(client, remoteListId, true)
     const row = rows.find(item => item.id === itemId)
     const tombstone = row ? undefined : (await fetchRemoteTombstones(client, remoteListId)).find(item => item.id === itemId)
     assertActive()
@@ -155,7 +155,7 @@ export function createAccountSync(
       id: row.id, listId: localListId, name: row.name, purchased: row.purchased,
       quantity: row.quantity, unit: row.unit, createdAt: Date.parse(row.createdAt),
     }
-    return { item, version: row?.version ?? tombstone?.version, timestamp: Date.parse(row?.updatedAt ?? '') }
+    return { item, version: row?.version ?? tombstone?.version, fieldChangedAt: row?.fieldChangedAt ?? {} }
   }
 
   async function handleRejected(operation: PendingItemOperation, error: unknown): Promise<boolean> {
@@ -179,8 +179,11 @@ export function createAccountSync(
         deleted: serverItem ? 'local' : 'cloud',
       } })
     } else {
-      if (!operation.base || !operation.editTimes || !Number.isFinite(state.timestamp)) return false
-      const item = mergeItemEdit(operation.base, operation.item, serverItem, operation.editTimes, state.timestamp)
+      if (!operation.base || !operation.editTimes) {
+        await storage.reconcileRejectedEdit(accountId, operation, { defer: true })
+        return true
+      }
+      const item = mergeItemEdit(operation.base, operation.item, serverItem, operation.editTimes, state.fieldChangedAt)
       const changed = item.name !== serverItem.name || item.purchased !== serverItem.purchased ||
         item.quantity !== serverItem.quantity || item.unit !== serverItem.unit
       await storage.reconcileRejectedEdit(accountId, operation, {
@@ -242,11 +245,7 @@ export function createAccountSync(
     readPending: async () => {
       assertActive()
       await verifyMapping()
-      const [rows, conflicts] = await Promise.all([
-        storage.readAccountPending(accountId),
-        storage.readItemDeletionConflicts(accountId),
-      ])
-      const parked = new Set(conflicts.map(conflict => conflict.operationId))
+      const rows = await storage.readSyncableAccountPending(accountId)
       assertActive()
       // Versioned operations carry durable list identity and can safely
       // be processed one list at a time. Legacy deletes have no list
@@ -255,7 +254,6 @@ export function createAccountSync(
         throw new Error('Pending deletion requires a durable list mapping')
       }
       return rows.filter(operation => {
-        if (parked.has(operation.operationId)) return false
         if (operation.kind === 'upsert') return operation.item.listId === localListId
         if (operation.kind === 'delete') throw new Error('Pending deletion requires a durable list mapping')
         return operation.localListId === localListId && operation.remoteListId === remoteListId

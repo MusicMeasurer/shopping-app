@@ -28,6 +28,7 @@ interface ScopedOperation {
   operation: PendingItemOperation
   neverDispatched?: boolean
   conflict?: ItemDeletionConflict
+  deferred?: boolean
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
@@ -1091,13 +1092,17 @@ export function createStorage(name = 'shopping-app') {
       if (!existing) await operations.add({ key, accountId, operation })
       await tx.done
     },
+    async readSyncableAccountPending(accountId: string): Promise<PendingItemOperation[]> {
+      const rows = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
+      return rows.filter(row => !row.conflict && !row.deferred).map(row => row.operation)
+    },
     async readItemDeletionConflicts(accountId: string): Promise<ItemDeletionConflict[]> {
       const rows = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
       return rows.flatMap(row => row.conflict ? [row.conflict] : [])
     },
     async reconcileRejectedEdit(
       accountId: string, operation: CloudPendingOperation,
-      decision: { conflict: ItemDeletionConflict } | {
+      decision: { conflict: ItemDeletionConflict } | { defer: true } | {
         serverVersion: number; serverItem?: Item; replacement?: CloudPendingOperation
       },
     ): Promise<void> {
@@ -1113,6 +1118,8 @@ export function createStorage(name = 'shopping-app') {
           throw new Error('Cloud item changed during reconciliation')
         if ('conflict' in decision) {
           await queue.put({ ...current, conflict: decision.conflict })
+        } else if ('defer' in decision) {
+          await queue.put({ ...current, deferred: true })
         } else {
           const { serverVersion, serverItem, replacement } = decision
           const itemKey = accountKey(accountId, operation.itemId)

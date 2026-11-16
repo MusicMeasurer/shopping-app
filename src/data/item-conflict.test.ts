@@ -11,10 +11,10 @@ it('merges independent fields, keeps amount and unit together, and prefers cloud
   const base = { ...createItem('groceries', 'Молоко'), quantity: 1, unit: 'л' }
   const local = { ...base, name: 'Молоко 2%', quantity: 2 }
   const cloud = { ...base, quantity: 3, unit: 'уп.', purchased: true }
-  expect(mergeItemEdit(base, local, cloud, { name: 1, amount: 2 }, 2)).toEqual({
+  expect(mergeItemEdit(base, local, cloud, { name: 1, amount: 2 }, { amount: 2 })).toEqual({
     ...cloud, name: local.name,
   })
-  expect(mergeItemEdit(base, local, cloud, { name: 1, amount: 3 }, 2)).toEqual({
+  expect(mergeItemEdit(base, local, cloud, { name: 1, amount: 3 }, { amount: 2 })).toEqual({
     ...cloud, name: local.name, quantity: 2, unit: 'л',
   })
 })
@@ -47,7 +47,7 @@ async function setup(deletedInCloud: boolean) {
   const sync = (db = storage) => createAccountSync(db, client, {
     accountId: 'a', localListId: 'groceries', remoteListId, isActive: () => true,
   })
-  return { dbName, storage, item, store: cloudAwareItemStore(storage, 'a'), sync, mutations }
+  return { dbName, storage, item, remote, store: cloudAwareItemStore(storage, 'a'), sync, mutations }
 }
 
 it('rebases an independent local edit and accepts a newer cloud amount and mark', async () => {
@@ -93,4 +93,33 @@ it('marks a local deletion versus cloud edit and honors explicit deletion', asyn
   expect(mutations.at(-1)).toMatchObject({ p_action: 'delete', p_expected_version: 2 })
   expect(await store.read()).toEqual([])
   await storage.close()
+})
+
+it('compares the amount with its own database timestamp despite a later cloud purchase mark', async () => {
+  const { storage, item, remote, store, sync, mutations } = await setup(false)
+  const before = new Date(Date.now() - 60_000).toISOString()
+  Object.assign(remote, { field_changed_at: { name: before, amount: before, purchased: remote.updated_at } })
+  await store.save({ ...item, quantity: 2 }, true)
+  expect(await sync().flush()).toBe(1)
+  expect(await store.read()).toEqual([{ ...item, quantity: 2, purchased: true }])
+  expect(mutations[1]).toMatchObject({ p_quantity: 2, p_purchased: true })
+  await storage.close()
+})
+
+it('retains an older conflicting operation without blocking a new item in the same list', async () => {
+  const { dbName, storage, item, remote, store, sync } = await setup(false)
+  const legacyOperation = {
+    operationId: '00000000-0000-4000-8000-000000000000', itemId: item.id,
+    kind: 'cloud-update' as const, localListId: 'groceries' as const,
+    remoteListId: remote.list_id, expectedVersion: 1, item: { ...item, quantity: 2 },
+  }
+  await storage.enqueueAccountPending('a', legacyOperation)
+  await store.save(createItem('groceries', 'Хлеб'))
+  expect(await sync().flush()).toBe(1)
+  await storage.close()
+  const reopened = createStorage(dbName)
+  expect(await reopened.readAccountPending('a')).toEqual([legacyOperation])
+  expect(await reopened.readSyncableAccountPending('a')).toEqual([])
+  expect(await sync(reopened).flush()).toBe(0)
+  await reopened.close()
 })

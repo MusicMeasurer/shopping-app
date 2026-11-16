@@ -12,9 +12,9 @@ export function recordEditTimes(previous: Item, next: Item, times: EditTimes = {
   }
 }
 
-export function mergeItemEdit(base: Item, local: Item, cloud: Item, times: EditTimes, cloudTime: number): Item {
+export function mergeItemEdit(base: Item, local: Item, cloud: Item, times: EditTimes, cloudTimes: EditTimes): Item {
   const preferLocal = (field: Field, cloudChanged: boolean) =>
-    times[field] !== undefined && (!cloudChanged || times[field] > cloudTime)
+    times[field] !== undefined && (!cloudChanged || times[field] > (cloudTimes[field] ?? Infinity))
   const amount = preferLocal('amount', base.quantity !== cloud.quantity || base.unit !== cloud.unit) ? local : cloud
   return {
     ...cloud,

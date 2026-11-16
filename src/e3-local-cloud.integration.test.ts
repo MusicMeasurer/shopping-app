@@ -114,23 +114,44 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
         name: merged.name, purchased: true, version: originalVersion + 2,
       })
 
+      const quantityEdit = await client.rpc('apply_e4_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
+        p_item: item.id, p_name: null, p_purchased: null, p_quantity: 3, p_unit: 'л',
+        p_expected_version: serverAfterConflict.version,
+      })
+      if (quantityEdit.error) throw quantityEdit.error
+      await storage.saveAccountEdit(accountId, {
+        kind: 'cloud-update', operationId: crypto.randomUUID(),
+        localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
+        expectedVersion: serverAfterConflict.version, item: { ...merged, quantity: 2, unit: 'л' },
+      })
+      const purchaseEdit = await client.rpc('apply_item_change', {
+        p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
+        p_item: item.id, p_name: null, p_purchased: false,
+        p_expected_version: quantityEdit.data.item_version,
+      })
+      if (purchaseEdit.error) throw purchaseEdit.error
+      expect(await sync.flush()).toBe(1)
+      const [latest] = await storage.readAccountItems(accountId)
+      expect(latest).toMatchObject({ quantity: 2, unit: 'л', purchased: false })
+      const [latestVersion] = await storage.readAccountItemVersions(accountId)
       await storage.saveAccountEdit(accountId, {
         kind: 'cloud-delete', operationId: crypto.randomUUID(),
         localListId: 'groceries', remoteListId: owned.id, itemId: item.id,
-        expectedVersion: serverAfterConflict.version,
+        expectedVersion: latestVersion.version,
       })
       const cloudEdit = await client.rpc('apply_item_change', {
         p_operation: crypto.randomUUID(), p_list: owned.id, p_action: 'update',
-        p_item: item.id, p_name: merged.name, p_purchased: false,
-        p_expected_version: serverAfterConflict.version,
+        p_item: item.id, p_name: latest.name, p_purchased: true,
+        p_expected_version: latestVersion.version,
       })
       if (cloudEdit.error) throw cloudEdit.error
       expect(await sync.flush()).toBe(0)
       const [conflict] = await storage.readItemDeletionConflicts(accountId)
-      expect(conflict).toMatchObject({ deleted: 'local', item: { id: item.id, purchased: false } })
+      expect(conflict).toMatchObject({ deleted: 'local', item: { id: item.id, purchased: true } })
       await sync.resolveItemDeletion(conflict, true)
       expect(await storage.readAccountPending(accountId)).toEqual([])
-      expect(await storage.readAccountItems(accountId)).toEqual([{ ...merged, purchased: false }])
+      expect(await storage.readAccountItems(accountId)).toEqual([{ ...latest, purchased: true }])
     } finally {
       if (remoteCreated) {
         const { data: rows, error } = await client.from('shopping_items')
