@@ -290,6 +290,7 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .shopping-e4 nav.lists-grid{--card-symbol-size:34.5px}
 .shopping-e4 nav.lists-grid .list-symbol{font-size:var(--card-symbol-size)}
 .shopping-e4 nav.lists-grid.standard{--card-symbol-size:27px}
+.shopping-e4 nav.lists-grid.standard .list-symbol{font-size:var(--card-symbol-size)}
 .list-symbol-picker{display:flex;flex-wrap:wrap;gap:4px;margin:0;padding:0;border:0}
 .list-symbol-picker legend{margin-bottom:6px;font-size:13px;font-weight:650}
 .list-symbol-picker button{
