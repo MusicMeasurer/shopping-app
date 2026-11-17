@@ -819,7 +819,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
   if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
-    {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="profile-transfer-dialog" onDismiss={() => answerTransfer('skip')}>
+    {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="e4-create profile-transfer-dialog" onDismiss={() => answerTransfer('skip')}>
       {transferPrompt.phase === 'consent' ? <>
         <h2>Синхронизировать профиль «{transferPrompt.name}» с аккаунтом?</h2>
         <p>Списки, товары и архив будут перенесены в аккаунт. Профиль будет называться логином аккаунта.</p>

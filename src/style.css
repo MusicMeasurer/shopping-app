@@ -225,7 +225,7 @@ section[aria-label="Облачные списки"] li > button {
 
 /* Match the list-creation overlay and stay inside the visible area above the keyboard. */
 html:has(.workspace-dialog[open]){overflow:hidden}
-.shopping-e4 .workspace-dialog{
+.shopping-e4 .workspace-dialog,.profile-transfer-dialog{
   position:fixed;inset:var(--visible-top,0px) 0 auto;margin:0 auto;
   top:calc(var(--visible-top,0px) + 12px);
   width:min(calc(100% - 32px),420px);max-width:none;
@@ -327,3 +327,5 @@ nav .list-conflict-marker{
 .item-unit-options{display:flex;gap:8px}
 .item-unit-options button{flex:1}
 .item-unit-options button[aria-pressed=true]{outline:2px solid #25634c;outline-offset:-2px;background:#eaf3ed}
+
+.profile-transfer-dialog > button{display:block;width:100%;margin-top:10px;white-space:normal}
