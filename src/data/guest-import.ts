@@ -25,7 +25,15 @@ export async function syncGuestImports(
     if (batch.removeSource) {
       const archives = await fetchCloudArchive(client)
       if (!Array.isArray(data?.archives) || data.archives.length !== batch.archives.length ||
-          data.archives.some((id: string) => !archives.some(row => row.id === id)) ||
+          data.archives.some((id: string, index: number) => {
+            const saved = archives.find(row => row.id === id)
+            const source = batch.archives[index]
+            return !saved || saved.sourceListName !== source.name || saved.items.length !== source.items.length ||
+              source.items.some((item, ordinal) => {
+                const archived = saved.items.find(row => row.ordinal === ordinal)
+                return !archived || archived.name !== item.name || archived.quantity !== (item.quantity ?? null) || archived.unit !== (item.unit ?? null)
+              })
+          }) ||
           !Array.isArray(data?.items) || data.items.length !== batch.items.length ||
           data.items.some((id: string) => !items.some(row => row.id === id))) throw new Error('Transfer snapshot is not fully confirmed')
       if (!await isActive()) return
