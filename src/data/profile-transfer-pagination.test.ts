@@ -15,7 +15,7 @@ it('reads archived transfers beyond API row limits, including a single large arc
     }
     return query
   } } as unknown as SupabaseClient
-  const snapshots = await fetchCloudArchive(client, true)
+  const snapshots = await fetchCloudArchive(client)
   expect(snapshots).toHaveLength(501)
   expect(snapshots[0].items).toHaveLength(1201)
   expect(snapshots[0].items[1200].name).toBe('Item 1200')

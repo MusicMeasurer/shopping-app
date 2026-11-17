@@ -13,7 +13,7 @@ export interface CloudArchiveCompletion {
  * Read-only archive adapter for E4. The database enforces owner-scoped RLS.
  * Never accept an arbitrary ownerId: the authenticated session is the identity.
  */
-export async function fetchCloudArchive(client: SupabaseClient, paginate = false): Promise<CloudArchiveCompletion[]> {
+export async function fetchCloudArchive(client: SupabaseClient, paginate = true): Promise<CloudArchiveCompletion[]> {
   const readCompletions = () => client
     .from('e4_archive_completions')
     .select('id,source_list_id,source_list_name,completed_at')

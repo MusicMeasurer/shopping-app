@@ -3,18 +3,15 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { fetchCloudArchive } from './cloud-archive'
 
 function fakeClient(completions: unknown[] | null, items: unknown[] | null, errorAt?: 'completions' | 'items') {
-  const first = {
-    select: vi.fn().mockReturnValue({
-      order: vi.fn().mockResolvedValue({ data: completions, error: errorAt === 'completions' ? new Error('blocked') : null }),
-    }),
+  function builder(data: unknown[] | null, error: Error | null) {
+    const query = { select: vi.fn(), in: vi.fn(), order: vi.fn(), range: vi.fn().mockResolvedValue({ data, error }) }
+    query.select.mockReturnValue(query)
+    query.in.mockReturnValue(query)
+    query.order.mockReturnValue(query)
+    return query
   }
-  const second = {
-    select: vi.fn().mockReturnValue({
-      in: vi.fn().mockReturnValue({
-        order: vi.fn().mockResolvedValue({ data: items, error: errorAt === 'items' ? new Error('blocked') : null }),
-      }),
-    }),
-  }
+  const first = builder(completions, errorAt === 'completions' ? new Error('blocked') : null)
+  const second = builder(items, errorAt === 'items' ? new Error('blocked') : null)
   const from = vi.fn((table: string) => table === 'e4_archive_completions' ? first : second)
   return { client: { from } as unknown as SupabaseClient, from, first, second }
 }
