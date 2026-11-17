@@ -1,6 +1,6 @@
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema } from 'idb'
-import { addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
+import { profileName, addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { CloudArchiveCompletion } from './cloud-archive'
 import type { CompletionMode } from './cloud-completion-rpc'
@@ -439,7 +439,12 @@ export function createStorage(name = 'shopping-app') {
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
         if (current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover owner mismatch')
-        const registry = addProfile(current.registry, { id, cloudAccountId: null, createdAt })
+        const stable = { ...current.registry, profiles: current.registry.profiles.map((p, index) =>
+          p.cloudAccountId ? p : { ...p, name: profileName(p, index) }) }
+        const names = new Set(stable.profiles.map((p, index) => profileName(p, index)))
+        let number = stable.profiles.length + 1
+        while (names.has(`Локальный профиль ${number}`)) number++
+        const registry = addProfile(stable, { id, cloudAccountId: null, createdAt, name: `Локальный профиль ${number}` })
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
@@ -489,6 +494,8 @@ export function createStorage(name = 'shopping-app') {
         const current = await tx.objectStore('localProfileRegistry').get('device')
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover is not active')
+        current.registry = { ...current.registry, profiles: current.registry.profiles.map((p, index) =>
+          p.cloudAccountId ? p : { ...p, name: profileName(p, index) }) }
         const existing = current.registry.profiles.find(p => p.cloudAccountId === verifiedAccountId)
         if (options.sourceProfileId) {
           const source = current.registry.profiles.find(p => p.id === options.sourceProfileId)

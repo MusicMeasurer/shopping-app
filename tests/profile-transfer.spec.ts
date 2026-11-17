@@ -71,7 +71,8 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await add(page, localItem)
   let interrupted = false
   await page.route('**/rest/v1/rpc/import_e4_profile_merge', async route => {
-    if (!interrupted) { interrupted = true; await route.fetch(); await route.abort('failed') }
+    if (route.request().method() !== 'POST') { await route.continue(); return }
+    if (!interrupted) { const response = await route.fetch(); expect(response.ok()).toBe(true); interrupted = true; await route.abort('failed') }
     else await route.continue()
   })
   await login(page)
