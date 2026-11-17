@@ -329,3 +329,5 @@ nav .list-conflict-marker{
 .item-unit-options button[aria-pressed=true]{outline:2px solid #25634c;outline-offset:-2px;background:#eaf3ed}
 
 .profile-transfer-dialog > button{display:block;width:100%;margin-top:10px;white-space:normal}
+
+.profile-transfer-dialog{overflow-wrap:anywhere}
