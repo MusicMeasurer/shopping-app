@@ -1,9 +1,11 @@
 import { test, expect, type Page } from '@playwright/test'
 
+test.use({ actionTimeout: 15000 })
+
 const email = process.env.E3_USER_A_EMAIL!
 const password = process.env.E3_USER_A_PASSWORD!
 async function openSettings(page: Page) { await page.getByRole('button', { name: 'Настройки', exact: true }).click() }
-async function closeSettings(page: Page) { await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить', exact: true }).click() }
+async function closeSettings(page: Page) { await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Закрыть', exact: true }).click() }
 async function login(page: Page) {
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
   await page.getByLabel('Email', { exact: true }).fill(email)
@@ -35,6 +37,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   const localItem = 'Локальное молоко_' + crypto.randomUUID()
   const cloudItem = 'Облачный хлеб_' + crypto.randomUUID()
   const archivedItem = 'Архив_' + crypto.randomUUID()
+  console.log('[transfer]', mode, 'rename independent profile')
   await page.goto('/shopping-app/')
   await openSettings(page)
   await page.getByRole('button', { name: 'Изменить имя профиля' }).click()
@@ -43,9 +46,11 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await rename.getByRole('button', { name: 'Сохранить имя' }).click()
   await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(guestName)
   await closeSettings(page)
+  console.log('[transfer]', mode, 'decline first transfer')
   await login(page)
   await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  console.log('[transfer]', mode, 'prepare cloud collision')
   await createList(page, name)
   await add(page, cloudItem)
   // Wait for actual receipt, not just optimistic UI.
@@ -55,6 +60,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
     db.close(); return count
   }), { timeout: 30000 }).toBe(0)
   if (mode === 'separate') await createList(page, name + ' (2)')
+  console.log('[transfer]', mode, 'inspect local login name')
   await logout(page)
   await openSettings(page)
   await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(email)
@@ -62,6 +68,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: guestName })
   // Switching profile remounts the workspace and closes Settings.
   await expect(page.getByRole('button', { name: 'Новый список', exact: true })).toBeEnabled()
+  console.log('[transfer]', mode, 'prepare guest archive and items')
   await createList(page, name)
   await add(page, archivedItem)
   await page.getByRole('checkbox', { name: archivedItem, exact: true }).check()
@@ -75,6 +82,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
     if (!interrupted) { const response = await route.fetch(); expect(response.ok()).toBe(true); interrupted = true; await route.abort('failed') }
     else await route.continue()
   })
+  console.log('[transfer]', mode, 'consent and collision choice')
   await login(page)
   const consent = page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
   await expect(consent).toContainText('исходный локальный профиль удалён после успешного переноса')
@@ -83,6 +91,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await expect(collision).toContainText(name)
   await collision.getByRole('button', { name: mode === 'merge' ? 'Объединить товары' : 'Создать отдельные списки с постфиксом (2)', exact: true }).click()
   await expect(page.getByText('Перенос локального профиля не завершён.', { exact: false })).toBeVisible({ timeout: 30000 })
+  console.log('[transfer]', mode, 'resume committed import after dropped response')
   await page.reload()
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
   await expect(page.getByRole('dialog', { name: 'Синхронизация локального профиля' })).toHaveCount(0)
