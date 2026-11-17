@@ -84,7 +84,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   let interrupted = false
   await page.route('**/rest/v1/rpc/import_e4_profile_merge', async route => {
     if (route.request().method() !== 'POST') { await route.continue(); return }
-    if (!interrupted) { const response = await route.fetch(); expect(response.ok()).toBe(true); interrupted = true; await route.abort('failed') }
+    if (!interrupted) { const response = await route.fetch(); console.log('[transfer rpc]', mode, response.status()); expect(response.ok()).toBe(true); interrupted = true; await route.abort('failed') }
     else await route.continue()
   })
   console.log('[transfer]', mode, 'consent and collision choice')
@@ -96,7 +96,15 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await expect(collision).toContainText(name)
   await expect.poll(() => collision.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
   await collision.getByRole('button', { name: mode === 'merge' ? 'Объединить товары' : 'Создать отдельные списки с постфиксом (2)', exact: true }).click()
-  await expect(page.getByText('Перенос локального профиля не завершён.', { exact: false })).toBeVisible({ timeout: 30000 })
+  try {
+    await expect(page.getByText('Перенос локального профиля не завершён.', { exact: false })).toBeVisible({ timeout: 30000 })
+  } catch (error) {
+    console.log('[transfer state]', mode, { interrupted,
+      alerts: await page.getByRole('alert').allTextContents(),
+      statuses: (await page.getByRole('status').allTextContents()).map(text => text.slice(0, 500)),
+      dialogs: (await page.getByRole('dialog').allTextContents()).map(text => text.slice(0, 500)) })
+    throw error
+  }
   console.log('[transfer]', mode, 'resume committed import after dropped response')
   await page.reload()
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })

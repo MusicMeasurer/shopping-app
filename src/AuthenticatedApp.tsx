@@ -89,6 +89,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   } | null>(null)
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
+  const [transferError, setTransferError] = useState('')
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
   const transferAnswer = useRef<((answer: 'skip' | 'separate' | 'merge' | 'yes') => void) | null>(null)
   function answerTransfer(answer: 'skip' | 'separate' | 'merge' | 'yes') {
@@ -99,6 +100,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // The account ID is only trusted after a fresh server verification. Keep
   // account-scoped UI unmounted until its local profile exists durably.
   useEffect(() => {
+    setTransferError('')
     if (!workspaceAccount || !client) { setReadyAccount(null); setProfileError(''); return }
     if (offlineAccount) {
       let cancelled = false
@@ -161,7 +163,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         await syncGuestImports(storage, client, currentAccount,
           async () => !cancelled && await verifiedAccountId(client) === currentAccount)
       } catch (error) {
-        if (!cancelled) setCloudRefreshStatus((error as { code?: string })?.code === '23505'
+        if (!cancelled) setTransferError((error as { code?: string })?.code === '23505'
           ? 'Перенос остановлен: в аккаунте уже есть список с таким названием. Локальные данные сохранены.'
           : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
@@ -922,7 +924,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
         </button>
       </div> : undefined} />
-    {currentAccount && (cloudRefreshStatus || syncError) && <div role="status">{cloudRefreshStatus && <p>{cloudRefreshStatus}</p>}{syncError && <p>{syncError}</p>}</div>}
+    {currentAccount && (cloudRefreshStatus || syncError || transferError) && <div role="status">{transferError && <p>{transferError}</p>}{cloudRefreshStatus && <p>{cloudRefreshStatus}</p>}{syncError && <p>{syncError}</p>}</div>}
     {showLabControls && client && view.status === 'account' && <section aria-label="Облачные списки">
       <details><summary>Служебные операции облака</summary>
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
