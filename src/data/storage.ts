@@ -49,6 +49,8 @@ interface ProfileOwnedRecord<T> { key: string; profileId: string; record: T }
 interface GuestImport {
   key: string; accountId: string; operationId: string; imported: boolean
   lists: ShoppingListRecord[]; items: Item[]; archives: ArchivedListRecord[]
+  collisionMode?: 'separate' | 'merge'
+  removeSource?: boolean
 }
 interface ShoppingDB extends DBSchema {
   guestImports: { key: string; value: GuestImport }
@@ -405,7 +407,11 @@ export function createStorage(name = 'shopping-app') {
     async deleteProfileList(profileId: string, listId: string): Promise<void> {
       if (!profileId.trim() || !listId.trim()) throw new Error('Profile and list IDs required')
       const db = await database
-      const tx = db.transaction(['profileLists', 'profileItems'], 'readwrite')
+      const tx = db.transaction(['profileLists', 'profileItems', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -470,11 +476,10 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
-    /** Idempotently find or create a profile for a verified cloud identity.
-     * The original offline guest is never rebound or deleted. All metadata
-     * changes are serialized in one transaction across simultaneous tabs.
-     */
-    async ensureVerifiedAccountProfile(verifiedAccountId: string): Promise<LocalProfileRegistry> {
+    /** Consent is explicit and belongs to the active unbound source, never another account. */
+    async ensureVerifiedAccountProfile(verifiedAccountId: string, options: {
+      login?: string; sourceProfileId?: string; collisionMode?: 'separate' | 'merge'
+    } = {}): Promise<LocalProfileRegistry> {
       if (!verifiedAccountId.trim()) throw new Error('Verified account required')
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives'], 'readwrite')
@@ -483,32 +488,29 @@ export function createStorage(name = 'shopping-app') {
       try {
         const current = await tx.objectStore('localProfileRegistry').get('device')
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
-        if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) {
-          throw new Error('Profile cutover is not active')
-        }
+        if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover is not active')
         const existing = current.registry.profiles.find(p => p.cloudAccountId === verifiedAccountId)
-        const guest = current.registry.profiles.find(p => p.id === current.registry.activeProfileId && p.cloudAccountId === null)
-        if (guest && !await tx.objectStore('guestImports').get(guest.id)) {
-          const records = await Promise.all([
-            tx.objectStore('profileLists').index('byProfile').getAll(guest.id),
-            tx.objectStore('profileItems').index('byProfile').getAll(guest.id),
-            tx.objectStore('profileArchives').index('byProfile').getAll(guest.id),
-          ])
-          const importableLists = records[0].map(row => row.record).filter(list =>
-            records[1].some(row => row.record.listId === list.id) ||
-            !defaultLists.some((defaultList, position) =>
-              defaultList.id === list.id && defaultList.name === list.name && list.kind === 'permanent' &&
-              defaultList.symbol === list.symbol && position === (list.position ?? position)))
-          if (importableLists.length || records[2].length) {
-            await tx.objectStore('guestImports').add({
-              key: guest.id, accountId: verifiedAccountId, operationId: crypto.randomUUID(), imported: false,
-              lists: importableLists, items: records[1].map(row => row.record), archives: records[2].map(row => row.record),
-            })
+        if (options.sourceProfileId) {
+          const source = current.registry.profiles.find(p => p.id === options.sourceProfileId)
+          if (!source || source.cloudAccountId || current.registry.activeProfileId !== source.id || !options.collisionMode)
+            throw new Error('Transfer source changed; consent required')
+          const prior = await tx.objectStore('guestImports').get(source.id)
+          if (prior && !prior.imported && prior.accountId !== verifiedAccountId) throw new Error('Profile transfer already assigned')
+          if (!prior || prior.imported) {
+            const [lists, items, archives] = await Promise.all([
+              tx.objectStore('profileLists').index('byProfile').getAll(source.id),
+              tx.objectStore('profileItems').index('byProfile').getAll(source.id),
+              tx.objectStore('profileArchives').index('byProfile').getAll(source.id),
+            ])
+            await tx.objectStore('guestImports').put({ key: source.id, accountId: verifiedAccountId,
+              operationId: crypto.randomUUID(), imported: false, removeSource: true, collisionMode: options.collisionMode,
+              lists: lists.map(r => r.record), items: items.map(r => r.record), archives: archives.map(r => r.record) })
           }
         }
-        const registry = existing
-          ? { ...current.registry, activeProfileId: existing.id }
+        let registry = existing ? { ...current.registry, activeProfileId: existing.id }
           : addProfile(current.registry, { id: crypto.randomUUID(), cloudAccountId: verifiedAccountId, createdAt: Date.now() })
+        registry = { ...registry, profiles: registry.profiles.map(p => p.cloudAccountId === verifiedAccountId
+          ? { ...p, login: options.login?.trim() || p.login } : p) }
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
@@ -518,13 +520,28 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    async renameLocalProfile(profileId: string, name: string): Promise<LocalProfileRegistry> {
+      name = name.trim()
+      if (!name || name.length > 120) throw new Error('Введите имя от 1 до 120 символов.')
+      const tx = (await database).transaction(['localProfileRegistry', 'guestImports'], 'readwrite')
+      const current = await tx.objectStore('localProfileRegistry').get('device')
+      const profile = current?.registry.profiles.find(p => p.id === profileId)
+      if (!current || !profile || profile.cloudAccountId || (await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Имя связанного или переносимого профиля изменить нельзя.')
+      }
+      const registry = { ...current.registry, profiles: current.registry.profiles.map(p => p.id === profileId ? { ...p, name } : p) }
+      await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
+      await tx.done
+      return registry
+    },
     async readGuestImports(accountId: string): Promise<GuestImport[]> {
       return (await (await database).getAll('guestImports')).filter(row => row.accountId === accountId && !row.imported)
     },
     async confirmGuestImport(batch: GuestImport, mappings: readonly {
       id: string; name: string; kind: 'permanent' | 'oneoff'; position: number; symbol?: string
     }[], items: readonly { item: Item; version: number }[]): Promise<void> {
-      const tx = (await database).transaction(['guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions'], 'readwrite')
+      const tx = (await database).transaction(['guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -534,16 +551,32 @@ export function createStorage(name = 'shopping-app') {
         if (!current.imported) {
           for (const { id, name, kind, position, symbol } of mappings) {
             const key = accountKey(batch.accountId, id)
+            const existing = (await tx.objectStore('accountListMappings').index('byAccount').getAll(batch.accountId)).find(row => row.remoteListId === id)
+            if (existing) continue
             await tx.objectStore('accountListMappings').add({
               key, accountId: batch.accountId, localListId: id, remoteListId: id, symbol, metadata: { name, kind, position },
             })
           }
           for (const { item, version } of items) {
             const key = accountKey(batch.accountId, item.id)
-            await tx.objectStore('accountItems').add({ key, accountId: batch.accountId, item })
+            if (await tx.objectStore('accountItems').get(key)) continue
+            const mapping = (await tx.objectStore('accountListMappings').index('byAccount').getAll(batch.accountId)).find(row => row.remoteListId === item.listId)
+            await tx.objectStore('accountItems').add({ key, accountId: batch.accountId, item: { ...item, listId: mapping?.localListId ?? item.listId } })
             await tx.objectStore('accountItemVersions').add({
               key, accountId: batch.accountId, itemId: item.id, remoteListId: item.listId, version,
             })
+          }
+          if (current.removeSource) {
+            const saved = await tx.objectStore('localProfileRegistry').get('device')
+            if (!saved?.registry.profiles.some(p => p.cloudAccountId === batch.accountId)) throw new Error('Transfer target missing')
+            const registry = removeProfileMetadata(saved.registry, batch.key)
+            for (const storeName of ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const) {
+              const store = tx.objectStore(storeName)
+              for (const key of await store.index('byProfile').getAllKeys(batch.key)) await store.delete(key)
+            }
+            const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
+            if (cutover?.profileId === batch.key) await tx.objectStore('profileCutover').put({ ...cutover, profileId: registry.profiles[0].id })
+            await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
           }
           await tx.objectStore('guestImports').put({ ...current, imported: true, lists: [], items: [], archives: [] })
         }
@@ -594,6 +627,7 @@ export function createStorage(name = 'shopping-app') {
         if (!current) throw new Error('Local profiles not initialized')
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
+        if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) throw new Error('Profile has unsynced operations; deletion blocked')
         if (cutover.profileId === profileId) throw new Error('Original guest profile cannot be deleted')
         const accountId = current.registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId
         if (accountId) {
@@ -641,7 +675,11 @@ export function createStorage(name = 'shopping-app') {
      */
     async saveProfileItem(profileId: string, item: Item): Promise<void> {
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -660,7 +698,11 @@ export function createStorage(name = 'shopping-app') {
     /** Batch import is atomic: a multiline add never saves only part of a list. */
     async saveProfileItems(profileId: string, items: Item[]): Promise<void> {
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -680,7 +722,11 @@ export function createStorage(name = 'shopping-app') {
     },
     async removeProfileItem(profileId: string, itemId: string): Promise<void> {
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -739,7 +785,11 @@ export function createStorage(name = 'shopping-app') {
     /** Profile-only list operations. No legacy or other profile stores are mutated. */
     async saveProfileList(profileId: string, list: ShoppingListRecord): Promise<void> {
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileLists'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileLists', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
       if (!registry?.profiles.some(profile => profile.id === profileId)) {
         tx.abort(); await tx.done.catch(() => {})
@@ -756,7 +806,11 @@ export function createStorage(name = 'shopping-app') {
     async reorderProfileLists(profileId: string, records: ShoppingListRecord[]): Promise<void> {
       if (!profileId.trim()) throw new Error('Profile ID required')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileLists'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profileLists', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -774,30 +828,42 @@ export function createStorage(name = 'shopping-app') {
       const trimmed = name?.trim()
       if (name !== null && (!trimmed || trimmed.length > 120)) throw new Error('Введите название списка от 1 до 120 символов.')
       const db = await database
-      const tx = db.transaction('profileLists', 'readwrite')
+      const tx = db.transaction(['profileLists', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const key = JSON.stringify([profileId, listId])
-      const existing = await tx.store.get(key)
+      const existing = await tx.objectStore('profileLists').get(key)
       if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
       if (trimmed !== undefined && listNameKey(existing.record.name) !== listNameKey(trimmed)) {
-        const lists = await tx.store.index('byProfile').getAll(profileId)
+        const lists = await tx.objectStore('profileLists').index('byProfile').getAll(profileId)
         assertFreeListName(lists.map(row => row.record), listId, trimmed)
       }
-      await tx.store.put({ ...existing, record: { ...existing.record, name: trimmed ?? existing.record.name, symbol: symbol ?? existing.record.symbol } })
+      await tx.objectStore('profileLists').put({ ...existing, record: { ...existing.record, name: trimmed ?? existing.record.name, symbol: symbol ?? existing.record.symbol } })
       await tx.done
     },
     async changeProfileListKind(profileId: string, listId: string, kind: ShoppingListRecord['kind']): Promise<void> {
       if (kind !== 'permanent' && kind !== 'oneoff') throw new Error('Недопустимый тип списка')
       const db = await database
-      const tx = db.transaction('profileLists', 'readwrite')
+      const tx = db.transaction(['profileLists', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const key = JSON.stringify([profileId, listId])
-      const existing = await tx.store.get(key)
+      const existing = await tx.objectStore('profileLists').get(key)
       if (!existing) { await tx.done; throw new Error('Список не найден в профиле') }
-      await tx.store.put({ ...existing, record: { ...existing.record, kind } })
+      await tx.objectStore('profileLists').put({ ...existing, record: { ...existing.record, kind } })
       await tx.done
     },
     async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased'): Promise<void> {
       const db = await database
-      const tx = db.transaction(['profileLists', 'profileItems', 'profileArchives'], 'readwrite')
+      const tx = db.transaction(['profileLists', 'profileItems', 'profileArchives', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -826,7 +892,11 @@ export function createStorage(name = 'shopping-app') {
     },
     async enqueueProfilePending(profileId: string, operation: PendingItemOperation): Promise<void> {
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profilePendingOperations'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'profilePendingOperations', 'guestImports'], 'readwrite')
+      if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
+        tx.abort(); await tx.done.catch(() => {})
+        throw new Error('Профиль переносится в аккаунт. Повторите вход для завершения переноса.')
+      }
       const done = tx.done
       void done.catch(() => {})
       try {

@@ -28,6 +28,9 @@ test('cloud E3/E4: all-purchased and none-purchased have distinct archive outcom
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  // Explicitly retain independent guest data in this regression.
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
   await page.getByText('Привязка и синхронизация', { exact: true }).click()
   await page.getByRole('button', { name: 'Загрузить мои облачные списки' }).click()

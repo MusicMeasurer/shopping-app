@@ -15,6 +15,7 @@ import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
+import { profileName } from './data/local-profiles'
 import type { LocalProfileRegistry } from './data/local-profiles'
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
 export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
@@ -45,6 +46,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const localAccount = savedAccount?.profileId === guestProfile ? savedAccount : null
   const [profileActionError, setProfileActionError] = useState('')
   const [profileBusy, setProfileBusy] = useState(false)
+  const [profileRename, setProfileRename] = useState<string | null>(null)
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
@@ -114,7 +116,14 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   if (accountId === null && guestProfile === undefined && upgradeBlocked) return <main><p role="alert">Другая открытая вкладка использует старую версию покупок и не даёт безопасно обновить хранилище. Закройте другие вкладки приложения, затем повторите открытие. Ваши покупки не удалены.</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
   const profileControls = <>
-    {accountId === null && guestProfile && registry && <div className="profile-controls" role="group" aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.map((profile, index) => <option key={profile.id} value={profile.id}>{profile.id === registry.profiles[0].id ? 'Мои покупки' : `Локальный профиль ${index + 1}`}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</div>}
+    {accountId === null && guestProfile && registry && <div className="profile-controls" role="group" aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.map((profile, index) => <option key={profile.id} value={profile.id}>{profileName(profile, index)}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</div>}
+    {accountId === null && registry && guestProfile && !registry.profiles.find(p => p.id === guestProfile)?.cloudAccountId && <button type="button" disabled={profileBusy} onClick={() => setProfileRename(profileName(registry.profiles.find(p => p.id === guestProfile)!, registry.profiles.findIndex(p => p.id === guestProfile)))}>Изменить имя профиля</button>}
+    {profileRename !== null && guestProfile && <WorkspaceDialog label="Имя локального профиля" className="profile-name-dialog" onDismiss={() => setProfileRename(null)}>
+      <form onSubmit={event => { event.preventDefault(); setProfileBusy(true); void storage.renameLocalProfile(guestProfile, profileRename).then(next => { setRegistry(next); setProfileRename(null); setProfileActionError('') }).catch(error => setProfileActionError(error instanceof Error ? error.message : 'Не удалось изменить имя.')).finally(() => setProfileBusy(false)) }}>
+        <h2>Имя локального профиля</h2><label>Имя профиля<input maxLength={120} value={profileRename} onChange={event => setProfileRename(event.target.value)} /></label>
+        <button type="submit" disabled={profileBusy || !profileRename.trim()}>Сохранить имя</button><button type="button" onClick={() => setProfileRename(null)}>Отмена</button>
+      </form>
+    </WorkspaceDialog>}
     {accountId === null && profileActionError && <p role="alert">{profileActionError}</p>}
   </>
   return <>

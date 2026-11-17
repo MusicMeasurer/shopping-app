@@ -157,3 +157,8 @@ jobs:
       - name: Verify no user data retained by recovery test
         run: |
           test "$(psql -X -v ON_ERROR_STOP=1 -At -c 'SELECT count(*) FROM public.shopping_lists')" = 0
+
+      - name: Apply explicit consent profile merge RPC
+        run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/032_e4_profile_merge.sql
+      - name: Verify profile merge replay, name collisions and isolation
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_profile_merge.sql

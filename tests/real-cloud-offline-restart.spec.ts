@@ -33,6 +33,9 @@ test('bound account queues an offline add across browser restart and syncs after
   await page.getByLabel('Email').fill(email)
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  // Explicitly retain independent guest data in this regression.
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
     if (integrated) {
       await page.getByRole('button', { name: 'Новый список', exact: true }).click()

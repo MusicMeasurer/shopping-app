@@ -38,6 +38,9 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  // Explicitly retain independent guest data in this regression.
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
 
   // Required E4 account capability. Do not fabricate a default-list substitution.

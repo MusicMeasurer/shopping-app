@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { WorkspaceDialog } from './WorkspaceDialog'
+import { profileName } from './data/local-profiles'
 import { App } from './App'
 import { syncGuestImports } from './data/guest-import'
 import { SiriSetup } from './SiriSetup'
@@ -87,6 +89,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   } | null>(null)
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
+  const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
+  const transferAnswer = useRef<((answer: 'skip' | 'separate' | 'merge' | 'yes') => void) | null>(null)
+  function answerTransfer(answer: 'skip' | 'separate' | 'merge' | 'yes') {
+    transferAnswer.current?.(answer)
+    transferAnswer.current = null
+    setTransferPrompt(null)
+  }
   // The account ID is only trusted after a fresh server verification. Keep
   // account-scoped UI unmounted until its local profile exists durably.
   useEffect(() => {
@@ -120,7 +129,34 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         await storage.markGuestCutoverReady()
       }
       if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
-      await storage.ensureVerifiedAccountProfile(currentAccount)
+      const identity = await client.auth.getUser()
+      if (identity.error || identity.data.user?.id !== currentAccount || cancelled) return
+      const registry = await storage.readLocalProfiles()
+      const source = registry?.profiles.find(p => p.id === registry.activeProfileId && !p.cloudAccountId)
+      const pending = await storage.readGuestImports(currentAccount)
+      let collisionMode: 'separate' | 'merge' | undefined
+      if (source && !pending.length) {
+        const prompt = { name: profileName(source, registry!.profiles.indexOf(source)),
+          existing: registry!.profiles.some(p => p.cloudAccountId === currentAccount), collisions: [] as string[] }
+        const ask = (phase: 'consent' | 'collision', collisions: string[] = []) => new Promise<'skip' | 'separate' | 'merge' | 'yes'>(resolve => {
+          if (cancelled) { resolve('skip'); return }
+          transferAnswer.current = resolve
+          setTransferPrompt({ ...prompt, phase, collisions })
+        })
+        const answer = await ask('consent')
+        if (cancelled) return
+        if (answer === 'yes') {
+          const [local, remote] = await Promise.all([storage.readProfileLists(source.id), fetchCloudListMetadata(client, currentAccount)])
+          if (cancelled) return
+          const collisions = local.filter(list => remote.some(row => row.name.trim().toLowerCase() === list.name.trim().toLowerCase())).map(list => list.name)
+          const choice = collisions.length ? await ask('collision', collisions) : 'separate'
+          if (cancelled) return
+          if (choice === 'separate' || choice === 'merge') collisionMode = choice
+        }
+      }
+      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      await storage.ensureVerifiedAccountProfile(currentAccount, { login: identity.data.user.email,
+        ...(source && collisionMode ? { sourceProfileId: source.id, collisionMode } : {}) })
       try {
         await syncGuestImports(storage, client, currentAccount,
           async () => !cancelled && await verifiedAccountId(client) === currentAccount)
@@ -160,7 +196,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })().catch(() => {
       if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
-    return () => { cancelled = true }
+    return () => { cancelled = true; transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
   }, [client, currentAccount, offlineAccount, workspaceAccount, storage])
   const activeAccount = useRef<string | null>(null)
   // A verified session is not enough: the account workspace must have a
@@ -783,6 +819,24 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
   if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
+    {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="profile-transfer-dialog" onDismiss={() => answerTransfer('skip')}>
+      {transferPrompt.phase === 'consent' ? <>
+        <h2>Синхронизировать профиль «{transferPrompt.name}» с аккаунтом?</h2>
+        <p>Списки, товары и архив будут перенесены в аккаунт. Профиль будет называться логином аккаунта.</p>
+        {transferPrompt.existing && <p>На устройстве уже есть профиль этого аккаунта. Данные будут объединены с ним, а исходный локальный профиль удалён после успешного переноса.</p>}
+        <p>Если отказаться, локальный профиль останется отдельным.</p>
+        <button type="button" onClick={() => answerTransfer('yes')}>Синхронизировать профиль</button>
+        <button type="button" onClick={() => answerTransfer('skip')}>Не синхронизировать</button>
+      </> : <>
+        <h2>Совпадают названия списков</h2>
+        <p>Выберите действие для всех совпадений ({transferPrompt.collisions.length}).</p>
+        <ul>{transferPrompt.collisions.map(name => <li key={name}>{name}</li>)}</ul>
+        <button type="button" onClick={() => answerTransfer('separate')}>Создать отдельные списки с постфиксом (2)</button>
+        <button type="button" onClick={() => answerTransfer('merge')}>Объединить товары</button>
+        <p>При объединении сохранятся все товары, включая одноимённые. Тип существующего облачного списка не изменится.</p>
+        <button type="button" onClick={() => answerTransfer('skip')}>Отменить перенос</button>
+      </>}
+    </WorkspaceDialog>}
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
     {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
   </main>

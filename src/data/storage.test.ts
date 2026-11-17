@@ -578,16 +578,17 @@ it('serializes simultaneous account registration without duplicate profiles', as
   await storage.close()
 })
 
-it('stages a guest snapshot for the first verified account only', async () => {
+it('stages a guest snapshot only with explicit source consent and never assigns it to another account', async () => {
   const storage = createStorage('guest-import-' + crypto.randomUUID())
   const guest = await storage.migrateLegacyGuestToProfile()
   await storage.markGuestCutoverReady()
   const item = { id: crypto.randomUUID(), listId: 'groceries', name: 'Rice', purchased: false, createdAt: 1 }
   await storage.saveProfileItems(guest, [item])
-  await storage.ensureVerifiedAccountProfile('account-a')
+  await storage.ensureVerifiedAccountProfile('account-a', { sourceProfileId: guest, collisionMode: 'separate', login: 'a@example.test' })
   const [batch] = await storage.readGuestImports('account-a')
   expect(batch.items).toEqual([item])
-  expect(batch.lists.map(list => list.id)).toEqual(['groceries'])
+  expect(batch.lists.map(list => list.id)).toContain('groceries')
+  await expect(storage.saveProfileItem(guest, { ...item, purchased: true })).rejects.toThrow('Профиль переносится')
   await storage.switchLocalProfile(guest)
   await storage.ensureVerifiedAccountProfile('account-b')
   expect(await storage.readGuestImports('account-b')).toEqual([])

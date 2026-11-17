@@ -2,6 +2,8 @@
 export interface LocalProfile {
   id: string
   cloudAccountId: string | null
+  name?: string
+  login?: string
   createdAt: number
 }
 export interface LocalProfileRegistry {
@@ -44,4 +46,8 @@ export function removeProfileMetadata(registry: LocalProfileRegistry, profileId:
   const profiles = registry.profiles.filter(p => p.id !== profileId)
   if (!profiles.length) throw new Error('Cannot remove the last local profile')
   return { profiles, activeProfileId: registry.activeProfileId === profileId ? profiles[0].id : registry.activeProfileId }
+}
+
+export function profileName(profile: LocalProfile, index: number): string {
+  return profile.cloudAccountId ? (profile.login || 'Аккаунт') : (profile.name || (index === 0 ? 'Мои покупки' : `Локальный профиль ${index + 1}`))
 }
