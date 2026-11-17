@@ -79,7 +79,7 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 13, {
+  const database = openDB<ShoppingDB>(name, 14, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
@@ -123,9 +123,9 @@ export function createStorage(name = 'shopping-app') {
       if (!db.objectStoreNames.contains('archives')) db.createObjectStore('archives', { keyPath: 'id' })
 
     },
-    // A v10 versionchange forces cooperative v9 clients to close; v9 clients
-    // cannot reopen after the upgrade. Uncooperative older connections block
-    // the upgrade, so cutover cannot start while they still hold the database.
+    // The v14 barrier closes pre-consent v13 writers before source snapshots
+    // can be frozen or removed. Older builds cannot reopen this database.
+    // Uncooperative connections block the upgrade; no transfer can start then.
     blocking() { void database.then(db => db.close()) },
     blocked() {
       upgradeBlocked = true

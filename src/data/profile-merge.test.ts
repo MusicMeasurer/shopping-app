@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto'
 import { expect, it } from 'vitest'
+import { openDB } from 'idb'
 import { createStorage } from './storage'
 import { createItem } from '../domain/shopping'
 import { profileName } from './local-profiles'
@@ -88,5 +89,24 @@ it('transfers the original profile into a first account and keeps another accoun
   expect(after.profiles[0].cloudAccountId).toBe('a')
   expect(after.profiles[0].login).toBe('a@example.test')
   expect(await storage.readGuestImports('b')).toEqual([])
+  await storage.close()
+})
+
+it('fences pre-consent v13 tabs before any profile can be transferred', async () => {
+  const name = 'profile-transfer-version-' + crypto.randomUUID()
+  const old = await openDB(name, 13, { upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) } })
+  const item = createItem('groceries', 'Old tab purchase')
+  await old.put('items', item)
+  const storage = createStorage(name)
+  let opened = false
+  const opening = storage.read().then(items => { opened = true; return items })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(opened).toBe(false)
+  old.close()
+  expect(await opening).toEqual([item])
+  await expect(openDB(name, 13)).rejects.toThrow()
+  const source = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  expect(await storage.readProfileItems(source)).toEqual([item])
   await storage.close()
 })
