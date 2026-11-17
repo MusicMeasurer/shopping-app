@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test'
 
-test.use({ actionTimeout: 15000 })
+// Keep RPC fault injection observable; PWA offline/restart is covered separately.
+// Requests forwarded by a service worker bypass page.route.
+test.use({ actionTimeout: 15000, serviceWorkers: 'block' })
 
 const email = process.env.E3_USER_A_EMAIL!
 const password = process.env.E3_USER_A_PASSWORD!
