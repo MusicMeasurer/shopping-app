@@ -23,6 +23,8 @@ import type { SessionCandidate } from './data/auth-scope'
 
 type Controller = ReturnType<typeof createAuthController>
 
+const showLabControls = import.meta.env.VITE_LAB_CONTROLS === 'true'
+
 export function AuthenticatedApp({ storage, client }: { storage: Storage; client: SupabaseClient | null }) {
   const [view, setView] = useState<AuthView>(client ? { status: 'checking' } : { status: 'guest' })
   const [controller, setController] = useState<Controller | null>(null)
@@ -51,9 +53,23 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
+  const [syncError, setSyncError] = useState('')
+  const [hasPendingCompletion, setHasPendingCompletion] = useState(false)
   const currentAccount = view.status === 'account' ? view.accountId : null
   const offlineAccount = view.status === 'offline-account' ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
+  useEffect(() => {
+    let cancelled = false
+    setHasPendingCompletion(false)
+    if (accountDialogOpen && currentAccount) {
+      void storage.readAccountCompletions(currentAccount).then(operations => {
+        if (!cancelled) setHasPendingCompletion(operations.length > 0)
+      }).catch(() => {})
+    }
+    return () => { cancelled = true }
+  }, [accountDialogOpen, currentAccount, completionBusy, storage])
+  useEffect(() => { setSyncError('') }, [currentAccount])
+
   useEffect(() => {
     if (!currentAccount || !client) { setVerifiedEmail(''); return }
     let cancelled = false
@@ -180,8 +196,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           }).flush()
           }
         } while (flushRequested.current && activeAccount.current === accountId)
+        if (activeAccount.current === accountId) setSyncError('')
       } catch {
-        // Durable queue remains available for explicit retry.
+        if (activeAccount.current === accountId)
+          setSyncError('Не удалось отправить изменения. Повторите синхронизацию.')
       } finally {
         automaticFlushRunning.current = false
         if (activeAccount.current !== accountId) flushRequested.current = false
@@ -333,9 +351,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (!disposed && activeAccount.current === accountId) {
           if (imported > 0) setWorkspaceRevision(value => value + 1)
           if (failed) setCloudRefreshStatus(imported > 0
-            ? 'Получено новых покупок: ' + imported + '. Один из облачных списков требует ручной проверки.'
-            : 'Автоматическая загрузка приостановлена. Проверьте облачный список вручную.')
-          else if (imported > 0) setCloudRefreshStatus('Получено новых покупок из облака: ' + imported)
+            ? 'Получено новых покупок: ' + imported + '. Некоторые списки не удалось обновить.'
+            : 'Не удалось обновить некоторые списки. Повторите синхронизацию.')
+          else setCloudRefreshStatus(imported > 0 ? 'Получено новых покупок из облака: ' + imported : '')
         }
         running = false
         if (refreshRequested) void refresh()
@@ -777,7 +795,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     {client && accountDialogOpen && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setAccountDialogOpen(false) }}>
       <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
         <div className="account-dialog-heading"><h2 id="account-dialog-title">{view.status === 'account' || view.status === 'offline-account' ? 'Мой аккаунт' : 'Вход в аккаунт'}</h2><button type="button" aria-label="Закрыть окно аккаунта" onClick={() => setAccountDialogOpen(false)}>×</button></div>
-        {view.status === 'account' ? <><p className="account-full-email">{verifiedEmail || 'Аккаунт подтверждён'}</p><button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
+        {view.status === 'account' ? <><p className="account-full-email">{verifiedEmail || 'Аккаунт подтверждён'}</p>
+          <button type="button" onClick={() => {
+            onQueued()
+            setCloudMappingRevision(value => value + 1)
+          }}>Повторить синхронизацию</button>
+          {hasPendingCompletion && <button type="button" disabled={completionBusy}
+            onClick={() => void recoverCloudCompletions()}>Продолжить незавершённые операции</button>}
+          {completionPreflight && <p role="status">{completionPreflight}</p>}
+          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
           view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
           <form onSubmit={signIn}>
             <label htmlFor="auth-email">Email</label>
@@ -842,7 +868,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
         </button>
       </div> : undefined} />
-    {client && view.status === 'account' && <section aria-label="Облачные списки">
+    {currentAccount && (cloudRefreshStatus || syncError) && <div role="status">{cloudRefreshStatus && <p>{cloudRefreshStatus}</p>}{syncError && <p>{syncError}</p>}</div>}
+    {showLabControls && client && view.status === 'account' && <section aria-label="Облачные списки">
       <details><summary>Служебные операции облака</summary>
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
         Проверить типы и порядок облачных списков
@@ -895,7 +922,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         </div>}
       </section>
       <details><summary>Привязка и синхронизация</summary>
-      {cloudRefreshStatus && <p role="status">{cloudRefreshStatus}</p>}
       <p>Привязка не переносит существующие покупки. Новые изменения в привязанном списке отправляются автоматически при доступной сети.</p>
       <button type="button" disabled={cloudLoading} onClick={() => void loadCloudLists()}>
         {cloudLoading ? 'Проверяем…' : 'Загрузить мои облачные списки'}

@@ -61,6 +61,7 @@ jobs:
         env:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+          VITE_LAB_CONTROLS: 'true'
         run: npm run build
       - name: Real mobile browser A/B switch, guest isolation and offline reload
         env:

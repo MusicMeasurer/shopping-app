@@ -44,6 +44,13 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 oneoff creation is absent in authenticated mode').toBeVisible()
   tracePhase('creating oneoff')
+  await expect(page.getByText('Служебные операции облака', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Привязка и синхронизация', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Облачный архив', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
+  const account = page.getByRole('dialog', { name: 'Мой аккаунт' })
+  await account.getByRole('button', { name: 'Повторить синхронизацию' }).click()
+  await account.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
   await page.locator('#new-list-kind').selectOption('oneoff')
