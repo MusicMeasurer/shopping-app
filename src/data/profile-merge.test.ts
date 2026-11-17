@@ -70,3 +70,23 @@ it('rejects stale consent and importing a profile already bound to another accou
   expect(await storage.readGuestImports('b')).toEqual([])
   await storage.close()
 })
+
+it('transfers the original profile into a first account and keeps another account isolated', async () => {
+  const storage = createStorage('first-consented-' + crypto.randomUUID())
+  const source = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const registry = await storage.ensureVerifiedAccountProfile('a', { sourceProfileId: source, collisionMode: 'separate', login: 'a@example.test' })
+  const [batch] = await storage.readGuestImports('a')
+  expect(batch.lists.length).toBeGreaterThan(0)
+  expect(registry.profiles.some(p => p.id === source)).toBe(true)
+  await storage.switchLocalProfile(source)
+  await expect(storage.ensureVerifiedAccountProfile('b', { sourceProfileId: source, collisionMode: 'merge' })).rejects.toThrow('already assigned')
+  await storage.ensureVerifiedAccountProfile('a')
+  await storage.confirmGuestImport(batch, batch.lists.map((list, position) => ({ id: crypto.randomUUID(), name: list.name, kind: list.kind, position })), [])
+  const after = (await storage.readLocalProfiles())!
+  expect(after.profiles).toHaveLength(1)
+  expect(after.profiles[0].cloudAccountId).toBe('a')
+  expect(after.profiles[0].login).toBe('a@example.test')
+  expect(await storage.readGuestImports('b')).toEqual([])
+  await storage.close()
+})

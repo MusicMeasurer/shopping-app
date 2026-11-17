@@ -21,9 +21,17 @@ export async function syncGuestImports(
       throw new Error('Unconfirmed guest import')
     const lists = (await fetchCloudListMetadata(client, accountId)).filter(list => ids.includes(list.id))
     if (lists.length !== new Set(ids).size) throw new Error('Guest import lists are missing from the verified account')
-    const items = (await Promise.all(lists.map(list => fetchRemoteItems(client, list.id)))).flat()
+    const items = (await Promise.all(lists.map(async list => {
+      const rows = []
+      for (let from = 0; ; from += 500) {
+        const page = await fetchRemoteItems(client, list.id, false, { from, to: from + 499 })
+        rows.push(...page)
+        if (page.length < 500) return rows
+        if (!await isActive()) throw new Error('Transfer identity changed')
+      }
+    }))).flat()
     if (batch.removeSource) {
-      const archives = await fetchCloudArchive(client)
+      const archives = await fetchCloudArchive(client, true)
       if (!Array.isArray(data?.archives) || data.archives.length !== batch.archives.length ||
           data.archives.some((id: string, index: number) => {
             const saved = archives.find(row => row.id === id)

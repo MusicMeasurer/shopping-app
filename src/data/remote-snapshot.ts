@@ -18,16 +18,18 @@ export interface RemoteItem {
   unit?: string
 }
 
-export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, listId: string, includeFieldClocks = false): Promise<RemoteItem[]> {
+export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, listId: string, includeFieldClocks = false, page?: { from: number; to: number }): Promise<RemoteItem[]> {
   if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(listId)) {
     throw new Error('Invalid remote list ID')
   }
   const columns = 'id,list_id,name,purchased,created_at,version,quantity,unit'
-  const { data, error } = await client.from('shopping_items')
+  let query = client.from('shopping_items')
     .select(includeFieldClocks ? columns + ',updated_at,field_changed_at' : columns)
     .eq('list_id', listId)
     .is('deleted_at', null)
     .order('created_at', { ascending: true })
+  if (page) query = query.order('id', { ascending: true }).range(page.from, page.to)
+  const { data, error } = await query
   if (error) throw error
   if (!Array.isArray(data)) throw new Error('Invalid remote snapshot')
   return data.map((row: unknown): RemoteItem => {
