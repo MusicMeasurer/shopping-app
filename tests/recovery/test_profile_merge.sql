@@ -19,7 +19,7 @@ begin
  if (receipt->'lists'->>'local')::uuid <> target or
     (select count(*) from public.shopping_items where list_id=target and name='Milk' and purchased and quantity=2) <> 2 or
     (select revision from public.shopping_lists where id=target) <> 2 or
-    (select count(*) from public.list_changes where list_id=target) <> 2 or
+    (select count(*) from public.pull_item_changes(target,0,100)) <> 2 or
     (select count(*) from public.e4_archive_items where name='Bread') <> 4 then raise exception 'Merge data or change feed mismatch'; end if;
  begin
    perform public.import_e4_profile_merge(op,auth.uid(),payload || '{"collisionMode":"merge"}');

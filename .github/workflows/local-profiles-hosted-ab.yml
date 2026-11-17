@@ -8,6 +8,7 @@ on:
       - 'src/AuthenticatedApp.tsx'
       - 'src/e3-local-cloud.integration.test.ts'
       - 'tests/real-ab-lifecycle.spec.ts'
+      - 'tests/profile-transfer.spec.ts'
       - 'tests/real-cloud-offline-restart.spec.ts'
       - 'scripts/e3-real-session-gate.mjs'
       - 'scripts/e3-rpc-write-probe.mjs'
@@ -69,7 +70,7 @@ jobs:
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
         run: |
           if [[ "$GITHUB_REF_NAME" == feature/e4-accepted-reintegration ]]; then
-            npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --project=iphone-webkit --workers=1
+            npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts tests/profile-transfer.spec.ts --project=iphone-webkit --workers=1
           else
             npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --workers=1
           fi
