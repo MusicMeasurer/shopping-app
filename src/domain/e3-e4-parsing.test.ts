@@ -12,6 +12,11 @@ describe('E3/E4 shared input contracts', () => {
     expect(parseItem('Сахар 1,5 кг')).toEqual({ name: 'Сахар', quantity: 1.5, unit: 'кг' })
     expect(parseItem('Хлеб')).toEqual({ name: 'Хлеб' })
   })
+  it('recognizes piece and pack abbreviations with and without a period', () => {
+    expect(parseItem('Яблоки 2 шт.')).toEqual({ name: 'Яблоки', quantity: 2, unit: 'шт.' })
+    expect(parseItem('Чай 3 уп.')).toEqual({ name: 'Чай', quantity: 3, unit: 'уп.' })
+    expect(parseItem('Чай 3 уп')).toEqual({ name: 'Чай', quantity: 3, unit: 'уп' })
+  })
   it('splits Windows and Unix multiline input without merging products', () => {
     expect(parseItems('Молоко 2 л\r\nХлеб\nЯблоки 3 кг')).toEqual([
       { name: 'Молоко', quantity: 2, unit: 'л' },

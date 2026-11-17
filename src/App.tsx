@@ -485,6 +485,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   async function submit(event: FormEvent) {
     event.preventDefault()
+    if (!list) return
     if (accountId !== null && !cloudBoundLists[active]) { setItemError('Для добавления товаров сначала требуется безопасная привязка облачного списка.'); return }
     if (await shopping.add(active, name)) { setName(''); setItemError('') }
     else setItemError('Проверьте название: каждый товар должен содержать от 1 до 120 символов.')
@@ -615,7 +616,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     </WorkspaceDialog>}
     {cloudListError && !newListDialog && !renaming && !typeList && <p role="alert">{cloudListError}</p>}
     {listError && !renaming && !typeList && <p role="alert" className="error">{listError}</p>}
-    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : <section aria-labelledby="list-title">
+    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : visibleLists.length === 0 ? <section aria-labelledby="list-title">
+      <h2 id="list-title">Списки покупок</h2>
+      <p>Чтобы добавить товары, создайте список.</p>
+      {accountId !== null && completionStatus && <p role="status">{completionStatus}</p>}
+    </section> : <section aria-labelledby="list-title">
       <ListHeading name={list?.name ?? 'Списки покупок'} remaining={remaining}
         indicators={list && <ListIndicators kind={list.kind} cloudStatus={cloudStatus}/>}
         syncHint={!!list && cloudStatus === 'signed-out'}
@@ -678,7 +683,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <button type="button" disabled={!onResolveItemDeletion || resolvingConflict} onClick={() => void resolveConflict(selectedConflict, false)}>Подтвердить удаление</button>
       <button type="button" disabled={resolvingConflict} onClick={() => setConflictId(undefined)}>Позже</button>
     </WorkspaceDialog>}
-    {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) { shopping.clearError(); setEditingId(null) } }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
+    {!showArchive && editingItem && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) { shopping.clearError(); setEditingId(null) } }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/>
+      <div className="item-unit-options" role="group" aria-label="Быстрый выбор единицы измерения">
+        {['шт.', 'уп.'].map(unit => <button type="button" key={unit} aria-pressed={editingUnit === unit}
+          disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}
+      </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
   </main>
 }
