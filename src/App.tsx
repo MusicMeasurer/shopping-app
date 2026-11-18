@@ -487,7 +487,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     finally { setCreatingList(false) }
   }
   const [name, setName] = useState('')
-  const [itemError, setItemError] = useState('')
+  const [itemNotice, setItemNotice] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
   const [editingQuantity, setEditingQuantity] = useState('')
@@ -649,9 +649,15 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (!list || activeListLocked) return
-    if (accountId !== null && !cloudBoundLists[active]) { setItemError('Для добавления товаров сначала требуется безопасная привязка облачного списка.'); return }
-    if (await shopping.add(active, name)) { setName(''); setItemError('') }
-    else setItemError('Проверьте название: каждый товар должен содержать от 1 до 120 символов.')
+    if (accountId !== null && !cloudBoundLists[active]) return
+    shopping.clearError()
+    setItemNotice('')
+    const result = await shopping.add(active, name)
+    if (!result) return
+    if (result.saved) setName('')
+    if (result.skipped.length) setItemNotice(result.saved
+      ? `Пропущены товары, которые уже есть в списке: ${result.skipped.join(', ')}.`
+      : `В списке уже есть: ${result.skipped.join(', ')}.`)
   }
   async function saveEdit(event: FormEvent, item: typeof shopping.items[number]) {
     event.preventDefault()
@@ -867,7 +873,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         </div>}
 
       {accountId !== null && list && !cloudBoundLists[active] && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
-      <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy || activeListLocked}/><button className="add" disabled={shopping.loading || shopping.busy || activeListLocked || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>
+      <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemNotice('');shopping.clearError()}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy || activeListLocked}/><button className="add" disabled={shopping.loading || shopping.busy || activeListLocked || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemNotice && <p className="field-error" role="status">{itemNotice}</p>}</form>
       {shopping.error && !editingItem && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
       {(rows.length > 1 || sort !== 'recent') && <label className="item-sort">Сортировка
         <select value={sort} onChange={event => setItemSort(current => ({ ...current, [active]: event.target.value as ItemSort }))}>
