@@ -83,6 +83,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await page.getByRole('checkbox', { name: archivedItem, exact: true }).click()
   await expect(page.getByRole('checkbox', { name: archivedItem, exact: true })).toBeChecked()
   await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
   await page.getByRole('button', { name: 'Завершить: отмеченные', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: archivedItem, exact: true })).toHaveCount(0)
   await add(page, localItem)

@@ -109,6 +109,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   }, { timeout: 30000 }).toBe(2)
   tracePhase('completing list')
   await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
   // Fail with the application's actual completion reason rather than a generic

@@ -100,6 +100,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   }, { timeout: 30000 }).toBe(1)
   async function completeList(buttonName: string) {
     await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+    await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: buttonName, exact: true }).click()
     // Fail with the application's actual completion reason rather than a generic
@@ -205,6 +206,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   tracePhase('cancelling partial completion')
   const completeMarked = 'Завершить: отмеченные'
   await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.dismiss())
   await page.getByRole('button', { name: completeMarked, exact: true }).click()
   await expect(marked).toBeChecked()

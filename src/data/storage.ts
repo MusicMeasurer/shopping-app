@@ -17,7 +17,7 @@ function assertFreeListName(lists: readonly { id: string; name: string }[], id: 
 
 export interface CloudCompletionIntent {
   operationId: string; accountId: string; localListId: string; remoteListId: string;
-  expectedRevision: number; mode: 'marked_only' | 'all_purchased' | 'none_purchased' | 'delete_list';
+  expectedRevision: number; mode: CompletionMode;
   itemIds: string[]; createdAt: number
 }
 export interface CloudCompletionRequest {
@@ -28,6 +28,7 @@ export interface CloudCompletionRequest {
   name: string
   mode: CompletionMode
   confirmedMarked?: boolean
+  confirmedItemIds?: readonly string[]
   createdAt: number
 }
 interface ScopedCompletionRequest extends CloudCompletionRequest { key: string; items: string }
@@ -54,6 +55,14 @@ export interface ShoppingListRecord {
 export interface ArchivedListRecord {
   id: string; sourceListId: string; name: string; kind: 'permanent' | 'oneoff'; completedAt: number; items: Item[]
 }
+function checkConfirmedPurchases(items: Item[], confirmedItemIds?: readonly string[]): void {
+  const markedIds = items.filter(item => item.purchased).map(item => item.id)
+  if (!confirmedItemIds?.length || markedIds.length !== confirmedItemIds.length ||
+      markedIds.some(id => !confirmedItemIds.includes(id))) {
+    throw new Error('Список изменился. Проверьте отметки и подтвердите перенос заново.')
+  }
+}
+
 function itemsForCompletion(items: Item[], mode: Exclude<CompletionMode, 'delete_list'>): Item[] {
   if (mode === 'none_purchased') return []
   if (mode === 'all_purchased') return items.map(item => ({ ...item, purchased: true }))
@@ -927,7 +936,7 @@ export function createStorage(name = 'shopping-app') {
       await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
       await tx.done
     },
-    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased'): Promise<void> {
+    async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased', confirmedItemIds?: readonly string[]): Promise<void> {
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileLists', 'profileItems', 'profileArchives', 'guestImports'], 'readwrite')
       if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
@@ -943,7 +952,9 @@ export function createStorage(name = 'shopping-app') {
         const rows = (await tx.objectStore('profileItems').index('byProfile').getAll(profileId))
           .filter(row => row.record.listId === listId)
         if (!rows.length) throw new Error('Cannot archive an empty list')
-        const archivedItems = itemsForCompletion(rows.map(row => row.record), mode)
+        const items = rows.map(row => row.record)
+        if (mode === 'archive_purchased') checkConfirmedPurchases(items, confirmedItemIds)
+        const archivedItems = itemsForCompletion(items, mode)
         const archive: ArchivedListRecord = {
           id: archiveId, sourceListId: listId, name: list.record.name,
           kind: list.record.kind, completedAt, items: archivedItems,
@@ -951,8 +962,10 @@ export function createStorage(name = 'shopping-app') {
         if (archivedItems.length) await tx.objectStore('profileArchives').add({
           key: JSON.stringify([profileId, archiveId]), profileId, record: archive,
         })
-        for (const row of rows) await tx.objectStore('profileItems').delete(row.key)
-        if (list.record.kind === 'oneoff') await tx.objectStore('profileLists').delete(key)
+        for (const row of rows) {
+          if (mode !== 'archive_purchased' || row.record.purchased) await tx.objectStore('profileItems').delete(row.key)
+        }
+        if (mode !== 'archive_purchased' && list.record.kind === 'oneoff') await tx.objectStore('profileLists').delete(key)
         await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
         await done
       } catch (error) {
@@ -1048,16 +1061,19 @@ export function createStorage(name = 'shopping-app') {
         await tx.objectStore('lists').delete(listId)
       })
     },
-    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased'): Promise<void> {
+    async completeList(list: ShoppingListRecord, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased', confirmedItemIds?: readonly string[]): Promise<void> {
       await legacyMutation(['lists', 'items', 'archives'], async tx => {
         const items = (await tx.objectStore('items').getAll()).filter(item => item.listId === list.id)
         if (!items.length) throw new Error('Cannot archive an empty list')
+        if (mode === 'archive_purchased') checkConfirmedPurchases(items, confirmedItemIds)
         const archivedItems = itemsForCompletion(items, mode)
         if (archivedItems.length) await tx.objectStore('archives').add({
           id: archiveId, sourceListId: list.id, name: list.name, kind: list.kind, completedAt, items: archivedItems,
         })
-        for (const item of items) await tx.objectStore('items').delete(item.id)
-        if (list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
+        for (const item of items) {
+          if (mode !== 'archive_purchased' || item.purchased) await tx.objectStore('items').delete(item.id)
+        }
+        if (mode !== 'archive_purchased' && list.kind === 'oneoff') await tx.objectStore('lists').delete(list.id)
       })
     },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
@@ -1139,6 +1155,7 @@ export function createStorage(name = 'shopping-app') {
         if (intents.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion already pending')
         const items = (await tx.objectStore('accountItems').index('byAccount').getAll(accountId))
           .map(row => row.item).filter(item => item.listId === localListId)
+        if (request.mode === 'archive_purchased') checkConfirmedPurchases(items, request.confirmedItemIds)
         await requests.add({ ...request, key: accountKey(accountId, remoteListId), items: completionItemSnapshot(items) })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
@@ -1190,8 +1207,9 @@ export function createStorage(name = 'shopping-app') {
           .filter(row => row.item.listId === localListId)
         if (request && request.items !== completionItemSnapshot(items.map(row => row.item)))
           throw new Error('Список изменился. Проверьте его и подтвердите операцию заново.')
-        if (items.length !== itemIds.length ||
-            items.some(row => !itemIds.includes(row.item.id))) throw new Error('Local list changed before completion')
+        if (intent.mode === 'archive_purchased') checkConfirmedPurchases(items.map(row => row.item), itemIds)
+        else if (items.length !== itemIds.length || items.some(row => !itemIds.includes(row.item.id)))
+          throw new Error('Local list changed before completion')
         await tx.objectStore('accountCompletions').add({ key: accountKey(accountId, operationId), accountId, intent })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
@@ -1235,9 +1253,12 @@ export function createStorage(name = 'shopping-app') {
           throw new Error('Local edits must be reconciled before completion')
         const rows = (await tx.objectStore('accountItems').index('byAccount').getAll(intent.accountId))
           .filter(row => row.item.listId === intent.localListId)
-        if (rows.length !== intent.itemIds.length || rows.some(row => !intent.itemIds.includes(row.item.id)))
+        if (intent.mode === 'archive_purchased') checkConfirmedPurchases(rows.map(row => row.item), intent.itemIds)
+        else if (rows.length !== intent.itemIds.length || rows.some(row => !intent.itemIds.includes(row.item.id)))
           throw new Error('Local items changed since completion request')
-        for (const row of rows) await tx.objectStore('accountItems').delete(row.key)
+        for (const row of rows) {
+          if (intent.itemIds.includes(row.item.id)) await tx.objectStore('accountItems').delete(row.key)
+        }
         for (const tombstone of tombstones) {
           const versionKey = accountKey(intent.accountId, tombstone.id)
           const old = await tx.objectStore('accountItemVersions').get(versionKey)

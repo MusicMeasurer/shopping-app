@@ -790,14 +790,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             const receipt = intent ? await coordinator.resume(intent) :
               await coordinator.begin(localListId, remoteListId, mode, 'confirmedMarked' in request ? request.confirmedMarked : undefined, operationId)
             if (!stillActive()) return
-            if (receipt.mode === 'delete_list' || receipt.kind === 'oneoff') {
+            if (receipt.mode === 'delete_list' || (receipt.kind === 'oneoff' && receipt.mode !== 'archive_purchased')) {
               setCloudMetadata(rows => rows?.filter(row => row.id !== remoteListId) ?? null)
               setCloudLists(rows => rows.filter(row => row.id !== remoteListId))
             }
             if (receipt.mode === 'delete_list')
               setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== remoteListId)))
             clearListOperation(accountId, localListId)
-            setCompletionPreflight(receipt.mode === 'delete_list' ? '' : 'Список завершён.')
+            setCompletionPreflight(receipt.mode === 'delete_list' ? '' : receipt.mode === 'archive_purchased'
+              ? 'Отмеченные покупки перемещены в архив.' : 'Список завершён.')
             setCloudArchives(null)
             setWorkspaceRevision(value => value + 1)
             void loadCloudArchive(true)
@@ -856,17 +857,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspaceAccount, readyAccount, currentAccount, syncOnline])
 
-  async function completeCloudList(localListId: ListId, mode: CompletionMode, confirmedMarked?: boolean) {
+  async function completeCloudList(localListId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) {
     if (!client || !currentAccount || activeAccount.current !== currentAccount) return
     const accountId = currentAccount
     const remoteListId = cloudBindings[localListId]
     const row = cloudMetadata?.find(list => list.id === remoteListId)
     if (!remoteListId || !row) return
-    if (mode !== 'delete_list' && !window.confirm(mode === 'none_purchased'
+    if (mode !== 'delete_list' && mode !== 'archive_purchased' && !window.confirm(mode === 'none_purchased'
       ? 'Завершить список без покупок? Товары будут очищены, архив покупок не пополнится.'
       : 'Завершить облачный список? Купленные товары попадут в архив, активные товары будут очищены.')) return
     const request: CloudCompletionRequest = {
-      accountId, localListId, remoteListId, name: row.name, mode, confirmedMarked,
+      accountId, localListId, remoteListId, name: row.name, mode, confirmedMarked, confirmedItemIds,
       operationId: crypto.randomUUID(), createdAt: Date.now(),
     }
     setCompletionPreflight('')
@@ -875,8 +876,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current !== accountId) return
       setListOperation({ ...request, phase: 'queued' })
       void processListOperations(accountId)
-    } catch {
-      if (activeAccount.current === accountId) setCompletionPreflight('Не удалось поставить операцию со списком в очередь.')
+    } catch (error) {
+      if (activeAccount.current === accountId) setCompletionPreflight(error instanceof Error && error.message.startsWith('Список изменился.')
+        ? error.message : 'Не удалось поставить операцию со списком в очередь.')
     }
   }
 
@@ -1037,7 +1039,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             </article>)}
         </div>}
       </section>) : undefined}
-      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked, confirmedItemIds) => { void completeCloudList(listId, mode, confirmedMarked, confirmedItemIds) } : undefined}
       accountMenu={client ? {
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },

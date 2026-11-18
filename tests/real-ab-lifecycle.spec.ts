@@ -121,6 +121,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('checkbox', { name: archivedGuest, exact: true }).click()
     await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toBeChecked()
     await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+    await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
     await page.getByRole('button', { name: 'Завершить: отмеченные' }).click()
     await expect(page.getByRole('checkbox', { name: archivedGuest, exact: true })).toHaveCount(0)
   }

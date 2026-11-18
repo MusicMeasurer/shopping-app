@@ -91,3 +91,31 @@ it('keeps requests for different lists across restart and clears only the confir
   expect(await reopened.hasAccountSyncWork(accountId)).toBe(false)
   await reopened.close()
 })
+
+it('recovers a partial archive intent after restart and preserves unmarked account items', async () => {
+  const name = 'partial-archive-' + crypto.randomUUID()
+  const first = createStorage(name)
+  const marked = { ...createItem('groceries', 'Сыр'), purchased: true }
+  const unmarked = createItem('groceries', 'Молоко')
+  await first.bindAccountList(accountId, 'groceries', remoteListId)
+  await first.saveAccountItem(accountId, marked)
+  await first.saveAccountItem(accountId, unmarked)
+  const saved: CloudCompletionIntent = { ...intent(marked.id), mode: 'archive_purchased' }
+  const request = {
+    operationId, accountId, localListId: 'groceries', remoteListId, mode: saved.mode, name: 'Продукты',
+    createdAt: 100, confirmedItemIds: [marked.id],
+  }
+  await expect(first.queueAccountCompletion({ ...request, confirmedItemIds: [unmarked.id] })).rejects.toThrow('Список изменился')
+  await first.queueAccountCompletion(request)
+  await first.beginAccountCompletion(saved, true)
+  await first.close()
+  const reopened = createStorage(name)
+  expect(await reopened.readAccountCompletions(accountId)).toEqual([saved])
+  await expect(reopened.commitAccountCompletion(saved, 2, [{ id: unmarked.id, version: 2 }])).rejects.toThrow('Invalid confirmed')
+  await reopened.commitAccountCompletion(saved, 2, [{ id: marked.id, version: 2 }])
+  expect(await reopened.readAccountItems(accountId)).toEqual([unmarked])
+  expect(await reopened.readAccountCompletions(accountId)).toEqual([])
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([])
+  expect(await reopened.readAccountListMappings(accountId)).toHaveLength(1)
+  await reopened.close()
+})

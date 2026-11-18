@@ -1,7 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
-export type CompletionMode = 'marked_only' | 'all_purchased' | 'none_purchased' | 'delete_list'
+export type CompletionMode = 'marked_only' | 'all_purchased' | 'none_purchased' | 'archive_purchased' | 'delete_list'
 export interface CompletionReceipt {
   operationId: string
   listId: string
@@ -24,7 +24,7 @@ export async function sendCloudCompletion(
   const { operationId, listId, expectedRevision, mode } = request
   if (!uuid.test(operationId) || !uuid.test(listId) ||
       !Number.isSafeInteger(expectedRevision) || expectedRevision < 0 ||
-      !['marked_only', 'all_purchased', 'none_purchased', 'delete_list'].includes(mode))
+      !['marked_only', 'all_purchased', 'none_purchased', 'archive_purchased', 'delete_list'].includes(mode))
     throw new Error('Неверные параметры завершения')
   const { data, error } = await client.rpc('complete_e4_list', {
     p_operation: operationId,
@@ -40,7 +40,7 @@ export async function sendCloudCompletion(
       !Number.isSafeInteger(row.revision) || (row.revision as number) <= expectedRevision ||
       !Number.isSafeInteger(row.item_count) || (row.item_count as number) < (mode === 'delete_list' ? 0 : 1) ||
       (row.archive_id !== null && (typeof row.archive_id !== 'string' || !uuid.test(row.archive_id))) ||
-      (mode === 'all_purchased' && row.archive_id === null) ||
+      ((mode === 'all_purchased' || mode === 'archive_purchased') && row.archive_id === null) ||
       ((mode === 'none_purchased' || mode === 'delete_list') && row.archive_id !== null))
     throw new Error('Неподтверждённый результат завершения')
   return {

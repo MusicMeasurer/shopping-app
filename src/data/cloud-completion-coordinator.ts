@@ -82,7 +82,7 @@ export function createCloudCompletionCoordinator(
     const intent: CloudCompletionIntent = {
       operationId: queuedOperationId ?? crypto.randomUUID(), accountId, localListId, remoteListId,
       expectedRevision: preflight.revision, mode,
-      itemIds: items.map(item => item.id).sort(), createdAt: Date.now(),
+      itemIds: items.filter(item => mode !== 'archive_purchased' || item.purchased).map(item => item.id).sort(), createdAt: Date.now(),
     }
     await storage.beginAccountCompletion(intent, !!queuedOperationId)
     return resume(intent)

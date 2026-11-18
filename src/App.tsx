@@ -30,7 +30,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -236,7 +236,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
@@ -294,7 +294,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   // Restore once when this account workspace mounts.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
-  const [menuTarget, setMenuTarget] = useState<{ id: ListId; source: 'card' | 'heading' } | null>(null)
+  const [menuTarget, setMenuTarget] = useState<{ id: ListId; source: 'card' | 'heading' | 'completion' } | null>(null)
   const [menuPosition, setMenuPosition] = useState({top:0,left:0})
   const [renaming, setRenaming] = useState<ListId | null>(null)
   const [typeSaving, setTypeSaving] = useState(false)
@@ -348,20 +348,20 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if (await onCreateCloudList?.(newListName, newListKind, newListSymbol)) setNewListDialog(false)
   }
 
-  async function completeLocalList(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>) {
+  async function completeLocalList(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>, confirmedItemIds?: readonly string[]) {
     const list = localLists?.find(row => row.id === id)
     if (accountId !== null || !list || changingList || shopping.busy || shopping.loading) return
     if (!itemsForList(shopping.items, id).length) { window.alert('Список пуст. Его нельзя поместить в архив.'); return }
     setChangingList(true)
     try {
-      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), mode)
-      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now(), mode)
+      if (guestProfileId) await storage.completeProfileList(guestProfileId, list.id, crypto.randomUUID(), Date.now(), mode, confirmedItemIds)
+      else await storage.completeList(list as ShoppingListRecord, crypto.randomUUID(), Date.now(), mode, confirmedItemIds)
       const [updatedLists, snapshots] = await Promise.all([guestProfileId ? storage.readProfileLists(guestProfileId) : storage.readLists(), guestProfileId ? storage.readProfileArchives(guestProfileId) : storage.readArchives()])
       setLocalLists(updatedLists)
       setArchives(snapshots.sort((a, b) => b.completedAt - a.completedAt))
       setListError(null)
       await shopping.reload()
-      if (id === active && list.kind === 'oneoff') setActive(updatedLists[0]?.id ?? '')
+      if (id === active && list.kind === 'oneoff' && mode !== 'archive_purchased') setActive(updatedLists[0]?.id ?? '')
     } catch (error) { setListError(error instanceof Error ? error.message : 'Не удалось завершить список') }
     finally { setChangingList(false) }
   }
@@ -493,6 +493,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const rows = itemsForList(shopping.items, active).filter(item => !listConflicts.some(conflict => conflict.item.id === item.id))
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [completionListId, setCompletionListId] = useState<ListId | null>(null)
+  const [purchaseArchive, setPurchaseArchive] = useState<{ listId: ListId; itemIds: string[] } | null>(null)
   const canEditList = accountId === null || !!onChangeCloudList
   const listActionsBusy = changingList || cloudListBusy
   const listMutationBusy = shopping.loading || shopping.busy || listActionsBusy
@@ -575,18 +576,22 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     setRenaming(row.id)
     setMenuTarget(null)
   }
+  function toggleListMenu(id: ListId, source: 'card' | 'heading' | 'completion', anchor: HTMLElement) {
+    const rect = anchor.getBoundingClientRect()
+    const top = source === 'completion'
+      ? (rect.bottom + 112 <= window.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - 112))
+      : Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340))
+    setMenuPosition({
+      top,
+      left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)),
+    })
+    setMenuTarget(menuTarget?.id === id && menuTarget.source === source ? null : { id, source })
+  }
   function menuTrigger(row: (typeof visibleLists)[number], source: 'card' | 'heading') {
-    const expanded = menuTarget?.id === row.id && menuTarget.source === source
     return <button type="button" className="menu-trigger"
       aria-label={source === 'heading' ? 'Действия со списком' : `Действия со списком «${row.name}»`}
-      aria-expanded={expanded} aria-haspopup="menu" onClick={event => {
-        const rect = event.currentTarget.getBoundingClientRect()
-        setMenuPosition({
-          top: Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340)),
-          left: Math.max(12, Math.min(rect.right - 280, window.innerWidth - 292)),
-        })
-        setMenuTarget(expanded ? null : { id: row.id, source })
-      }}>⋯</button>
+      aria-expanded={menuTarget?.id === row.id && menuTarget.source === source} aria-haspopup="menu"
+      onClick={event => toggleListMenu(row.id, source, event.currentTarget)}>⋯</button>
   }
   async function submit(event: FormEvent) {
     event.preventDefault()
@@ -649,7 +654,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           {operation.phase === 'running' && <span className="list-operation-spinner" aria-hidden="true" />}
           {operation.phase === 'error' ? `«${operation.name}». ${operation.message}` :
             operation.phase === 'queued' ? `«${operation.name}» ожидает синхронизации` :
-            `${operation.mode === 'delete_list' ? 'Удаляем' : 'Завершаем'} «${operation.name}»…`}
+            `${operation.mode === 'delete_list' ? 'Удаляем' : operation.mode === 'archive_purchased' ? 'Архивируем покупки из' : 'Завершаем'} «${operation.name}»…`}
         </p>
         {operation.retry && <button type="button" onClick={operation.retry}>Повторить</button>}
         {operation.dismiss && <button type="button" onClick={() => void operation.dismiss?.()}>{operation.retry ? 'Отменить операцию' : 'Закрыть'}</button>}
@@ -662,9 +667,27 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span>
       </button>
     </div>}
-    {!showArchive && menuList && createPortal(<>
+    {!showArchive && menuTarget && menuList && createPortal(<>
       <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
-      <div className="list-menu" role="menu" aria-label="Действия со списком" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>
+      {menuTarget.source === 'completion' ? <div className="list-menu" role="menu" aria-label="Завершение" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>
+        <button type="button" role="menuitem" disabled={listMutationBusy || !canComplete(menuList.id) ||
+          !itemsForList(shopping.items, menuList.id).some(item => item.purchased)} onClick={() => {
+          const itemIds = itemsForList(shopping.items, menuList.id).filter(item => item.purchased).map(item => item.id)
+          setMenuTarget(null)
+          setPurchaseArchive({ listId: menuList.id, itemIds })
+        }}>
+          <svg aria-hidden="true" className="completion-icon" viewBox="0 0 24 24">
+            <path d="M3 2h8v8H3zM3 14h8v8H3zM5 6l2 2 6-6M5 18l2 2 6-6M15 6h6m-6 12h6" />
+          </svg>
+          Завершить покупки
+        </button>
+        <button type="button" role="menuitem" onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>
+          <svg aria-hidden="true" className="completion-icon" viewBox="0 0 24 24">
+            <path d="M8 4H5v18h14V4h-3M8 2h8v5H8zM8 14l3 3 5-6" />
+          </svg>
+          Завершить список
+        </button>
+      </div> :       <div className="list-menu" role="menu" aria-label="Действия со списком" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>
         <button disabled={!canEditList || listActionsBusy || listLocked(menuList.id)} role="menuitem" onClick={() => openRename(menuList)}>✎ Переименовать</button>
         <button disabled={!canEditList || listActionsBusy || listLocked(menuList.id)} role="menuitem"
           onClick={() => openRename(menuList, true)}>Изменить пиктограмму</button>
@@ -685,7 +708,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>✓ Завершить список</button>
         <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem" className="danger"
           onClick={() => { setMenuTarget(null); requestDeletion(menuList.id) }}>▤ Удалить список</button>
-      </div>
+      </div>}
     </>, document.body)}
     {newListDialog && <WorkspaceDialog label="Создать список" className="create-dialog"
       onDismiss={() => { if (!creatingList && !cloudListBusy) setNewListDialog(false) }}>
@@ -737,9 +760,24 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         rename={list ? { disabled: !canEditList || !!listActionsBusy || activeListLocked, open: () => openRename(list) } : undefined}
         actions={list && <div className="list-toolbar" aria-label="Управление текущим списком">
           <button type="button" aria-label="Завершить список" title="Завершить список"
-            disabled={completionDisabled} onClick={() => requestCompletion(list.id)}>✓</button>
+            aria-haspopup="menu" aria-expanded={menuTarget?.source === 'completion' && menuTarget.id === list.id}
+            disabled={completionDisabled} onClick={event => toggleListMenu(list.id, 'completion', event.currentTarget)}>✓</button>
           {menuTrigger(list, 'heading')}
         </div>}/>
+      {purchaseArchive && <WorkspaceDialog label="Завершить покупки" className="create-dialog" onDismiss={() => setPurchaseArchive(null)}>
+        <h2>Завершить покупки</h2>
+        <p>Отмеченные покупки будут перемещены из текущего списка в архив. Список и остальные товары останутся.</p>
+        <p>Отмечено: {purchaseArchive.itemIds.length}</p>
+        <div className="dialog-buttons">
+          <button type="button" disabled={listMutationBusy || !canComplete(purchaseArchive.listId)} onClick={() => {
+            const { listId, itemIds } = purchaseArchive
+            setPurchaseArchive(null)
+            if (accountId === null) void completeLocalList(listId, 'archive_purchased', itemIds)
+            else onCompleteCloudList?.(listId, 'archive_purchased', undefined, itemIds)
+          }}>Переместить в архив</button>
+          <button type="button" onClick={() => setPurchaseArchive(null)}>Отмена</button>
+        </div>
+      </WorkspaceDialog>}
       {completionListId && canComplete(completionListId) && <div className="dialog-backdrop"><section className="rename-dialog create-dialog" role="dialog" aria-modal="true" aria-labelledby="cloud-completion-title"><h2 id="cloud-completion-title">Завершить список</h2><div className="dialog-buttons">
         <button type="button" disabled={shopping.loading || shopping.busy} onClick={()=>confirmCompletion(completionListId, 'marked_only')}>Завершить: отмеченные</button>
         <button type="button" disabled={shopping.loading || shopping.busy} onClick={()=>confirmCompletion(completionListId, 'all_purchased')}>Завершить: всё куплено</button>
