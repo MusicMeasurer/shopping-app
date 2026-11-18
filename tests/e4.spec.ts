@@ -709,7 +709,7 @@ test('iPhone: one name per list and per batch, with independent list sorting', a
   await expect(editor.getByRole('alert')).toContainText('Товар с таким названием уже есть в списке.')
   await editor.getByRole('button', { name: 'Отмена' }).click()
 
-  await page.getByRole('button', { name: 'Хозяйственные покупки' }).click()
+  await page.getByRole('button', { name: 'Хозяйственные покупки', exact: true }).click()
   await expect(sort).toHaveCount(0)
   await input.fill('Мука\nМоющее  средство')
   await add.click()
@@ -717,7 +717,7 @@ test('iPhone: one name per list and per batch, with independent list sorting', a
   await input.fill('моющее средство')
   await add.click()
   await expect(page.getByText('В списке уже есть: моющее средство.')).toBeVisible()
-  await page.getByRole('button', { name: 'Продукты' }).click()
+  await page.getByRole('button', { name: 'Продукты', exact: true }).click()
   await expect(sort).toHaveValue('quantity-desc')
 })
 
