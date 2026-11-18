@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createItem, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
+import { createItemBatch, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
 import { ItemSaveError } from '../data/item-save-error'
 import type { ItemStore } from '../data/account-item-store'
 export function useShopping(storage: ItemStore, refreshRevision = 0) {
@@ -26,10 +26,10 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
     add: async (listId: ListId, name: string) => {
       try {
         if (!storage.saveMany) {
-          const item = createItem(listId, name)
+          const [item] = createItemBatch(listId, [{ name: normalizeItemName(name) }], items)
           return await mutate(() => storage.save(item), current => [...current, item])
         }
-        const next = parseItems(name).map(entry => ({ ...createItem(listId, entry.name), quantity: entry.quantity, unit: entry.unit }))
+        const next = createItemBatch(listId, parseItems(name), items)
         return await mutate(() => storage.saveMany!(next), current => [...current, ...next])
       }
       catch (error) { setError((error as Error).message); return false }

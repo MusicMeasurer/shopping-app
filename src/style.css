@@ -445,3 +445,22 @@ nav .list-conflict-marker{
 .shopping-e4 nav.list-rail .list-rail-controls .move-left { justify-items:start; padding-left:4px; }
 .shopping-e4 nav.list-rail .list-rail-controls .move-right { justify-items:end; padding-right:4px; }
 .list-rail-controls .move-right span { transform:scaleX(-1); }
+
+.item-sort {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .5rem;
+  margin-block: .75rem;
+}
+
+.item-sort select {
+  min-height: 44px;
+  max-width: 100%;
+  padding: .35rem .65rem;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: .6rem;
+}

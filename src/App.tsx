@@ -7,7 +7,7 @@ import { WorkspaceDialog } from './WorkspaceDialog'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
-import { lists, itemsForList, type ListId } from './domain/shopping'
+import { lists, itemsForList, sortShoppingItems, type ItemSort, type ListId } from './domain/shopping'
 import { useShopping } from './hooks/useShopping'
 import type { ArchivedListRecord, ShoppingListRecord, Storage } from './data/storage'
 import { itemStoreForAccount } from './data/account-item-store'
@@ -521,7 +521,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       setResolvingConflict(false)
     }
   }
-  const rows = itemsForList(shopping.items, active).filter(item => !listConflicts.some(conflict => conflict.item.id === item.id))
+  const [itemSort, setItemSort] = useState<Record<ListId, ItemSort>>({})
+  const sort = itemSort[active] ?? 'recent'
+  const rows = sortShoppingItems(shopping.items.filter(item => item.listId === active &&
+    !listConflicts.some(conflict => conflict.item.id === item.id)), sort)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [completionListId, setCompletionListId] = useState<ListId | null>(null)
   const [purchaseArchive, setPurchaseArchive] = useState<{ listId: ListId; itemIds: string[] } | null>(null)
@@ -866,6 +869,15 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       {accountId !== null && list && !cloudBoundLists[active] && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
       <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemError('')}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy || activeListLocked}/><button className="add" disabled={shopping.loading || shopping.busy || activeListLocked || !name.trim() || (accountId !== null && !cloudBoundLists[active])} aria-label="Добавить товар">+</button></div>{itemError && <p className="field-error" role="alert">{itemError}</p>}</form>
       {shopping.error && !editingItem && <div role="alert" className="error">{shopping.error}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
+      {(rows.length > 1 || sort !== 'recent') && <label className="item-sort">Сортировка
+        <select value={sort} onChange={event => setItemSort(current => ({ ...current, [active]: event.target.value as ItemSort }))}>
+          <option value="recent">Сначала новые</option>
+          <option value="name-asc">По названию: А–Я</option>
+          <option value="name-desc">По названию: Я–А</option>
+          <option value="quantity-asc">По количеству: по возрастанию</option>
+          <option value="quantity-desc">По количеству: по убыванию</option>
+        </select>
+      </label>}
       {listConflicts.length > 0 && <ul className="item-conflicts" aria-label="Конфликты удаления">
         {listConflicts.map(conflict => <li key={conflict.operationId}><button type="button" onClick={() => {
           setConflictError('')
