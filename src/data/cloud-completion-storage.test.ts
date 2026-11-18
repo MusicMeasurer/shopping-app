@@ -1,0 +1,121 @@
+import 'fake-indexeddb/auto'
+import { describe, expect, it } from 'vitest'
+import { createStorage, type CloudCompletionIntent } from './storage'
+import { createItem } from '../domain/shopping'
+
+const accountId = 'account-a'
+const remoteListId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
+const operationId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
+function intent(itemId: string): CloudCompletionIntent {
+  return { accountId, localListId: 'groceries', remoteListId, operationId,
+    expectedRevision: 1, mode: 'marked_only', itemIds: [itemId], createdAt: 100 }
+}
+describe('durable E4 completion IndexedDB v11', () => {
+  it('persists an intent across restart, fences edits, and atomically reconciles after receipt', async () => {
+    const name = 'completion-' + crypto.randomUUID()
+    const first = createStorage(name)
+    const item = createItem('groceries', 'Молоко')
+    await first.bindAccountList(accountId, 'groceries', remoteListId)
+    await first.saveAccountItem(accountId, item)
+    const saved = intent(item.id)
+    await first.beginAccountCompletion(saved)
+    await first.close()
+    const second = createStorage(name)
+    expect(await second.readAccountCompletions(accountId)).toEqual([saved])
+    await expect(second.saveAccountEdit(accountId, {
+      kind: 'cloud-update', operationId: crypto.randomUUID(), itemId: item.id,
+      localListId: 'groceries', remoteListId, expectedVersion: 1, item: { ...item, purchased: true },
+    })).rejects.toThrow('Completion pending')
+    await expect(second.enqueueAccountPending(accountId, {
+      kind: 'upsert', operationId: crypto.randomUUID(), item,
+    })).rejects.toThrow('Completion pending')
+    await expect(second.saveAccountItem(accountId, { ...item, purchased: true }))
+      .rejects.toThrow('Completion pending')
+    await expect(second.removeAccountItem(accountId, item.id))
+      .rejects.toThrow('Completion pending')
+    await expect(second.importRemoteOnlyBatch(accountId, remoteListId, [{
+      item: { ...item, id: crypto.randomUUID() }, version: 1,
+    }])).rejects.toThrow('Completion pending')
+    await expect(second.applyReviewedRemoteDeletions(accountId, remoteListId, [{
+      item, expectedLocalVersion: 1, serverDeletedVersion: 2,
+    }])).rejects.toThrow('Completion pending')
+    await expect(second.commitAccountCompletion({ ...saved, expectedRevision: 9 }, 3, [{ id: item.id, version: 2 }])).rejects.toThrow()
+    expect(await second.readAccountItems(accountId)).toEqual([item])
+    await second.commitAccountCompletion(saved, 3, [{ id: item.id, version: 2 }])
+    expect(await second.readAccountItems(accountId)).toEqual([])
+    expect(await second.readAccountCompletions(accountId)).toEqual([])
+    expect((await second.readAccountItemVersions(accountId)).find(row => row.itemId === item.id)?.version).toBe(2)
+    await second.close()
+  })
+  it('refuses to create an intent while writes are queued', async () => {
+    const db = createStorage('completion-queued-' + crypto.randomUUID())
+    const item = createItem('groceries', 'Хлеб')
+    await db.bindAccountList(accountId, 'groceries', remoteListId)
+    await db.saveAccountItem(accountId, item)
+    await db.enqueueAccountPending(accountId, { kind: 'upsert', operationId: crypto.randomUUID(), item })
+    await expect(db.beginAccountCompletion(intent(item.id))).rejects.toThrow('Unsent operations')
+    expect(await db.readAccountCompletions(accountId)).toEqual([])
+    await db.close()
+  })
+})
+
+it('keeps requests for different lists across restart and clears only the confirmed request', async () => {
+  const name = 'completion-request-' + crypto.randomUUID()
+  const db = createStorage(name)
+  const item = createItem('groceries', 'Молоко')
+  const saved = intent(item.id)
+  const secondRemote = crypto.randomUUID()
+  const firstRequest = {
+    accountId, localListId: 'groceries', remoteListId, operationId, mode: 'marked_only' as const, name: 'Продукты', createdAt: 100,
+  }
+  const secondRequest = {
+    ...firstRequest, localListId: 'household', remoteListId: secondRemote, operationId: crypto.randomUUID(), createdAt: 101,
+  }
+  await db.bindAccountList(accountId, 'groceries', remoteListId)
+  await db.bindAccountList(accountId, 'household', secondRemote)
+  await db.saveAccountItem(accountId, item)
+  await db.queueAccountCompletion(firstRequest)
+  await db.queueAccountCompletion(secondRequest)
+  await expect(db.queueAccountCompletion(firstRequest)).rejects.toThrow()
+  await expect(db.saveAccountItemsToSync(accountId, [createItem('groceries', 'Хлеб')])).rejects.toThrow('Completion pending')
+  await db.close()
+  const reopened = createStorage(name)
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([firstRequest, secondRequest])
+  expect(await reopened.readAccountCompletionRequests('account-b')).toEqual([])
+  await reopened.beginAccountCompletion(saved, true)
+  expect(await reopened.cancelUnsentAccountCompletion(firstRequest)).toBe(false)
+  await reopened.commitAccountCompletion(saved, 3, [{ id: item.id, version: 2 }])
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([secondRequest])
+  expect(await reopened.hasAccountSyncWork(accountId)).toBe(true)
+  expect(await reopened.cancelUnsentAccountCompletion(secondRequest)).toBe(true)
+  expect(await reopened.hasAccountSyncWork(accountId)).toBe(false)
+  await reopened.close()
+})
+
+it('recovers a partial archive intent after restart and preserves unmarked account items', async () => {
+  const name = 'partial-archive-' + crypto.randomUUID()
+  const first = createStorage(name)
+  const marked = { ...createItem('groceries', 'Сыр'), purchased: true }
+  const unmarked = createItem('groceries', 'Молоко')
+  await first.bindAccountList(accountId, 'groceries', remoteListId)
+  await first.saveAccountItem(accountId, marked)
+  await first.saveAccountItem(accountId, unmarked)
+  const saved: CloudCompletionIntent = { ...intent(marked.id), mode: 'archive_purchased' }
+  const request = {
+    operationId, accountId, localListId: 'groceries', remoteListId, mode: saved.mode, name: 'Продукты',
+    createdAt: 100, confirmedItemIds: [marked.id],
+  }
+  await expect(first.queueAccountCompletion({ ...request, confirmedItemIds: [unmarked.id] })).rejects.toThrow('Список изменился')
+  await first.queueAccountCompletion(request)
+  await first.beginAccountCompletion(saved, true)
+  await first.close()
+  const reopened = createStorage(name)
+  expect(await reopened.readAccountCompletions(accountId)).toEqual([saved])
+  await expect(reopened.commitAccountCompletion(saved, 2, [{ id: unmarked.id, version: 2 }])).rejects.toThrow('Invalid confirmed')
+  await reopened.commitAccountCompletion(saved, 2, [{ id: marked.id, version: 2 }])
+  expect(await reopened.readAccountItems(accountId)).toEqual([unmarked])
+  expect(await reopened.readAccountCompletions(accountId)).toEqual([])
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([])
+  expect(await reopened.readAccountListMappings(accountId)).toHaveLength(1)
+  await reopened.close()
+})

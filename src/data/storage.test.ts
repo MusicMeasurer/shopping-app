@@ -1,7 +1,9 @@
 import 'fake-indexeddb/auto'
 import { it, expect } from 'vitest'
+import { openDB } from 'idb'
 import { createStorage } from './storage'
 import { createItem } from '../domain/shopping'
+
 it('persists both lists, purchases and deletion across database connections', async () => {
   const name = `test-${crypto.randomUUID()}`
   const first = createStorage(name)
@@ -14,4 +16,726 @@ it('persists both lists, purchases and deletion across database connections', as
   const third = createStorage(name)
   expect(await third.read()).toEqual([{ ...food, purchased: true }])
   await third.close()
+})
+
+it('upgrades a v1 database without losing local items', async () => {
+  const name = `migration-${crypto.randomUUID()}`
+  const item = createItem('groceries', 'Хлеб')
+  const legacy = await openDB(name, 1, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+  })
+  await legacy.put('items', item)
+  legacy.close()
+  const upgraded = createStorage(name)
+  expect(await upgraded.read()).toEqual([item])
+  expect(await upgraded.readPending()).toEqual([])
+  await upgraded.close()
+})
+
+it('persists queued operations across restart and acknowledges one at a time', async () => {
+  const name = `queue-${crypto.randomUUID()}`
+  const first = createStorage(name)
+  const item = createItem('groceries', 'Молоко')
+  const add = { operationId: 'op-1', kind: 'upsert' as const, item }
+  const remove = { operationId: 'op-2', kind: 'delete' as const, itemId: item.id }
+  await first.enqueuePending(add)
+  await first.enqueuePending(remove)
+  await first.enqueuePending(add)
+  await expect(first.enqueuePending({ ...add, item: { ...item, purchased: true } })).rejects.toThrow()
+  await first.close()
+
+  const second = createStorage(name)
+  expect(await second.readPending()).toEqual([add, remove])
+  await second.acknowledgePending('op-1')
+  expect(await second.readPending()).toEqual([remove])
+  await second.close()
+})
+
+it('applies a reviewed server deletion only with unchanged item and confirmed version', async () => {
+  const storage = createStorage('delete-review-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Молоко')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account))[0].version).toBe(3)
+  await storage.close()
+})
+
+it('rolls back all reviewed deletions if a later item changed locally', async () => {
+  const storage = createStorage('delete-rollback-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const first = createItem('groceries', 'Соль')
+  const second = createItem('groceries', 'Перец')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  for (const item of [first, second]) {
+    await storage.saveAccountItem(account, item)
+    await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  }
+  await storage.saveAccountItem(account, { ...second, purchased: true })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item: first, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+    { item: second, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toHaveLength(2)
+  await storage.close()
+})
+
+it('rejects reviewed deletion when the item has a pending edit', async () => {
+  const storage = createStorage('delete-pending-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сахар')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 1)
+  await storage.enqueueAccountPending(account, { operationId: crypto.randomUUID(), kind: 'upsert', item })
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 1, serverDeletedVersion: 2 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  await storage.close()
+})
+
+it('refuses a repeated deletion after its local item was already removed', async () => {
+  const storage = createStorage('delete-repeat-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Яйца')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 2)
+  const reviewed = [{ item, expectedLocalVersion: 2, serverDeletedVersion: 3 }]
+  await storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, reviewed))
+    .rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(3)
+  await storage.close()
+})
+
+it('rejects a stale reviewed deletion when a newer server version was recorded', async () => {
+  const storage = createStorage('delete-stale-' + crypto.randomUUID())
+  const account = 'account-a'
+  const remoteListId = crypto.randomUUID()
+  const item = createItem('groceries', 'Сыр')
+  await storage.bindAccountList(account, 'groceries', remoteListId)
+  await storage.saveAccountItem(account, item)
+  await storage.recordAccountItemVersion(account, remoteListId, item.id, 4)
+  await expect(storage.applyReviewedRemoteDeletions(account, remoteListId, [
+    { item, expectedLocalVersion: 2, serverDeletedVersion: 3 },
+  ])).rejects.toThrow('conflicts with local state')
+  expect(await storage.readAccountItems(account)).toEqual([item])
+  expect((await storage.readAccountItemVersions(account)).find(row => row.itemId === item.id)?.version).toBe(4)
+  await storage.close()
+})
+
+it('initializes a stable unregistered local profile without touching legacy data', async () => {
+  const name = 'profile-v8-' + crypto.randomUUID()
+  const item = createItem('groceries', 'Хлеб')
+  const legacy = await openDB(name, 7, {
+    upgrade(db) {
+      db.createObjectStore('items', { keyPath: 'id' })
+      db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
+      db.createObjectStore('lists', { keyPath: 'id' })
+      db.createObjectStore('archives', { keyPath: 'id' })
+    },
+  })
+  await legacy.put('items', item)
+  await legacy.put('pendingOperations', { operationId: 'pending-guest', kind: 'upsert', item })
+  legacy.close()
+  const first = createStorage(name)
+  const profile = await first.ensureLocalProfiles()
+  expect(profile.profiles).toHaveLength(1)
+  expect(profile.profiles[0].cloudAccountId).toBeNull()
+  expect(profile.profiles[0].id).toBeTruthy()
+  expect(await first.read()).toEqual([item])
+  expect(await first.readPending()).toHaveLength(1)
+  await first.close()
+  const second = createStorage(name)
+  expect(await second.ensureLocalProfiles()).toEqual(profile)
+  expect(await second.readLocalProfiles()).toEqual(profile)
+  expect(await second.read()).toEqual([item])
+  await second.close()
+})
+
+it('initializes the local identity only once during concurrent first use', async () => {
+  const storage = createStorage('profile-race-' + crypto.randomUUID())
+  const profiles = await Promise.all([storage.ensureLocalProfiles(), storage.ensureLocalProfiles()])
+  expect(profiles[0]).toEqual(profiles[1])
+  expect(await storage.readLocalProfiles()).toEqual(profiles[0])
+  await storage.close()
+})
+
+it('copies legacy guest lists, items, archive and queue once without deleting originals', async () => {
+  const storage = createStorage('profile-copy-' + crypto.randomUUID())
+  const item = createItem('groceries', 'Молоко')
+  await storage.save(item)
+  await storage.enqueuePending({ operationId: 'op-guest', kind: 'upsert', item })
+  const beforeLists = await storage.readLists()
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.readProfileItems(owner)).toEqual([item])
+  expect(await storage.readProfilePending(owner)).toHaveLength(1)
+  expect(await storage.readProfileLists(owner)).toEqual(beforeLists)
+  expect(await storage.readProfileArchives(owner)).toEqual([])
+  expect(await storage.migrateLegacyGuestToProfile()).toBe(owner)
+  expect(await storage.readProfileItems('friend-profile')).toEqual([])
+  expect(await storage.readProfilePending('friend-profile')).toEqual([])
+  expect(await storage.read()).toEqual([item])
+  expect(await storage.readPending()).toHaveLength(1)
+  await storage.close()
+})
+
+it('keeps migrated profile records across restart and never copies late legacy edits silently', async () => {
+  const name = 'profile-restart-' + crypto.randomUUID()
+  const first = createStorage(name)
+  const original = createItem('groceries', 'Хлеб')
+  await first.save(original)
+  const owner = await first.migrateLegacyGuestToProfile()
+  await first.close()
+  const second = createStorage(name)
+  expect(await second.migrateLegacyGuestToProfile()).toBe(owner)
+  expect(await second.readProfileItems(owner)).toEqual([original])
+  await second.save(createItem('groceries', 'Новая запись'))
+  expect(await second.migrateLegacyGuestToProfile()).toBe(owner)
+  expect(await second.readProfileItems(owner)).toEqual([original])
+  await second.close()
+})
+
+it('keeps two profile item namespaces separate and preserves the original after friend edits', async () => {
+  const storage = createStorage('profile-isolation-' + crypto.randomUUID())
+  const own = createItem('groceries', 'Мои покупки')
+  const friend = createItem('groceries', 'Покупки друга')
+  await storage.save(own)
+  const ownerId = await storage.migrateLegacyGuestToProfile()
+  const registry = await storage.readLocalProfiles()
+  expect(registry).not.toBeNull()
+  const friendId = crypto.randomUUID()
+  await expect(storage.saveProfileItem(friendId, friend)).rejects.toThrow('Unknown local profile')
+  await storage.markGuestCutoverReady()
+  await storage.createLocalProfile(friendId, Date.now())
+  await storage.saveProfileItem(friendId, friend)
+  expect(await storage.readProfileItems(friendId)).toEqual([friend])
+  expect(await storage.readProfileItems(ownerId)).toEqual([own])
+  await storage.saveProfileItem(ownerId, { ...own, purchased: true })
+  expect(await storage.readProfileItems(ownerId)).toEqual([{ ...own, purchased: true }])
+  expect(await storage.read()).toEqual([own])
+  await storage.removeProfileItem(ownerId, own.id)
+  expect(await storage.readProfileItems(ownerId)).toEqual([])
+  expect(await storage.readProfileItems(friendId)).toEqual([friend])
+  expect(await storage.read()).toEqual([own])
+  await storage.close()
+})
+
+it('blocks profile cutover after a legacy edit instead of losing the newer data', async () => {
+  const storage = createStorage('cutover-drift-' + crypto.randomUUID())
+  const original = createItem('groceries', 'Исходный товар')
+  await storage.save(original)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.verifyLegacyProfileCutover()).toBe(owner)
+  const later = createItem('groceries', 'Добавлено после снимка')
+  await storage.save(later)
+  await expect(storage.verifyLegacyProfileCutover()).rejects.toThrow('cutover blocked')
+  expect((await storage.read()).map(row => row.id).sort()).toEqual([original.id, later.id].sort())
+  expect(await storage.readProfileItems(owner)).toEqual([original])
+  await storage.close()
+})
+
+it('scopes list changes and archive completion to one profile', async () => {
+  const storage = createStorage('scoped-archive-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const friend = crypto.randomUUID()
+  await storage.markGuestCutoverReady()
+  await storage.createLocalProfile(friend, Date.now())
+  const item = createItem('groceries', 'Друг покупает молоко')
+  const friendList = { id: 'groceries', name: 'Список друга', symbol: '🛒', kind: 'oneoff' as const, createdAt: 1 }
+  await storage.saveProfileList(friend, friendList)
+  await storage.saveProfileItem(friend, item)
+  await storage.renameProfileList(friend, 'groceries', 'Покупки друга')
+  await storage.completeProfileList(friend, 'groceries', 'archive-friend', 100)
+  expect(await storage.readProfileItems(friend)).toEqual([])
+  expect(await storage.readProfileLists(friend)).toEqual([])
+  expect((await storage.readProfileArchives(friend))[0].items).toEqual([{ ...item, purchased: true }])
+  expect(await storage.readProfileArchives(owner)).toEqual([])
+  expect((await storage.readProfileLists(owner)).find(list => list.id === 'groceries')?.name).not.toBe('Покупки друга')
+  await storage.close()
+})
+
+it('keeps pending operations isolated and rejects conflicting duplicate IDs', async () => {
+  const storage = createStorage('profile-queue-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const friend = crypto.randomUUID()
+  await storage.markGuestCutoverReady()
+  await storage.createLocalProfile(friend, Date.now())
+  const item = createItem('groceries', 'Товар')
+  const op = { operationId: 'same-id', kind: 'upsert' as const, item }
+  await storage.enqueueProfilePending(owner, op)
+  await storage.enqueueProfilePending(friend, op)
+  await storage.enqueueProfilePending(friend, op)
+  expect(await storage.readProfilePending(owner)).toEqual([op])
+  expect(await storage.readProfilePending(friend)).toEqual([op])
+  await expect(storage.enqueueProfilePending(friend, { ...op, item: { ...item, purchased: true } }))
+    .rejects.toThrow('collision')
+  expect(await storage.readProfilePending(owner)).toEqual([op])
+  await storage.close()
+})
+
+it('acknowledges only the selected profile queue entry even for identical operation IDs', async () => {
+  const storage = createStorage('ack-isolation-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const friend = crypto.randomUUID()
+  await storage.markGuestCutoverReady()
+  await storage.createLocalProfile(friend, Date.now())
+  const operation = { operationId: 'shared-op', kind: 'upsert' as const, item: createItem('groceries', 'Чай') }
+  await storage.enqueueProfilePending(owner, operation)
+  await storage.enqueueProfilePending(friend, operation)
+  await storage.acknowledgeProfilePending(friend, operation.operationId)
+  expect(await storage.readProfilePending(friend)).toEqual([])
+  expect(await storage.readProfilePending(owner)).toEqual([operation])
+  await storage.close()
+})
+
+it('deletes a list and its items only inside the selected local profile', async () => {
+  const storage = createStorage('delete-isolation-' + crypto.randomUUID())
+  const original = createItem('groceries', 'Мой товар')
+  await storage.save(original)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const friend = crypto.randomUUID()
+  await storage.markGuestCutoverReady()
+  await storage.createLocalProfile(friend, Date.now())
+  const friendItem = createItem('groceries', 'Товар друга')
+  await storage.saveProfileList(friend, { id: 'groceries', name: 'Список друга', symbol: '🛒', kind: 'oneoff', createdAt: 1 })
+  await storage.saveProfileItem(friend, friendItem)
+  await storage.deleteProfileList(friend, 'groceries')
+  expect(await storage.readProfileItems(friend)).toEqual([])
+  expect(await storage.readProfileLists(friend)).toEqual([])
+  expect(await storage.readProfileItems(owner)).toEqual([original])
+  expect((await storage.readProfileLists(owner)).some(row => row.id === 'groceries')).toBe(true)
+  await expect(storage.deleteProfileList(friend, 'groceries')).rejects.toThrow('Список не найден')
+  await storage.close()
+})
+
+it('commits guest cutover readiness atomically only when all four namespaces match', async () => {
+  const storage = createStorage('cutover-ready-' + crypto.randomUUID())
+  const item = createItem('groceries', 'Сыр')
+  await storage.save(item)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.readGuestCutoverOwner()).toBeNull()
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  expect(await storage.readGuestCutoverOwner()).toBe(owner)
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  await storage.close()
+})
+
+it('reconciles late legacy additions atomically and fences subsequent writes', async () => {
+  const storage = createStorage('cutover-reconcile-' + crypto.randomUUID())
+  const first = createItem('groceries', 'Старое')
+  await storage.save(first)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const late = createItem('groceries', 'Новое')
+  await storage.save(late)
+  await storage.saveList({ id: 'extra', name: 'Дополнительный', symbol: '📝', kind: 'oneoff', createdAt: 1 })
+  await storage.enqueuePending({ operationId: 'late-op', kind: 'upsert', item: late })
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  expect((await storage.readProfileItems(owner)).map(item => item.id).sort()).toEqual([first.id, late.id].sort())
+  expect((await storage.readProfileLists(owner)).some(list => list.id === 'extra')).toBe(true)
+  expect((await storage.readProfilePending(owner)).map(op => op.operationId)).toEqual(['late-op'])
+  await expect(storage.save(createItem('groceries', 'Слишком поздно'))).rejects.toThrow('Legacy guest writes blocked')
+  await storage.close()
+})
+
+it('rejects conflicting legacy edits without partial reconciliation or a cutover marker', async () => {
+  const storage = createStorage('cutover-conflict-' + crypto.randomUUID())
+  const first = createItem('groceries', 'Старое')
+  await storage.save(first)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const late = createItem('groceries', 'Добавление')
+  await storage.save(late)
+  await storage.save({ ...first, name: 'Изменённое' })
+  await expect(storage.markGuestCutoverReady()).rejects.toThrow('cutover blocked')
+  expect(await storage.readGuestCutoverOwner()).toBeNull()
+  expect((await storage.readProfileItems(owner)).map(item => item.id)).toEqual([first.id])
+  expect((await storage.read()).some(item => item.id === late.id)).toBe(true)
+  await storage.close()
+})
+
+it('rejects every legacy guest mutation after the cutover fence without changing old data', async () => {
+  const storage = createStorage('legacy-fence-' + crypto.randomUUID())
+  const original = createItem('groceries', 'Старое молоко')
+  await storage.save(original)
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const next = createItem('groceries', 'Новый хлеб')
+  await expect(storage.save(next)).rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.saveItems([next])).rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.remove(original.id)).rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.enqueuePending({ operationId: 'blocked', kind: 'upsert', item: next }))
+    .rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.acknowledgePending('missing')).rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.renameList('groceries', 'Изменённый')).rejects.toThrow('Legacy guest writes blocked')
+  await expect(storage.deleteList('groceries')).rejects.toThrow('Legacy guest writes blocked')
+  expect(await storage.read()).toEqual([original])
+  expect(await storage.readPending()).toEqual([])
+  await storage.close()
+})
+
+it('allows ordinary legacy guest writes before the cutover fence is activated', async () => {
+  const storage = createStorage('legacy-unfenced-' + crypto.randomUUID())
+  const item = createItem('groceries', 'Огурцы')
+  await storage.save(item)
+  await storage.renameList('groceries', 'Мой список')
+  await storage.enqueuePending({ operationId: 'op-1', kind: 'upsert', item })
+  expect(await storage.read()).toEqual([item])
+  expect(await storage.readPending()).toHaveLength(1)
+  await storage.close()
+})
+
+it('switches active local profiles durably without changing either user data', async () => {
+  const storage = createStorage('profile-switch-' + crypto.randomUUID())
+  const ownerItem = createItem('groceries', 'Сыр владельца')
+  await storage.save(ownerItem)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const friend = crypto.randomUUID()
+  await storage.createLocalProfile(friend, Date.now())
+  const friendItem = createItem('groceries', 'Чай друга')
+  await storage.saveProfileItem(friend, friendItem)
+  expect((await storage.switchLocalProfile(owner)).activeProfileId).toBe(owner)
+  expect((await storage.switchLocalProfile(friend)).activeProfileId).toBe(friend)
+  expect((await storage.readLocalProfiles())?.activeProfileId).toBe(friend)
+  expect(await storage.readProfileItems(owner)).toEqual([ownerItem])
+  expect(await storage.readProfileItems(friend)).toEqual([friendItem])
+  await expect(storage.switchLocalProfile('nonexistent')).rejects.toThrow('Unknown local profile')
+  expect((await storage.readLocalProfiles())?.activeProfileId).toBe(friend)
+  await storage.close()
+})
+
+it('deletes only a confirmed secondary local profile and its records', async () => {
+  const storage = createStorage('profile-delete-' + crypto.randomUUID())
+  const ownerItem = createItem('groceries', 'Молоко владельца')
+  await storage.save(ownerItem)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const friend = crypto.randomUUID()
+  await storage.createLocalProfile(friend, Date.now())
+  const friendItem = createItem('groceries', 'Молоко друга')
+  await storage.saveProfileItem(friend, friendItem)
+  await storage.saveProfileList(friend, { id: 'friend-list', name: 'Друг', symbol: '📝', kind: 'oneoff', createdAt: 1 })
+  await expect(storage.deleteLocalProfile(friend, owner)).rejects.toThrow('confirmation mismatch')
+  await expect(storage.deleteLocalProfile(owner, owner)).rejects.toThrow('Original guest profile cannot be deleted')
+  expect((await storage.deleteLocalProfile(friend, friend)).activeProfileId).toBe(owner)
+  expect(await storage.readProfileItems(friend)).toEqual([])
+  expect(await storage.readProfileLists(friend)).toEqual([])
+  expect(await storage.readProfileItems(owner)).toEqual([ownerItem])
+  expect(await storage.read()).toEqual([ownerItem])
+  await storage.close()
+})
+
+it('refuses deletion when a secondary profile has unsynced operations', async () => {
+  const storage = createStorage('profile-pending-delete-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const friend = crypto.randomUUID()
+  await storage.createLocalProfile(friend, Date.now())
+  const item = createItem('groceries', 'Неотправленное')
+  await storage.saveProfileItem(friend, item)
+  await storage.enqueueProfilePending(friend, { operationId: 'pending-friend', kind: 'upsert', item })
+  await expect(storage.deleteLocalProfile(friend, friend)).rejects.toThrow('unsynced operations')
+  expect((await storage.readLocalProfiles())?.activeProfileId).toBe(friend)
+  expect(await storage.readProfileItems(friend)).toEqual([item])
+  expect(await storage.readProfilePending(friend)).toHaveLength(1)
+  await storage.close()
+})
+
+it('refuses profile switching and deletion until guest cutover is active', async () => {
+  const storage = createStorage('profile-lifecycle-fence-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  const friend = crypto.randomUUID()
+  await expect(storage.createLocalProfile(friend, Date.now())).rejects.toThrow('cutover is not active')
+  await expect(storage.switchLocalProfile(friend)).rejects.toThrow('cutover is not active')
+  await expect(storage.deleteLocalProfile(friend, friend)).rejects.toThrow('cutover is not active')
+  expect((await storage.readLocalProfiles())?.profiles).toHaveLength(1)
+  expect((await storage.readLocalProfiles())?.activeProfileId).toBe(owner)
+  expect(await storage.readGuestCutoverOwner()).toBeNull()
+  await storage.close()
+})
+
+it('prevents an old v9 client from reopening after the v10 cutover barrier', async () => {
+  const name = 'version-fence-' + crypto.randomUUID()
+  const old = await openDB(name, 9, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+    blocking() { old.close() },
+  })
+  const item = createItem('groceries', 'Сохранённое')
+  await old.put('items', item)
+  const current = createStorage(name)
+  expect(await current.read()).toEqual([item])
+  await expect(openDB(name, 9)).rejects.toThrow()
+  const owner = await current.migrateLegacyGuestToProfile()
+  expect(await current.markGuestCutoverReady()).toBe(owner)
+  expect(await current.readProfileItems(owner)).toEqual([item])
+  await current.close()
+})
+
+it('waits for an uncooperative old v9 connection before upgrading or cutover', async () => {
+  const name = 'blocked-upgrade-' + crypto.randomUUID()
+  const old = await openDB(name, 9, {
+    upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) },
+  })
+  const item = createItem('groceries', 'Не потерять')
+  await old.put('items', item)
+  const current = createStorage(name)
+  let opened = false
+  const opening = current.read().then(rows => { opened = true; return rows })
+  await new Promise(resolve => setTimeout(resolve, 20))
+  expect(opened).toBe(false)
+  old.close()
+  expect(await opening).toEqual([item])
+  const owner = await current.migrateLegacyGuestToProfile()
+  expect(await current.markGuestCutoverReady()).toBe(owner)
+  expect(await current.readProfileItems(owner)).toEqual([item])
+  await current.close()
+})
+
+it('notifies subscribers when an old connection blocks the upgrade and keeps data intact', async () => {
+  const name = 'upgrade-notice-' + crypto.randomUUID()
+  const old = await openDB(name, 9, { upgrade(db) { db.createObjectStore('items', { keyPath: 'id' }) } })
+  const item = createItem('groceries', 'Мои покупки')
+  await old.put('items', item)
+  const storage = createStorage(name)
+  let notices = 0
+  const unsubscribe = storage.subscribeUpgradeBlocked(() => { notices++ })
+  const opening = storage.read()
+  await new Promise(resolve => setTimeout(resolve, 30))
+  expect(notices).toBe(1)
+  let lateNotices = 0
+  const stopLate = storage.subscribeUpgradeBlocked(() => { lateNotices++ })
+  expect(lateNotices).toBe(1)
+  unsubscribe()
+  stopLate()
+  old.close()
+  expect(await opening).toEqual([item])
+  const owner = await storage.migrateLegacyGuestToProfile()
+  expect(await storage.markGuestCutoverReady()).toBe(owner)
+  expect(await storage.readProfileItems(owner)).toEqual([item])
+  await storage.close()
+})
+
+
+it('registers verified accounts idempotently without assigning the original guest to another person', async () => {
+  const storage = createStorage('verified-profiles-' + crypto.randomUUID())
+  const ownerItem = createItem('groceries', 'Покупки владельца')
+  await storage.save(ownerItem)
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const alice = await storage.ensureVerifiedAccountProfile('verified-alice')
+  const aliceId = alice.activeProfileId
+  expect(aliceId).not.toBe(owner)
+  expect(alice.profiles.find(p => p.id === owner)?.cloudAccountId).toBeNull()
+  expect(alice.profiles.find(p => p.id === aliceId)?.cloudAccountId).toBe('verified-alice')
+  const bob = await storage.ensureVerifiedAccountProfile('verified-bob')
+  expect(bob.activeProfileId).not.toBe(aliceId)
+  expect(bob.profiles).toHaveLength(3)
+  const again = await storage.ensureVerifiedAccountProfile('verified-alice')
+  expect(again.activeProfileId).toBe(aliceId)
+  expect(again.profiles).toHaveLength(3)
+  expect(await storage.readProfileItems(owner)).toEqual([ownerItem])
+  expect(await storage.readProfileItems(aliceId)).toEqual([])
+  await storage.close()
+})
+
+it('rejects unsafe binding of the original guest and cross-account profile reassignment', async () => {
+  const storage = createStorage('verified-rejection-' + crypto.randomUUID())
+  const owner = await storage.migrateLegacyGuestToProfile()
+  await expect(storage.ensureVerifiedAccountProfile('account-a')).rejects.toThrow('cutover is not active')
+  await storage.markGuestCutoverReady()
+  const secondary = crypto.randomUUID()
+  await storage.createLocalProfile(secondary, Date.now())
+  await expect(storage.bindVerifiedLocalProfile(owner, 'account-a')).rejects.toThrow('must remain unbound')
+  await storage.bindVerifiedLocalProfile(secondary, 'account-a')
+  await expect(storage.bindVerifiedLocalProfile(secondary, 'account-b')).rejects.toThrow('another account')
+  expect((await storage.switchLocalProfile(secondary)).activeProfileId).toBe(secondary)
+  expect((await storage.readLocalProfiles())?.profiles[0].cloudAccountId).toBeNull()
+  await storage.close()
+})
+
+it('serializes simultaneous account registration without duplicate profiles', async () => {
+  const storage = createStorage('verified-race-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const [a, b] = await Promise.all([
+    storage.ensureVerifiedAccountProfile('same-account'),
+    storage.ensureVerifiedAccountProfile('same-account'),
+  ])
+  expect(a.activeProfileId).toBe(b.activeProfileId)
+  expect((await storage.readLocalProfiles())?.profiles).toHaveLength(2)
+  await storage.close()
+})
+
+it('stages a guest snapshot only with explicit source consent and never assigns it to another account', async () => {
+  const storage = createStorage('guest-import-' + crypto.randomUUID())
+  const guest = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const item = { id: crypto.randomUUID(), listId: 'groceries', name: 'Rice', purchased: false, createdAt: 1 }
+  await storage.saveProfileItems(guest, [item])
+  await storage.ensureVerifiedAccountProfile('account-a', { sourceProfileId: guest, collisionMode: 'separate', login: 'a@example.test' })
+  const [batch] = await storage.readGuestImports('account-a')
+  expect(batch.items).toEqual([item])
+  expect(batch.lists.map(list => list.id)).toContain('groceries')
+  await expect(storage.saveProfileItem(guest, { ...item, purchased: true })).rejects.toThrow('Профиль переносится')
+  await storage.switchLocalProfile(guest)
+  await storage.ensureVerifiedAccountProfile('account-b')
+  expect(await storage.readGuestImports('account-b')).toEqual([])
+  expect(await storage.readGuestImports('account-a')).toEqual([batch])
+  expect(await storage.readProfileItems(guest)).toEqual([item])
+  await storage.close()
+})
+
+it('does not stage untouched starter lists on first sign-in or a repeat sign-in', async () => {
+  const storage = createStorage('untouched-starters-' + crypto.randomUUID())
+  const guest = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  for (let signIn = 0; signIn < 2; signIn++) {
+    await storage.switchLocalProfile(guest)
+    await storage.ensureVerifiedAccountProfile('account-a')
+    expect(await storage.readGuestImports('account-a')).toEqual([])
+  }
+  await storage.close()
+})
+
+it('blocks deleting a cloud cache with queued edits and purges only that account after acknowledgment', async () => {
+  const storage = createStorage('delete-account-cache-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const a = await storage.ensureVerifiedAccountProfile('account-a')
+  await storage.ensureVerifiedAccountProfile('account-b')
+  const listId = crypto.randomUUID()
+  const item = createItem(listId, 'Milk')
+  const other = createItem('groceries', 'Bread')
+  await storage.saveAccountItem('account-b', other)
+  await storage.bindAccountList('account-a', listId, listId)
+  const operationId = crypto.randomUUID()
+  await storage.saveAccountEdit('account-a', {
+    kind: 'cloud-add', operationId, localListId: listId, remoteListId: listId, itemId: item.id, item,
+  })
+  await expect(storage.deleteLocalProfile(a.activeProfileId, a.activeProfileId)).rejects.toThrow('unsynced')
+  expect(await storage.readAccountItems('account-a')).toEqual([item])
+  await storage.commitAccountReceipt('account-a', operationId, listId, item.id, 1)
+  await storage.deleteLocalProfile(a.activeProfileId, a.activeProfileId)
+  expect(await storage.readAccountItems('account-a')).toEqual([])
+  expect(await storage.readAccountItemVersions('account-a')).toEqual([])
+  expect(await storage.readAccountListMappings('account-a')).toEqual([])
+  expect(await storage.readAccountItems('account-b')).toEqual([other])
+  expect(await storage.needsAccountCacheRestore('account-a')).toBe(true)
+  await storage.close()
+})
+
+it('rejects duplicate active names within a profile and allows reuse after deletion', async () => {
+  const storage = createStorage('list-names-' + crypto.randomUUID())
+  const profile = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const list = { id: 'first', name: 'Для дачи', symbol: '🛒', kind: 'permanent' as const, createdAt: 1 }
+  await storage.saveProfileList(profile, list)
+  await expect(storage.saveProfileList(profile, { ...list, id: 'duplicate', name: '  ДЛЯ ДАЧИ  ' })).rejects.toThrow('уже существует')
+  await storage.saveProfileList(profile, { ...list, id: 'second', name: 'Для дома' })
+  await expect(storage.renameProfileList(profile, 'second', 'для дачи')).rejects.toThrow('уже существует')
+  expect((await storage.readProfileLists(profile)).find(row => row.id === 'second')?.name).toBe('Для дома')
+  await storage.deleteProfileList(profile, 'first')
+  await storage.renameProfileList(profile, 'second', list.name)
+})
+
+it('caches a newly discovered cloud list without discarding other verified mappings', async () => {
+  const storage = createStorage('partial-list-metadata-' + crypto.randomUUID())
+  const accountId = 'account-a'
+  const first = crypto.randomUUID()
+  const second = crypto.randomUUID()
+  await storage.bindAccountList(accountId, first, first)
+  await storage.cacheAccountListMetadata(accountId, [
+    { id: first, ownerId: accountId, name: 'First list', kind: 'permanent', position: 0 },
+  ])
+  await storage.bindAccountList(accountId, second, second)
+  await storage.cacheAccountListMetadata(accountId, [
+    { id: second, ownerId: accountId, name: 'Second list', kind: 'oneoff', position: 1 },
+  ], { partial: true })
+  expect((await storage.readAccountListMappings(accountId))
+    .map(mapping => mapping.metadata?.name).sort()).toEqual(['First list', 'Second list'])
+  await storage.close()
+})
+
+it('keeps downloaded archives separate per account and removes the deleted profile cache', async () => {
+  const storage = createStorage('account-archive-cache-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const first = await storage.ensureVerifiedAccountProfile('account-a')
+  await storage.ensureVerifiedAccountProfile('account-b')
+  const archive = [{
+    id: 'archive-a', sourceListId: 'list-a', sourceListName: 'Покупки A',
+    completedAt: new Date(0).toISOString(), items: [{ ordinal: 0, name: 'Чай', quantity: null, unit: null }],
+  }]
+  await storage.cacheAccountArchive('account-a', archive)
+  expect(await storage.readAccountArchive('account-a')).toEqual(archive)
+  expect(await storage.readAccountArchive('account-b')).toBeNull()
+  await storage.deleteLocalProfile(first.activeProfileId, first.activeProfileId)
+  await storage.cacheAccountArchive('account-a', archive)
+  expect(await storage.readAccountArchive('account-a')).toBeNull()
+  await storage.close()
+})
+
+it('completes a local cycle without adding an empty archive record', async () => {
+  const storage = createStorage('empty-purchase-cycle-' + crypto.randomUUID())
+  const profile = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  await storage.saveProfileItem(profile, createItem('groceries', 'Вода'))
+  await storage.completeProfileList(profile, 'groceries', 'cycle', 100, 'none_purchased')
+  expect(await storage.readProfileItems(profile)).toEqual([])
+  expect(await storage.readProfileArchives(profile)).toEqual([])
+  expect((await storage.readProfileLists(profile)).some(list => list.id === 'groceries')).toBe(true)
+  await storage.close()
+})
+
+it('caps newly created profiles, allowing an existing account or one pending replacement at capacity', async () => {
+  const storage = createStorage('profile-capacity-' + crypto.randomUUID())
+  await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  await storage.ensureVerifiedAccountProfile('known')
+  for (let i = 2; i < 10; i++) await storage.createLocalProfile('local-' + i, i)
+  await expect(storage.createLocalProfile('eleventh', 11)).rejects.toThrow('уже 10')
+  await expect(storage.ensureVerifiedAccountProfile('new')).rejects.toThrow('уже 10')
+  expect((await storage.ensureVerifiedAccountProfile('known')).profiles).toHaveLength(10)
+
+  await storage.switchLocalProfile('local-9')
+  await storage.ensureVerifiedAccountProfile('new', { sourceProfileId: 'local-9', collisionMode: 'separate' })
+  expect(await storage.readReservedProfileSources()).toEqual(['local-9'])
+  await storage.switchLocalProfile('local-8')
+  await expect(storage.ensureVerifiedAccountProfile('next', { sourceProfileId: 'local-8', collisionMode: 'separate' })).rejects.toThrow('уже 10')
+  expect(await storage.readGuestImports('next')).toEqual([])
+  const [batch] = await storage.readGuestImports('new')
+  await storage.confirmGuestImport(batch, [], [])
+  const registry = await storage.readLocalProfiles()
+  expect(registry?.profiles).toHaveLength(10)
+  expect(registry?.profiles.some(profile => profile.id === 'local-9')).toBe(false)
+  await storage.close()
+})
+
+it('records recency only after successful list and item changes for the affected profile', async () => {
+  const storage = createStorage('profile-recency-' + crypto.randomUUID())
+  const original = await storage.migrateLegacyGuestToProfile()
+  await storage.markGuestCutoverReady()
+  const { activeProfileId: other } = await storage.createLocalProfile('second', Date.now())
+  await expect(storage.renameProfileList(other, 'missing', 'Новое имя')).rejects.toThrow('Список не найден')
+  expect((await storage.readLocalProfiles())?.profiles.every(profile => profile.listsChangedAt === undefined)).toBe(true)
+  await storage.saveProfileList(other, { id: 'list', name: 'Покупки', symbol: '🛒', kind: 'permanent', position: 0, createdAt: 1 })
+  const before = (await storage.readLocalProfiles())!.profiles.find(profile => profile.id === other)!.listsChangedAt!
+  await storage.saveProfileItems(other, [{ id: 'item', listId: 'list', name: 'Молоко', purchased: false, createdAt: 1 }])
+  const profiles = (await storage.readLocalProfiles())!.profiles
+  expect(before).toBeGreaterThan(0)
+  expect(profiles.find(profile => profile.id === other)!.listsChangedAt).toBeGreaterThanOrEqual(before)
+  expect(profiles.find(profile => profile.id === original)!.listsChangedAt).toBeUndefined()
+  await storage.close()
 })
