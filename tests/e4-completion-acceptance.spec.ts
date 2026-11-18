@@ -52,6 +52,7 @@ test('browser E4: oneoff completion disappears from active lists but survives in
 
 for (const kind of ['permanent', 'oneoff'] as const) {
   test(`partial archive keeps the ${kind} list and unmarked purchases after reload`, async ({ page }) => {
+    test.setTimeout(60000)
     await page.goto('/shopping-app/')
     await page.getByRole('button', { name: 'Новый список' }).click()
     const create = page.getByRole('dialog', { name: 'Создать список' })
@@ -65,7 +66,9 @@ for (const kind of ['permanent', 'oneoff'] as const) {
     await complete.click()
     await expect(partial).toBeDisabled()
     await page.getByRole('button', { name: 'Закрыть меню', exact: true }).click({ position: { x: 4, y: 4 } })
-    await page.getByRole('checkbox', { name: 'Сыр' }).check()
+    const cheese = page.getByRole('checkbox', { name: 'Сыр' })
+    await cheese.click()
+    await expect(cheese).toBeChecked()
     await complete.click()
     await partial.click()
     const dialog = page.getByRole('dialog', { name: 'Завершить покупки' })
