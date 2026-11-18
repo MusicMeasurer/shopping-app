@@ -11,7 +11,7 @@ import { sendCloudCompletion, type CompletionMode, type CompletionReceipt } from
  */
 export function createCloudCompletionCoordinator(
   storage: Pick<Storage, 'beginAccountCompletion' | 'readAccountCompletions' | 'commitAccountCompletion' |
-    'readAccountItems' | 'readAccountPending' | 'readAccountListMappings' | 'discardRejectedDeletion'>,
+    'readAccountItems' | 'readAccountPending' | 'readAccountListMappings' | 'discardRejectedCompletion'>,
   client: Pick<SupabaseClient, 'rpc' | 'from'>,
   accountId: string,
   isActive: () => boolean,
@@ -33,11 +33,11 @@ export function createCloudCompletionCoordinator(
         expectedRevision: intent.expectedRevision, mode: intent.mode,
       })
     } catch (error) {
-      // Only explicit server rejections prove that there is no committed deletion to recover.
-      if (intent.mode === 'delete_list' && isActive() && error && typeof error === 'object' &&
+      // The RPC checks the receipt before these rejections, so they prove there is no committed operation to recover.
+      if (isActive() && error && typeof error === 'object' &&
           'code' in error && error.code === 'P0001' && 'message' in error &&
           (error.message === 'List revision conflict' || error.message === 'List unavailable'))
-        await storage.discardRejectedDeletion(intent)
+        await storage.discardRejectedCompletion(intent)
       throw error
     }
     assertActive()

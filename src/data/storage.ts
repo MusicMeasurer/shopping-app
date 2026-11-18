@@ -1201,7 +1201,7 @@ export function createStorage(name = 'shopping-app') {
       const rows = await (await database).getAllFromIndex('accountCompletions', 'byAccount', accountId)
       return rows.map(row => row.intent)
     },
-    async discardRejectedDeletion(intent: CloudCompletionIntent): Promise<void> {
+    async discardRejectedCompletion(intent: CloudCompletionIntent): Promise<void> {
       const tx = (await database).transaction(['accountCompletions', 'accountCompletionRequests'], 'readwrite')
       const intents = tx.objectStore('accountCompletions')
       const key = accountKey(intent.accountId, intent.operationId)

@@ -824,7 +824,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               ...status, phase: 'error', retry: retry ? () => void processListOperations(accountId) : undefined,
               message: retry ? (cause instanceof Error && cause.message.startsWith('Список изменился.') ? cause.message
                 : mode === 'delete_list' ? 'Не удалось подтвердить удаление' : 'Не удалось подтвердить завершение')
-                : (mode === 'delete_list' ? 'Список изменился. Проверьте его и подтвердите удаление заново.' : 'Список не удалось завершить.'),
+                : (mode === 'delete_list' ? 'Список изменился. Проверьте его и подтвердите удаление заново.'
+                  : 'Список изменился. Проверьте его и подтвердите завершение заново.'),
               dismiss: unsent && !uncertain ? async () => {
                 if (await storage.cancelUnsentAccountCompletion(unsent)) clearListOperation(accountId, localListId)
               } : retry ? undefined : () => clearListOperation(accountId, localListId),
@@ -976,14 +977,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const ownPull = pullState?.account === currentAccount ? pullState?.status : undefined
   const syncFailed = ownPush === 'error' || ownPull === 'error'
   const activeOperations = listOperations.filter(row => row.accountId === workspaceAccount)
+  const listSyncFailed = activeOperations.some(row => row.phase === 'error' && row.retry)
   const syncState: ProfileSyncState | undefined = !workspaceAccount ? undefined
     : !syncOnline || !!offlineAccount ? (pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting' : 'offline')
     : ownPush === 'syncing' || ownPull === 'syncing' || activeOperations.some(row => row.phase === 'running') ? 'syncing'
-    : syncFailed || activeOperations.some(row => row.phase === 'error' && row.retry) ? 'error'
+    : syncFailed || listSyncFailed ? 'error'
     : pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting'
     : ownPush === 'done' && ownPull === 'done' && pendingWork === false ? 'synced' : 'waiting'
   function retrySync() {
     setDismissedSyncError(false)
+    if (currentAccount && listSyncFailed) void processListOperations(currentAccount)
     onQueued()
     setCloudMappingRevision(value => value + 1)
   }
@@ -1041,7 +1044,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         busy, name: verifiedEmail || undefined, syncState,
         content: <>
         {view.status === 'account' ? <>
-          {syncFailed && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
+          {(syncFailed || listSyncFailed) && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
           <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
           view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
           <form onSubmit={signIn}>

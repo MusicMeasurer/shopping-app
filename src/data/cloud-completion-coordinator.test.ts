@@ -21,6 +21,7 @@ function fixture() {
   const storage = {
     readAccountCompletions: vi.fn(async () => intents),
     beginAccountCompletion: vi.fn(async (value: CloudCompletionIntent) => { intents = [value] }),
+    discardRejectedCompletion: vi.fn(async () => { intents = [] }),
     commitAccountCompletion: vi.fn(async (value: CloudCompletionIntent) => {
       if (crash) throw new Error('IndexedDB interrupted')
       expect(intents).toEqual([value])
@@ -78,4 +79,19 @@ describe('durable E4 cloud completion coordinator', () => {
     await expect(f.coordinator.resume(intent)).rejects.toThrow('offline')
     expect(f.getIntents()).toEqual([intent])
   })
+})
+
+it('unlocks a completion after explicit revision rejection, but preserves it after a lost response', async () => {
+  const f = fixture()
+  await f.storage.beginAccountCompletion(intent)
+  const lostResponse = new Error('Response unavailable')
+  f.rpc.mockRejectedValueOnce(lostResponse)
+  await expect(f.coordinator.resume(intent)).rejects.toBe(lostResponse)
+  expect(f.getIntents()).toEqual([intent])
+
+  const rejected = { code: 'P0001', message: 'List revision conflict' }
+  f.rpc.mockResolvedValueOnce({ data: null, error: rejected } as never)
+  await expect(f.coordinator.resume(intent)).rejects.toEqual(rejected)
+  expect(f.storage.discardRejectedCompletion).toHaveBeenCalledWith(intent)
+  expect(f.getIntents()).toEqual([])
 })
