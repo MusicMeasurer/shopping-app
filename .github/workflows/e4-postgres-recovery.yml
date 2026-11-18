@@ -167,8 +167,8 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_profile_merge.sql
       - name: Run real browser E4 completion acceptance (mobile Chromium and WebKit)
         run: npx playwright test tests/e4-completion-acceptance.spec.ts
-      - name: Verify large-card rail touch gestures and saved order in both mobile browsers
-        run: npx playwright test tests/e4.spec.ts --grep 'large list rail|large cards scroll'
+      - name: Verify the card rail, item sorting and name conflicts in both mobile browsers
+        run: npx playwright test tests/e4.spec.ts --grep 'large list rail|large cards scroll|one name per list|persistent duplicate'
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
