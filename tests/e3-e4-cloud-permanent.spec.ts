@@ -103,11 +103,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: buttonName, exact: true }).click()
-    // Fail with the application's actual completion reason rather than a generic
-    // timeout. The server receipt remains mandatory for this acceptance.
-    const result = page.getByRole('region', { name: 'Облачный архив' }).getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
-    await expect(result).toBeVisible({ timeout: 20000 })
-    await expect(result).toHaveText(/^Список завершён\.$/)
+    await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: 20000 })
   }
 
   tracePhase('editing item attributes before archiving')
@@ -356,7 +352,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await openDeletion()
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0, { timeout: 20000 })
-  await expect(page.getByText('Список удалён.', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.list-action-notice')).toHaveText('Список удалён.')
   await page.reload()
   await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
@@ -392,6 +388,6 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(deletion.getByRole('button', { name: 'Завершить отмеченные' })).toHaveCount(0)
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
   await expect(page.getByRole('button', { name: unmarkedListName, exact: true })).toHaveCount(0, { timeout: 20000 })
-  await expect(page.getByText('Список удалён.', { exact: true })).toHaveCount(0)
+  await expect(page.locator('.list-action-notice')).toHaveText('Список удалён.')
   await client.auth.signOut({ scope: 'local' })
 })

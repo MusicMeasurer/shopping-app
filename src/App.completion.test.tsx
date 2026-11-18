@@ -37,12 +37,13 @@ describe('E3/E4 shopping workspace completion controls', () => {
     }))
     expect(html).toContain('Удаляем «Продукты»…')
   })
-  it('shows completion result beside the active list', () => {
+  it('shows completion result once in a dedicated notice', () => {
     const html = renderToStaticMarkup(createElement(App, {
       storage, accountId, cloudBoundLists: { groceries: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' },
-      onCompleteCloudList: () => {}, completionStatus: 'Список завершён.',
+      onCompleteCloudList: () => {}, completionNotice: { text: 'Список завершён.', at: Date.now() },
     }))
-    expect(html).toContain('role="status">Список завершён.')
+    expect(html).toContain('class="list-action-notice" role="status">Список завершён.')
+    expect(html.match(/Список завершён\./g)).toHaveLength(1)
   })
 
 })

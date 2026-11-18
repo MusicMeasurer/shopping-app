@@ -112,16 +112,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  // Fail with the application's actual completion reason rather than a generic
-  // timeout. The server receipt remains mandatory for this acceptance.
-  await expect.poll(async () => {
-    const messages = await page.locator('[role="status"]').allTextContents()
-    const completion = messages.find(message => /Список завершён\.|Не удалось завершить:/.test(message))
-    return completion ?? ''
-  }, { timeout: 20000 }).toMatch(/Список завершён\.|Не удалось завершить:/)
-  const completionMessages = await page.locator('[role="status"]').allTextContents()
-  const completionMessage = completionMessages.find(message => /Список завершён\.|Не удалось завершить:/.test(message)) ?? ''
-  expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/^Список завершён\.$/)
+  await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: 20000 })
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: /^Архив,/ }).click()

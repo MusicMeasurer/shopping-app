@@ -1,3 +1,4 @@
+import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
@@ -47,6 +48,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
   const loadingArchiveFor = useRef<string | null>(null)
   const archiveRefreshRequested = useRef<string | null>(null)
+  const [completionNotice, setCompletionNotice] = useState<(ListActionMessage & { accountId: string })>()
+  const [completionError, setCompletionError] = useState('')
   const [completionPreflight, setCompletionPreflight] = useState('')
   const [completionBusy, setCompletionBusy] = useState(false)
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
@@ -798,8 +801,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             if (receipt.mode === 'delete_list')
               setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== remoteListId)))
             clearListOperation(accountId, localListId)
-            setCompletionPreflight(receipt.mode === 'delete_list' ? '' : receipt.mode === 'archive_purchased'
-              ? 'Отмеченные покупки перемещены в архив.' : 'Список завершён.')
+            setCompletionNotice({
+              accountId, at: Date.now(),
+              text: receipt.mode === 'delete_list' ? 'Список удалён.' : receipt.mode === 'archive_purchased'
+                ? 'Отмеченные покупки перемещены в архив.' : 'Список завершён.',
+            })
             setCloudArchives(null)
             setWorkspaceRevision(value => value + 1)
             void loadCloudArchive(true)
@@ -837,7 +843,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
       } while (completionRequested.current.has(accountId) && stillActive())
     } catch {
-      if (stillActive()) setCompletionPreflight('Не удалось прочитать очередь операций со списками.')
+      if (stillActive()) setCompletionError('Не удалось прочитать очередь операций со списками.')
     } finally {
       completionWorkers.current.delete(accountId)
       completionRequested.current.delete(accountId)
@@ -852,7 +858,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (cancelled) return
       for (const request of requests) setListOperation({ ...request, phase: 'queued' })
       if (currentAccount === account) void processListOperations(account)
-    }).catch(() => { if (!cancelled) setCompletionPreflight('Не удалось прочитать очередь операций со списками.') })
+    }).catch(() => { if (!cancelled) setCompletionError('Не удалось прочитать очередь операций со списками.') })
     return () => { cancelled = true }
     // A stored operation is resumed only for the verified account after reconnection.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -871,14 +877,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       accountId, localListId, remoteListId, name: row.name, mode, confirmedMarked, confirmedItemIds,
       operationId: crypto.randomUUID(), createdAt: Date.now(),
     }
-    setCompletionPreflight('')
+    setCompletionError('')
     try {
       await storage.queueAccountCompletion(request)
       if (activeAccount.current !== accountId) return
       setListOperation({ ...request, phase: 'queued' })
       void processListOperations(accountId)
     } catch (error) {
-      if (activeAccount.current === accountId) setCompletionPreflight(error instanceof Error && error.message.startsWith('Список изменился.')
+      if (activeAccount.current === accountId) setCompletionError(error instanceof Error && error.message.startsWith('Список изменился.')
         ? error.message : 'Не удалось поставить операцию со списком в очередь.')
     }
   }
@@ -923,6 +929,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudArchives(null)
     setCloudArchiveError('')
     setCompletionPreflight('')
+    setCompletionError('')
+    setCompletionNotice(undefined)
   }, [workspaceAccount])
 
   useEffect(() => {
@@ -1055,7 +1063,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             </article>)}
         </div>}
       </section>) : undefined}
-      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked, confirmedItemIds) => { void completeCloudList(listId, mode, confirmedMarked, confirmedItemIds) } : undefined}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionNotice={completionNotice?.accountId === workspaceAccount ? completionNotice : undefined} completionError={completionError} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked, confirmedItemIds) => { void completeCloudList(listId, mode, confirmedMarked, confirmedItemIds) } : undefined}
       accountMenu={client ? {
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
