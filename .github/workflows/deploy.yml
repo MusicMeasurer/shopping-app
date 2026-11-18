@@ -37,7 +37,7 @@ jobs:
       - name: Build
         run: npm run build
       - name: Identify deployed revision
-        run: git rev-parse HEAD > dist/revision.txt
+        run: git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD > dist/revision.txt
       - name: Verify the clean PWA in Chromium and WebKit
         run: npx playwright test tests/interim-clean-deployment.spec.ts
       - name: Configure GitHub Pages
