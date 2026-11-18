@@ -58,3 +58,36 @@ describe('durable E4 completion IndexedDB v11', () => {
     await db.close()
   })
 })
+
+it('keeps requests for different lists across restart and clears only the confirmed request', async () => {
+  const name = 'completion-request-' + crypto.randomUUID()
+  const db = createStorage(name)
+  const item = createItem('groceries', 'Молоко')
+  const saved = intent(item.id)
+  const secondRemote = crypto.randomUUID()
+  const firstRequest = {
+    accountId, localListId: 'groceries', remoteListId, operationId, mode: 'marked_only' as const, name: 'Продукты', createdAt: 100,
+  }
+  const secondRequest = {
+    ...firstRequest, localListId: 'household', remoteListId: secondRemote, operationId: crypto.randomUUID(), createdAt: 101,
+  }
+  await db.bindAccountList(accountId, 'groceries', remoteListId)
+  await db.bindAccountList(accountId, 'household', secondRemote)
+  await db.saveAccountItem(accountId, item)
+  await db.queueAccountCompletion(firstRequest)
+  await db.queueAccountCompletion(secondRequest)
+  await expect(db.queueAccountCompletion(firstRequest)).rejects.toThrow()
+  await expect(db.saveAccountItemsToSync(accountId, [createItem('groceries', 'Хлеб')])).rejects.toThrow('Completion pending')
+  await db.close()
+  const reopened = createStorage(name)
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([firstRequest, secondRequest])
+  expect(await reopened.readAccountCompletionRequests('account-b')).toEqual([])
+  await reopened.beginAccountCompletion(saved, true)
+  expect(await reopened.cancelUnsentAccountCompletion(firstRequest)).toBe(false)
+  await reopened.commitAccountCompletion(saved, 3, [{ id: item.id, version: 2 }])
+  expect(await reopened.readAccountCompletionRequests(accountId)).toEqual([secondRequest])
+  expect(await reopened.hasAccountSyncWork(accountId)).toBe(true)
+  expect(await reopened.cancelUnsentAccountCompletion(secondRequest)).toBe(true)
+  expect(await reopened.hasAccountSyncWork(accountId)).toBe(false)
+  await reopened.close()
+})

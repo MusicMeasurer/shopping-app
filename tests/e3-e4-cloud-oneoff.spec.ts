@@ -52,7 +52,8 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('region', { name: 'Облачный архив', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   const account = page.getByRole('dialog', { name: 'Мой аккаунт' })
-  await account.getByRole('button', { name: 'Повторить синхронизацию' }).click()
+  await expect(account.getByText('Синхронизировано', { exact: false })).toBeVisible()
+  await expect(account.getByRole('button', { name: 'Повторить синхронизацию' })).toHaveCount(0)
   await account.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(name)
@@ -119,7 +120,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   }, { timeout: 20000 }).toMatch(/Список завершён\.|Не удалось завершить:/)
   const completionMessages = await page.locator('[role="status"]').allTextContents()
   const completionMessage = completionMessages.find(message => /Список завершён\.|Не удалось завершить:/.test(message)) ?? ''
-  expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/Список завершён\. Сервер подтвердил операцию/)
+  expect(completionMessage, 'Actual completion result: ' + completionMessage).toMatch(/^Список завершён\.$/)
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: /^Архив,/ }).click()
@@ -134,4 +135,64 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off reappeared after reload').toHaveCount(0)
   await client.auth.signOut({ scope: 'local' })
+})
+
+test.describe('queued cloud list operations', () => {
+  test.use({ serviceWorkers: 'block' })
+
+  test('a lost deletion response leaves the other list usable and is recovered after restart', async ({ page }) => {
+    test.setTimeout(120000)
+    await page.goto('/shopping-app/')
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Пароль').fill(password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    const declineImport = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+    await expect(declineImport.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    if (await declineImport.isVisible()) await declineImport.click()
+
+    const first = 'QUEUE_A_' + crypto.randomUUID()
+    const second = 'QUEUE_B_' + crypto.randomUUID()
+    for (const name of [first, second]) {
+      await page.getByRole('button', { name: 'Новый список' }).click()
+      await page.getByLabel('Название списка', { exact: true }).fill(name)
+      await page.getByRole('button', { name: 'Создать', exact: true }).click()
+      await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+    }
+
+    let releaseResponse!: () => void
+    const holdResponse = new Promise<void>(resolve => { releaseResponse = resolve })
+    let lostResponse = false
+    await page.route('**/rest/v1/rpc/complete_e4_list', async route => {
+      if (lostResponse) return route.continue()
+      lostResponse = true
+      const response = await route.fetch()
+      expect(response.ok()).toBe(true)
+      await holdResponse
+      await route.abort()
+    })
+    async function deleteList(name: string) {
+      await page.getByRole('button', { name: name, exact: true }).click()
+      await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+      await page.getByRole('menuitem', { name: /Удалить список/ }).click()
+      await page.getByRole('dialog', { name: 'Удалить список?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
+    }
+    try {
+      await deleteList(first)
+      await expect.poll(() => lostResponse).toBe(true)
+      await expect(page.getByText('Удаляем «' + first + '»…')).toBeVisible()
+      await deleteList(second)
+      await expect(page.getByText('«' + second + '» ожидает синхронизации')).toBeVisible()
+    } finally {
+      releaseResponse()
+    }
+    const queue = page.getByRole('list', { name: 'Операции со списками' })
+    await expect(queue.getByRole('alert')).toContainText('Не удалось подтвердить удаление')
+    await expect(page.getByRole('button', { name: second, exact: true })).toHaveCount(0)
+    await page.reload()
+    await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
+    await expect(queue).toHaveCount(0, { timeout: 30000 })
+    await expect(page.getByRole('button', { name: first, exact: true })).toHaveCount(0)
+    await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: 30000 })
+  })
 })

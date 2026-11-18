@@ -281,12 +281,10 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .list-tile:has(.list-select[aria-pressed="true"]) .list-card-indicators{color:white}
 .list-heading-status{flex-wrap:wrap;gap:6px}
 .list-sync-hint{font-size:12px;color:#627068}
-.list-kind-options{display:grid;gap:8px;margin-top:16px}
-.list-kind-options button{
-  display:flex;justify-content:space-between;align-items:center;min-height:44px;
-  padding:8px 12px;border:1px solid #cbd9cd;border-radius:10px;background:white;color:#203b30;text-align:left
-}
-.list-kind-options button[aria-checked="true"]{background:#eef3eb;border-color:#799d88}
+.list-kind-menu-label{padding:8px 12px 0;color:#425e52;font-size:.85rem}
+.list-kind-options{margin-inline-start:12px}
+.list-menu .list-kind-options button{gap:8px}
+.list-menu .list-kind-options button[aria-checked="true"]{background:#eef3eb}
 
 .shopping-e4 nav.lists-grid{--card-symbol-size:34.5px}
 .shopping-e4 nav.lists-grid .list-symbol{font-size:var(--card-symbol-size)}
@@ -335,7 +333,8 @@ nav .list-conflict-marker{
 
 .profile-menu-anchor{position:relative;margin-left:auto;min-width:0;max-width:calc(100% - 52px)}
 .profile-menu-trigger{display:flex;align-items:center;gap:7px;min-height:44px;max-width:100%;padding:6px 10px;border:1px solid #d8dfd6;border-radius:24px;background:white;color:#203b30}
-.profile-button-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-button-details{display:grid;min-width:0;justify-items:start;gap:2px}
+.profile-button-name{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .profile-badge{display:inline-flex;position:relative;flex:0 0 31px;width:31px;height:25px;align-items:center;color:#425e52}
 .profile-badge svg{width:21px;height:21px}
 .profile-sync{position:absolute;right:0;bottom:0;font-size:13px;line-height:1;font-weight:700}
@@ -354,3 +353,33 @@ nav .list-conflict-marker{
 .profile-options{display:grid;gap:4px;max-height:200px;overflow:auto;overscroll-behavior:contain}
 .profile-options button{display:flex;align-items:center;text-align:left;gap:6px;width:100%;border:1px solid #d8dfd6;border-radius:8px;padding:6px;background:#f6f8f5;color:#203b30;overflow-wrap:anywhere}
 .profile-switcher p{font-size:.85rem;margin:0}
+
+.profile-status {
+  position:relative;display:inline-block;max-width:100%;overflow:hidden;
+  border-radius:5px;padding:1px 5px;background:#dcebf9;color:#233f61;
+  font-size:.72rem;line-height:1.35;text-align:left
+}
+.profile-menu-heading .profile-status{margin-top:4px}
+.profile-status[data-sync="synced"],.profile-status[data-sync="syncing"]{background:#dceee1;color:#195235}
+.profile-status[data-sync="waiting"],.profile-status[data-sync="offline"],.profile-status[data-sync="error"]{background:#fae6cd;color:#773b10}
+.profile-status[data-sync="syncing"]::after {
+  position:absolute;inset:0;width:35%;content:"";pointer-events:none;
+  background:linear-gradient(90deg,transparent,#ffffff85,transparent);
+  animation:profile-status-sweep 1.4s linear infinite
+}
+@keyframes profile-status-sweep{from{transform:translateX(-100%)}to{transform:translateX(300%)}}
+.profile-option{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px;align-items:start}
+.profile-option p{grid-column:1/-1;padding:0 6px 4px}
+.profile-menu button.profile-delete{display:grid;place-items:center;width:44px;min-width:44px;padding:0;color:#8d2929}
+.profile-delete svg{width:20px;height:20px}
+.profile-delete:disabled{opacity:.5}
+.profile-delete-hint{font-size:.85rem}
+.list-operation-statuses{display:grid;gap:6px;margin:8px 0;padding:0;list-style:none}
+.list-operation-statuses li{padding:6px 8px;border-radius:8px;background:#eef3eb}
+.list-operation-statuses p,.sync-error p{margin:4px 0;overflow-wrap:anywhere}
+.list-operation-statuses button,.sync-error button{margin:4px 4px 0 0}
+.list-operation-spinner{display:inline-block;width:.85em;height:.85em;margin-inline-end:.45em;border:2px solid #a9bfb3;border-top-color:#25634c;border-radius:50%;animation:list-operation-spin .9s linear infinite}
+@keyframes list-operation-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){
+  .profile-status[data-sync="syncing"]::after,.list-operation-spinner{animation:none}
+}

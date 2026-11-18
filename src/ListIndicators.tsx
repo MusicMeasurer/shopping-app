@@ -6,10 +6,10 @@ export const listKindLabels: Record<ListKind, string> = {
   permanent: 'Постоянный',
 }
 
-export function ListIndicators({ kind, cloudStatus }: { kind: ListKind; cloudStatus?: CloudStatus }) {
+export function ListIndicators({ kind, cloudStatus, decorative = false }: { kind: ListKind; cloudStatus?: CloudStatus; decorative?: boolean }) {
   const paused = cloudStatus !== 'connected'
   return <span className="list-indicators">
-    <svg role="img" aria-label={listKindLabels[kind] + ' список'} viewBox="0 0 24 24">
+    <svg role={decorative ? undefined : "img"} aria-hidden={decorative || undefined} aria-label={decorative ? undefined : listKindLabels[kind] + ' список'} viewBox="0 0 24 24">
       {kind === 'oneoff'
         ? <path d="M6 3h12M6 21h12M7 3v3c0 2 2 4 5 6-3 2-5 4-5 6v3M17 3v3c0 2-2 4-5 6 3 2 5 4 5 6v3"/>
         : <path d="M20 10a8 8 0 0 0-14-4L3 9m0-5v5h5m-4 5a8 8 0 0 0 14 4l3-3m0 5v-5h-5"/>}

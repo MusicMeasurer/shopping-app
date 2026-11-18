@@ -9,22 +9,44 @@ const statusLabels: Record<ProfileMode, string> = {
   cloud: 'В облаке',
 }
 
-export function ProfileBadge({ mode }: { mode: ProfileMode }) {
+export type ProfileSyncState = 'local' | 'syncing' | 'synced' | 'waiting' | 'offline' | 'error'
+
+const syncLabels: Record<ProfileSyncState, string> = {
+  local: 'Локальные данные',
+  syncing: 'Синхронизация…',
+  synced: 'Синхронизировано',
+  waiting: 'Требуется синхронизация',
+  offline: 'Нет связи',
+  error: 'Ошибка синхронизации',
+}
+
+export function DeleteProfileButton({ name, disabled, onDelete }: { name: string; disabled?: boolean; onDelete: () => void }) {
+  return <button type="button" className="profile-delete" aria-label={`Удалить локальный профиль «${name}»`}
+    disabled={disabled} onClick={onDelete}>
+    <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
+      <path d="M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13M10 10v7m4-7v7" />
+    </svg>
+  </button>
+}
+
+export function ProfileBadge({ mode, compact = false }: { mode: ProfileMode; compact?: boolean }) {
   return <span className="profile-badge" data-mode={mode} title={statusLabels[mode]}>
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">
       <circle cx="12" cy="7" r="3.5" />
       <path d="M4 21v-2a8 8 0 0 1 16 0v2" />
     </svg>
-    <span aria-hidden="true" className="profile-sync">
+    {!compact && <span aria-hidden="true" className="profile-sync">
       {mode === 'cloud' ? '↻' : mode === 'local' ? '∕' : 'Ⅱ'}
-    </span>
+    </span>}
     <span className="sr-only">{statusLabels[mode]}</span>
   </span>
 }
 
-export function ProfileMenu({ name, mode, open, onToggle, onClose, onRename, children }: {
+export function ProfileMenu({ name, mode, syncState, open, onToggle, onClose, onRename, deleteCurrent, children }: {
   name: string
   mode: ProfileMode
+  syncState: ProfileSyncState
+  deleteCurrent?: ReactNode
   open: boolean
   onToggle: () => void
   onClose: () => void
@@ -34,17 +56,10 @@ export function ProfileMenu({ name, mode, open, onToggle, onClose, onRename, chi
   const root = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const [available, setAvailable] = useState<number>()
-  const [online, setOnline] = useState(() => typeof navigator === 'undefined' || navigator.onLine)
-  const indicator = mode === 'cloud' && !online ? 'offline' : mode
-  useEffect(() => {
-    const update = () => setOnline(navigator.onLine)
-    window.addEventListener('online', update)
-    window.addEventListener('offline', update)
-    return () => {
-      window.removeEventListener('online', update)
-      window.removeEventListener('offline', update)
-    }
-  }, [])
+  const syncLabel = syncLabels[syncState]
+  const status = <span className="profile-status" data-sync={syncState}>
+    {syncState === 'synced' && <span aria-hidden="true">✓ </span>}{syncLabel}
+  </span>
 
   useEffect(() => {
     if (!open) return
@@ -81,19 +96,20 @@ export function ProfileMenu({ name, mode, open, onToggle, onClose, onRename, chi
     <button ref={trigger} type="button" className="profile-menu-trigger" aria-expanded={open}
       data-profile-mode={mode}
       aria-controls={open ? 'profile-menu' : undefined} aria-haspopup="dialog"
-      aria-label={name + ' · ' + statusLabels[indicator] + ' · ' + (mode === 'cloud' || mode === 'offline' ? 'Открыть аккаунт' : 'Войти в аккаунт')}
+      aria-label={name + ' · ' + statusLabels[mode] + ' · ' + syncLabel + ' · ' + (mode === 'cloud' || mode === 'offline' ? 'Открыть аккаунт' : 'Войти в аккаунт')}
       onClick={onToggle}>
-      <ProfileBadge mode={indicator} />
-      <span className="profile-button-name" title={name}>{name}</span>
+      <ProfileBadge mode={mode} compact />
+      <span className="profile-button-details"><span className="profile-button-name" title={name}>{name}</span>{status}</span>
       <span aria-hidden="true">▾</span>
     </button>
     {open && <section id="profile-menu" className="profile-menu account-dialog" role="dialog" tabIndex={0}
       aria-label={mode === 'cloud' || mode === 'offline' ? 'Мой аккаунт' : 'Вход в аккаунт'}
       style={{ maxHeight: available }}>
       <header className="profile-menu-heading">
-        <ProfileBadge mode={indicator} />
-        <div><h2 className="account-full-email">{name}</h2><p>{statusLabels[indicator]}</p></div>
+        <ProfileBadge mode={mode} compact />
+        <div><h2 className="account-full-email">{name}</h2>{status}</div>
         {onRename && <button type="button" aria-label="Изменить имя профиля" onClick={onRename}>✎</button>}
+        {deleteCurrent}
         <button type="button" aria-label="Закрыть окно аккаунта" onClick={() => { onClose(); trigger.current?.focus() }}>×</button>
       </header>
       {children}

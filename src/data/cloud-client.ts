@@ -2,16 +2,15 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { parseCloudConfig } from './cloud-config'
 
 const authRequestTimeoutMs = 8000
-const archiveRequestTimeoutMs = 12000
-const archiveEndpoints = new Set(['/rest/v1/e4_archive_completions', '/rest/v1/e4_archive_items'])
+const dataRequestTimeoutMs = 12000
 
-/** Bound Auth and archive requests so their UI actions can be retried. */
+/** Bound Auth and Data API requests so their UI actions can be retried. */
 export function fetchWithCloudTimeout(authOrigin: string, fetcher: typeof fetch): typeof fetch {
   return (input, init) => {
     const url = new URL(input instanceof Request ? input.url : input)
     if (url.origin !== authOrigin) return fetcher(input, init)
     const timeoutMs = url.pathname.startsWith('/auth/v1/') ? authRequestTimeoutMs
-      : archiveEndpoints.has(url.pathname) ? archiveRequestTimeoutMs : null
+      : url.pathname.startsWith('/rest/v1/') ? dataRequestTimeoutMs : null
     if (timeoutMs === null) return fetcher(input, init)
     const inheritedSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
     const timeout = AbortSignal.timeout(timeoutMs)

@@ -67,7 +67,7 @@ export function createCloudCompletionCoordinator(
     await storage.commitAccountCompletion(intent, receipt.revision, relevant)
     return receipt
   }
-  async function begin(localListId: ListId, remoteListId: string, mode: CompletionMode, confirmedMarked?: boolean) {
+  async function begin(localListId: ListId, remoteListId: string, mode: CompletionMode, confirmedMarked?: boolean, queuedOperationId?: string) {
     assertActive()
     if ((await storage.readAccountCompletions(accountId)).some(row => row.remoteListId === remoteListId))
       throw new Error('Finish recovering the previous completion first')
@@ -80,11 +80,11 @@ export function createCloudCompletionCoordinator(
     if (mode === 'delete_list' && items.some(item => item.purchased) !== confirmedMarked)
       throw new Error('Отметки изменились. Проверьте список и подтвердите удаление заново.')
     const intent: CloudCompletionIntent = {
-      operationId: crypto.randomUUID(), accountId, localListId, remoteListId,
+      operationId: queuedOperationId ?? crypto.randomUUID(), accountId, localListId, remoteListId,
       expectedRevision: preflight.revision, mode,
       itemIds: items.map(item => item.id).sort(), createdAt: Date.now(),
     }
-    await storage.beginAccountCompletion(intent)
+    await storage.beginAccountCompletion(intent, !!queuedOperationId)
     return resume(intent)
   }
   async function recoverAll(): Promise<CompletionReceipt[]> {

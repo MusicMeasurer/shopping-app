@@ -33,7 +33,9 @@ it('sets an abort deadline for Auth and preserves the caller signal', async () =
     expect(spy).toHaveBeenLastCalledWith(12000)
     expect(request.mock.calls[1][1]?.signal).toBe(deadline.signal)
     await boundedFetch('https://example.supabase.co/rest/v1/shopping_lists')
-    expect(request.mock.calls[2][1]).toBeUndefined()
+    expect(request.mock.calls[2][1]?.signal).toBe(deadline.signal)
+    await boundedFetch('https://cdn.example.org/data')
+    expect(request.mock.calls[3][1]).toBeUndefined()
   } finally {
     spy.mockRestore()
   }

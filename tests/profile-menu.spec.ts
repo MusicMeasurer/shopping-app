@@ -4,7 +4,7 @@ test('opens one profile menu from settings and sorts two recent profiles before 
   await page.goto('/shopping-app/')
   const trigger = page.locator('.profile-menu-trigger')
   const panel = page.locator('#profile-menu')
-  const otherProfiles = panel.locator('.profile-options button')
+  const otherProfiles = panel.locator('.profile-option > button:first-child')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Настройки приложения' })
   await expect(settings.getByRole('group', { name: 'Локальные профили' })).toHaveCount(0)
@@ -46,4 +46,21 @@ test('opens one profile menu from settings and sorts two recent profiles before 
   await expect(otherProfiles.first()).toContainText('Домашние покупки')
   await panel.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await expect(trigger).toHaveAttribute('aria-expanded', 'false')
+})
+
+test('deletes an inactive profile from its row without switching the current profile', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const trigger = page.locator('.profile-menu-trigger')
+  await expect(trigger.getByText('Локальные данные', { exact: true })).toBeVisible()
+  for (let number = 2; number <= 3; number++) {
+    await trigger.click()
+    await page.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
+    await expect(trigger).toContainText('Локальный профиль ' + number)
+  }
+  await trigger.click()
+  await expect(page.getByRole('button', { name: 'Удалить локальный профиль «Мои покупки»' })).toHaveCount(0)
+  page.once('dialog', dialog => void dialog.accept())
+  await page.getByRole('button', { name: 'Удалить локальный профиль «Локальный профиль 2»' }).click()
+  await expect(page.getByRole('button', { name: 'Удалить локальный профиль «Локальный профиль 2»' })).toHaveCount(0)
+  await expect(trigger).toContainText('Локальный профиль 3')
 })

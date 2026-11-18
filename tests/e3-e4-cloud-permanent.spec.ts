@@ -106,7 +106,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     // timeout. The server receipt remains mandatory for this acceptance.
     const result = page.getByRole('region', { name: 'Облачный архив' }).getByRole('status').filter({ hasText: /^(Список завершён\.|Не удалось завершить:)/ })
     await expect(result).toBeVisible({ timeout: 20000 })
-    await expect(result).toHaveText(/^Список завершён\. Сервер подтвердил операцию/)
+    await expect(result).toHaveText(/^Список завершён\.$/)
   }
 
   tracePhase('editing item attributes before archiving')
@@ -298,8 +298,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByRole('button', { name: 'Сохранить', exact: true }).click()
   await expect(page.getByRole('button', { name: renamed, exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
-  await page.getByRole('menuitem', { name: 'Изменить тип списка' }).click()
-  await page.getByRole('radio', { name: 'Разовый', exact: true }).click()
+  await page.getByRole('menuitemradio', { name: 'Разовый', exact: true }).click()
   await page.getByText('Служебные операции облака', { exact: true }).click()
   await expect(metadataRow(otherList)).toBeVisible()
   await expect(metadataRow(renamed)).toBeVisible()
@@ -354,7 +353,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(discarded).toBeChecked()
   await openDeletion()
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
-  await expect(archive.getByRole('status').filter({ hasText: /^Список удалён\. Сервер подтвердил операцию/ }))
+  await expect(archive.getByRole('status').filter({ hasText: /^Список удалён\.$/ }))
     .toBeVisible({ timeout: 20000 })
   await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0)
   await page.reload()
@@ -391,7 +390,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(warning).toHaveCount(0)
   await expect(deletion.getByRole('button', { name: 'Завершить отмеченные' })).toHaveCount(0)
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
-  await expect(archive.getByRole('status').filter({ hasText: /^Список удалён\. Сервер подтвердил операцию/ }))
+  await expect(archive.getByRole('status').filter({ hasText: /^Список удалён\.$/ }))
     .toBeVisible({ timeout: 20000 })
   await expect(page.getByRole('button', { name: unmarkedListName, exact: true })).toHaveCount(0)
   await client.auth.signOut({ scope: 'local' })

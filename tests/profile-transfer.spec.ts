@@ -121,7 +121,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await expect(page.getByRole('checkbox', { name: cloudItem, exact: true })).toHaveCount(mode === 'merge' ? 1 : 0)
   await logout(page)
   await openSettings(page)
-  await expect(page.locator('.profile-options button')).toHaveCount(0)
+  await expect(page.locator('.profile-option > button:first-child')).toHaveCount(0)
   await expect(page.locator('.profile-menu-heading h2')).toHaveText(email)
   await closeSettings(page)
   await page.getByRole('button', { name: /^Архив,/ }).click()

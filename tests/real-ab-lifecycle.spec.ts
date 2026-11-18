@@ -187,10 +187,10 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('button', { name: 'Основные списки' }).click()
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
     page.once('dialog', dialog => void dialog.accept())
-    await page.getByRole('button', { name: 'Удалить локальный профиль', exact: true }).click()
+    await page.getByRole('button', { name: /^Удалить локальный профиль «/ }).click()
     await expect(page.locator('.profile-button-name')).toHaveText('Мои покупки')
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
-    await expect(page.locator('.profile-options button')).toHaveCount(0)
+    await expect(page.locator('.profile-option > button:first-child')).toHaveCount(0)
     await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
     await expect(page.getByRole('button', { name: listA, exact: true })).toHaveCount(0)
   }

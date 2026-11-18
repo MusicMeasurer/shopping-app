@@ -16,7 +16,9 @@ import { createCloudCompletionCoordinator } from './data/cloud-completion-coordi
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import { createAccountSync } from './data/account-sync'
-import type { Storage } from './data/storage'
+import type { CloudCompletionRequest, Storage } from './data/storage'
+import type { ProfileSyncState } from './ProfileMenu'
+import type { ListOperationStatus } from './App'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
 import { verifiedAccountId, verifySessionIdentity } from './data/verified-account'
@@ -44,6 +46,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
   const loadingArchiveFor = useRef<string | null>(null)
+  const archiveRefreshRequested = useRef<string | null>(null)
   const [completionPreflight, setCompletionPreflight] = useState('')
   const [completionBusy, setCompletionBusy] = useState(false)
   const [cloudBindings, setCloudBindings] = useState<Record<string, string>>({})
@@ -56,20 +59,38 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const [syncError, setSyncError] = useState('')
-  const [hasPendingCompletion, setHasPendingCompletion] = useState(false)
+  const [listOperations, setListOperations] = useState<ListOperationStatus[]>([])
+  const [syncOnline, setSyncOnline] = useState(() => navigator.onLine)
+  const [pushState, setPushState] = useState<{ account: string; status: 'syncing' | 'done' | 'error' }>()
+  const [pullState, setPullState] = useState<{ account: string; status: 'syncing' | 'done' | 'error' }>()
+  const [pendingSync, setPendingSync] = useState<{ account: string; pending: boolean }>()
+  const [syncQueueRevision, setSyncQueueRevision] = useState(0)
+  const [dismissedSyncError, setDismissedSyncError] = useState(false)
+  const completionWorkers = useRef(new Set<string>())
+  const completionRequested = useRef(new Set<string>())
   const currentAccount = view.status === 'account' ? view.accountId : null
   const offlineAccount = view.status === 'offline-account' ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
   useEffect(() => {
-    let cancelled = false
-    setHasPendingCompletion(false)
-    if (accountDialogOpen && currentAccount) {
-      void storage.readAccountCompletions(currentAccount).then(operations => {
-        if (!cancelled) setHasPendingCompletion(operations.length > 0)
-      }).catch(() => {})
+    const update = () => setSyncOnline(navigator.onLine)
+    window.addEventListener('online', update)
+    window.addEventListener('offline', update)
+    return () => {
+      window.removeEventListener('online', update)
+      window.removeEventListener('offline', update)
     }
-    return () => { cancelled = true }
-  }, [accountDialogOpen, currentAccount, completionBusy, storage])
+  }, [])
+  useEffect(() => {
+    if (!workspaceAccount) return
+    const account = workspaceAccount
+    let active = true
+    void storage.hasAccountSyncWork(account).then(pending => {
+      if (active) setPendingSync({ account, pending })
+    }).catch(() => {
+      if (active) setPendingSync(undefined)
+    })
+    return () => { active = false }
+  }, [storage, workspaceAccount, workspaceRevision, pushState, pullState, listOperations, accountDialogOpen, syncQueueRevision])
   useEffect(() => { setSyncError('') }, [currentAccount])
 
   useEffect(() => {
@@ -207,14 +228,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const automaticFlushRunning = useRef(false)
   const flushRequested = useRef(false)
   const onQueued = useCallback(() => {
-    if (!client || !currentAccount || readyAccount !== currentAccount) return
+    setSyncQueueRevision(revision => revision + 1)
+    if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
     flushRequested.current = true
     if (automaticFlushRunning.current) return
     const accountId = currentAccount
     automaticFlushRunning.current = true
+    setPushState({ account: accountId, status: 'syncing' })
+    setDismissedSyncError(false)
     void (async () => {
       try {
-        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
+        if (activeAccount.current !== accountId) return
+        if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
         do {
           flushRequested.current = false
           const [mappings, owned] = await Promise.all([
@@ -234,10 +259,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           }).flush()
           }
         } while (flushRequested.current && activeAccount.current === accountId)
-        if (activeAccount.current === accountId) setSyncError('')
+        if (activeAccount.current === accountId) {
+          setSyncError('')
+          setPushState({ account: accountId, status: 'done' })
+        }
       } catch {
-        if (activeAccount.current === accountId)
+        if (activeAccount.current === accountId) {
           setSyncError('Не удалось отправить изменения. Повторите синхронизацию.')
+          setPushState({ account: accountId, status: 'error' })
+        }
       } finally {
         automaticFlushRunning.current = false
         if (activeAccount.current !== accountId) flushRequested.current = false
@@ -342,19 +372,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         return
       }
       running = true
+      setPullState({ account: accountId, status: 'syncing' })
+      setDismissedSyncError(false)
       refreshRequested = false
       let imported = 0
       let failed = false
       try {
-        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId) return
-        const [mappings, owned] = await Promise.all([
+        if (activeAccount.current !== accountId) return
+        if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
+        const [mappings, owned, completions] = await Promise.all([
           storage.readAccountListMappings(accountId),
           fetchCloudListMetadata(client, accountId),
+          storage.readAccountCompletions(accountId),
         ])
         const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
+        const completing = new Set(completions.map(row => row.remoteListId))
         for (const row of owned) {
           if (!stillActive()) return
+          if (completing.has(row.id)) continue
           const mapping = mappingsByRemoteId.get(row.id)
           const localListId = mapping?.localListId ?? row.id
           try {
@@ -387,6 +423,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         failed = true
       } finally {
         if (!disposed && activeAccount.current === accountId) {
+          setPullState({ account: accountId, status: failed ? 'error' : 'done' })
           if (imported > 0) setWorkspaceRevision(value => value + 1)
           if (failed) setCloudRefreshStatus(imported > 0
             ? 'Получено новых покупок: ' + imported + '. Некоторые списки не удалось обновить.'
@@ -705,74 +742,152 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } finally { setCloudLoading(false) }
   }
 
+  function setListOperation(operation: ListOperationStatus) {
+    setListOperations(rows => [...rows.filter(row => row.accountId !== operation.accountId || row.localListId !== operation.localListId), operation])
+  }
+  function clearListOperation(accountId: string, localListId: string) {
+    setListOperations(rows => rows.filter(row => row.accountId !== accountId || row.localListId !== localListId))
+  }
+
+  async function processListOperations(accountId: string) {
+    if (!client || activeAccount.current !== accountId || !navigator.onLine) return
+    completionRequested.current.add(accountId)
+    if (completionWorkers.current.has(accountId)) return
+    completionWorkers.current.add(accountId)
+    setCompletionBusy(true)
+    const stillActive = () => activeAccount.current === accountId
+    try {
+      const coordinator = createCloudCompletionCoordinator(storage, client, accountId, stillActive)
+      const attempted = new Set<string>()
+      do {
+        completionRequested.current.delete(accountId)
+        const [requests, intents] = await Promise.all([
+          storage.readAccountCompletionRequests(accountId),
+          storage.readAccountCompletions(accountId),
+        ])
+        const queue = [
+          ...requests,
+          ...intents.filter(intent => !requests.some(request => request.operationId === intent.operationId))
+            .map(intent => ({ ...intent, name: cloudMetadata?.find(row => row.id === intent.remoteListId)?.name ?? 'Облачный список' })),
+        ]
+        for (const request of queue) {
+          if (!stillActive() || !navigator.onLine) return
+          if (attempted.has(request.operationId)) continue
+          attempted.add(request.operationId)
+          const { localListId, remoteListId, mode, operationId } = request
+          const status = { accountId, localListId, name: request.name, mode }
+          setListOperation({ ...status, phase: 'running' })
+          try {
+            if (await verifiedAccountId(client) !== accountId || !stillActive()) throw new Error('Account changed')
+            const intent = (await storage.readAccountCompletions(accountId)).find(row => row.operationId === operationId)
+            if (!intent) {
+              if (!requests.some(row => row.operationId === operationId)) {
+                clearListOperation(accountId, localListId)
+                continue
+              }
+              await createAccountSync(storage, client, { accountId, localListId, remoteListId, isActive: stillActive }).flush()
+            }
+            const receipt = intent ? await coordinator.resume(intent) :
+              await coordinator.begin(localListId, remoteListId, mode, 'confirmedMarked' in request ? request.confirmedMarked : undefined, operationId)
+            if (!stillActive()) return
+            if (receipt.mode === 'delete_list' || receipt.kind === 'oneoff') {
+              setCloudMetadata(rows => rows?.filter(row => row.id !== remoteListId) ?? null)
+              setCloudLists(rows => rows.filter(row => row.id !== remoteListId))
+            }
+            if (receipt.mode === 'delete_list')
+              setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== remoteListId)))
+            clearListOperation(accountId, localListId)
+            setCompletionPreflight(mode === 'delete_list' ? 'Список удалён.' : 'Список завершён.')
+            setCloudArchives(null)
+            setWorkspaceRevision(value => value + 1)
+            void loadCloudArchive(true)
+            try {
+              const refreshed = await fetchCloudListMetadata(client, accountId)
+              if (stillActive()) {
+                setCloudMetadata(refreshed)
+                setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
+              }
+            } catch {
+              if (stillActive()) setPullState({ account: accountId, status: 'error' })
+            }
+          } catch (cause) {
+            if (!stillActive()) return
+            const [saved, prepared] = await Promise.all([
+              storage.readAccountCompletionRequests(accountId),
+              storage.readAccountCompletions(accountId),
+            ])
+            if (!stillActive()) return
+            const uncertain = prepared.some(row => row.operationId === operationId)
+            const unsent = saved.find(row => row.operationId === operationId)
+            const retry = uncertain || !!unsent
+            setListOperation({
+              ...status, phase: 'error', retry: retry ? () => void processListOperations(accountId) : undefined,
+              message: retry ? (cause instanceof Error && cause.message.startsWith('Список изменился.') ? cause.message
+                : mode === 'delete_list' ? 'Не удалось подтвердить удаление' : 'Не удалось подтвердить завершение')
+                : (mode === 'delete_list' ? 'Список изменился. Проверьте его и подтвердите удаление заново.' : 'Список не удалось завершить.'),
+              dismiss: unsent && !uncertain ? async () => {
+                if (await storage.cancelUnsentAccountCompletion(unsent)) clearListOperation(accountId, localListId)
+              } : retry ? undefined : () => clearListOperation(accountId, localListId),
+            })
+            if (showLabControls && cause instanceof Error) setCompletionPreflight(cause.message)
+          }
+        }
+      } while (completionRequested.current.has(accountId) && stillActive())
+    } catch {
+      if (stillActive()) setCompletionPreflight('Не удалось прочитать очередь операций со списками.')
+    } finally {
+      completionWorkers.current.delete(accountId)
+      completionRequested.current.delete(accountId)
+      if (stillActive()) setCompletionBusy(false)
+    }
+  }
+  useEffect(() => {
+    if (!workspaceAccount || workspaceAccount !== readyAccount) return
+    const account = workspaceAccount
+    let cancelled = false
+    void storage.readAccountCompletionRequests(account).then(requests => {
+      if (cancelled) return
+      for (const request of requests) setListOperation({ ...request, phase: 'queued' })
+      if (currentAccount === account) void processListOperations(account)
+    }).catch(() => { if (!cancelled) setCompletionPreflight('Не удалось прочитать очередь операций со списками.') })
+    return () => { cancelled = true }
+    // A stored operation is resumed only for the verified account after reconnection.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceAccount, readyAccount, currentAccount, syncOnline])
+
   async function completeCloudList(localListId: ListId, mode: CompletionMode, confirmedMarked?: boolean) {
-    if (!client || !currentAccount || completionBusy || cloudLoading) return
+    if (!client || !currentAccount || activeAccount.current !== currentAccount) return
     const accountId = currentAccount
     const remoteListId = cloudBindings[localListId]
-    if (!remoteListId) { setCompletionPreflight('Сначала привяжите список к облаку.'); return }
+    const row = cloudMetadata?.find(list => list.id === remoteListId)
+    if (!remoteListId || !row) return
     if (mode !== 'delete_list' && !window.confirm(mode === 'none_purchased'
       ? 'Завершить список без покупок? Товары будут очищены, архив покупок не пополнится.'
       : 'Завершить облачный список? Купленные товары попадут в архив, активные товары будут очищены.')) return
-    setCompletionBusy(true)
+    const request: CloudCompletionRequest = {
+      accountId, localListId, remoteListId, name: row.name, mode, confirmedMarked,
+      operationId: crypto.randomUUID(), createdAt: Date.now(),
+    }
     setCompletionPreflight('')
     try {
-      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
-      const coordinator = createCloudCompletionCoordinator(storage, client, accountId,
-        () => activeAccount.current === accountId)
-      const receipt = await coordinator.begin(localListId, remoteListId, mode, confirmedMarked)
-      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
-      // One-off lists disappear from the active cloud set after completion.
-      // Refresh from the server rather than optimistically hiding a list.
-      const refreshed = await fetchCloudListMetadata(client, accountId)
-      if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
-        throw new Error('Аккаунт изменился')
-      setCloudMetadata(refreshed)
-      setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-      if (mode === 'delete_list') {
-        setCloudBindings(current => Object.fromEntries(Object.entries(current).filter(([, id]) => id !== remoteListId)))
-      }
-      setCompletionPreflight((mode === 'delete_list' ? 'Список удалён.' : 'Список завершён.') +
-        ' Сервер подтвердил операцию ' + receipt.operationId)
-      setCloudArchives(null)
-      setWorkspaceRevision(value => value + 1)
-      void loadCloudArchive()
-    } catch (cause) {
-      setCompletionPreflight((mode === 'delete_list' ? 'Не удалось удалить: ' : 'Не удалось завершить: ') + (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
-        '. Если операция уже отправлена, её идентификатор сохранён для безопасного повтора.')
-    } finally { setCompletionBusy(false) }
+      await storage.queueAccountCompletion(request)
+      if (activeAccount.current !== accountId) return
+      setListOperation({ ...request, phase: 'queued' })
+      void processListOperations(accountId)
+    } catch {
+      if (activeAccount.current === accountId) setCompletionPreflight('Не удалось поставить операцию со списком в очередь.')
+    }
   }
+
   async function recoverCloudCompletions() {
-    if (!client || !currentAccount || completionBusy) return
-    const accountId = currentAccount
-    setCompletionBusy(true)
-    try {
-      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
-      const receipts = await createCloudCompletionCoordinator(storage, client, accountId,
-        () => activeAccount.current === accountId).recoverAll()
-      if (await verifiedAccountId(client) !== accountId) throw new Error('Аккаунт изменился')
-      if (receipts.length) {
-        const refreshed = await fetchCloudListMetadata(client, accountId)
-        if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
-          throw new Error('Аккаунт изменился')
-        setCloudMetadata(refreshed)
-        setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-        const deleted = new Set(receipts.filter(receipt => receipt.mode === 'delete_list').map(receipt => receipt.listId))
-        setCloudBindings(current => Object.fromEntries(Object.entries(current).filter(([, id]) => !deleted.has(id))))
-      }
-      setCompletionPreflight(receipts.length
-        ? 'Восстановлено завершений: ' + receipts.length
-        : 'Незавершённых операций нет.')
-      setCloudArchives(null)
-      setWorkspaceRevision(value => value + 1)
-      void loadCloudArchive()
-    } catch (cause) {
-      setCompletionPreflight('Восстановление приостановлено: ' +
-        (cause instanceof Error ? cause.message : 'неизвестная ошибка') +
-        '. Сохранённые операции не удалены.')
-    } finally { setCompletionBusy(false) }
+    if (currentAccount) await processListOperations(currentAccount)
   }
-  async function loadCloudArchive() {
-    if (!client || !currentAccount || loadingArchiveFor.current === currentAccount) return
+  async function loadCloudArchive(refresh = false) {
+    if (!client || !currentAccount) return
+    if (loadingArchiveFor.current === currentAccount) {
+      if (refresh) archiveRefreshRequested.current = currentAccount
+      return
+    }
     loadingArchiveFor.current = currentAccount
     setCloudArchiveBusy(true)
     setCloudArchiveError('')
@@ -793,6 +908,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (loadingArchiveFor.current === currentAccount) {
         loadingArchiveFor.current = null
         setCloudArchiveBusy(false)
+        if (archiveRefreshRequested.current === currentAccount && activeAccount.current === currentAccount) {
+          archiveRefreshRequested.current = null
+          void loadCloudArchive()
+        }
       }
     }
   }
@@ -852,9 +971,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
     {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
+  const pendingWork = pendingSync && pendingSync.account === workspaceAccount ? pendingSync.pending : undefined
+  const ownPush = pushState?.account === currentAccount ? pushState?.status : undefined
+  const ownPull = pullState?.account === currentAccount ? pullState?.status : undefined
+  const syncFailed = ownPush === 'error' || ownPull === 'error'
+  const activeOperations = listOperations.filter(row => row.accountId === workspaceAccount)
+  const syncState: ProfileSyncState | undefined = !workspaceAccount ? undefined
+    : !syncOnline || !!offlineAccount ? (pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting' : 'offline')
+    : ownPush === 'syncing' || ownPull === 'syncing' || activeOperations.some(row => row.phase === 'running') ? 'syncing'
+    : syncFailed || activeOperations.some(row => row.phase === 'error' && row.retry) ? 'error'
+    : pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting'
+    : ownPush === 'done' && ownPull === 'done' && pendingWork === false ? 'synced' : 'waiting'
+  function retrySync() {
+    setDismissedSyncError(false)
+    onQueued()
+    setCloudMappingRevision(value => value + 1)
+  }
   return <>
     {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
-    <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+    <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       onResolveItemDeletion={client && currentAccount && readyAccount === currentAccount ? async (conflict, keepItem) => {
         if (activeAccount.current !== currentAccount || await verifiedAccountId(client) !== currentAccount) throw new Error('Account changed')
         try {
@@ -881,7 +1016,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       cloudListBusy={cloudMutationBusy || cloudLoading}
       cloudListError={cloudMetadataError}
       cloudArchiveCount={cloudArchives?.length}
-      onOpenCloudArchive={loadCloudArchive}
+      onOpenCloudArchive={() => void loadCloudArchive()}
       cloudArchive={currentAccount ? (<section aria-label="Архив покупок">
         <h2>Завершённые списки</h2>
         <button type="button" aria-label="Показать завершённые покупки" aria-busy={cloudArchiveBusy}
@@ -899,20 +1034,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             </article>)}
         </div>}
       </section>) : undefined}
-      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
+      accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
       accountMenu={client ? {
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
-        busy, name: verifiedEmail || undefined,
+        busy, name: verifiedEmail || undefined, syncState,
         content: <>
         {view.status === 'account' ? <>
-          <button type="button" onClick={() => {
-            onQueued()
-            setCloudMappingRevision(value => value + 1)
-          }}>Повторить синхронизацию</button>
-          {hasPendingCompletion && <button type="button" disabled={completionBusy}
-            onClick={() => void recoverCloudCompletions()}>Продолжить незавершённые операции</button>}
-          {completionPreflight && <p role="status">{completionPreflight}</p>}
+          {syncFailed && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
           <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
           view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
           <form onSubmit={signIn}>
@@ -926,7 +1055,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         {error && <p role="alert">{error}</p>}
         </>,
       } : undefined} />
-    {currentAccount && (cloudRefreshStatus || syncError || transferError) && <div role="status">{transferError && <p>{transferError}</p>}{cloudRefreshStatus && <p>{cloudRefreshStatus}</p>}{syncError && <p>{syncError}</p>}</div>}
+    {currentAccount && transferError && <p role="status">{transferError}</p>}
+    {currentAccount && syncOnline && syncFailed && !dismissedSyncError && <section className="sync-error" aria-label="Ошибка синхронизации">
+      <p role="alert">{syncError || cloudRefreshStatus || 'Не удалось синхронизировать данные.'}</p>
+      <button type="button" onClick={retrySync}>Повторить</button>
+      <button type="button" onClick={() => setDismissedSyncError(true)}>Продолжить без синхронизации</button>
+    </section>}
     {showLabControls && client && view.status === 'account' && <section aria-label="Облачные списки">
       <details><summary>Служебные операции облака</summary>
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
