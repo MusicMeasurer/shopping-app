@@ -472,7 +472,7 @@ nav .list-conflict-marker{
 
 .item-name-pair section {
   padding: .75rem;
-  border: 1px solid var(--line);
+  border: 1px solid #d8dfd6;
   border-radius: .6rem;
 }
 

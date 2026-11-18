@@ -718,3 +718,62 @@ test('iPhone: one name per list and per batch, with independent list sorting', a
   await page.getByRole('button', { name: 'Продукты' }).click()
   await expect(sort).toHaveValue('quantity-desc')
 })
+
+test('iPhone: persistent duplicate conflicts can be deferred and resolved one item at a time', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const input = page.getByLabel('Что нужно купить?')
+  await input.fill('Молоко 2 л')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Молоко · 2 л' })).toBeVisible()
+
+  // An older version could persist equal names in the same profile.
+  await page.evaluate(() => new Promise<void>((resolve, reject) => {
+    const request = indexedDB.open('shopping-app')
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      const database = request.result
+      const tx = database.transaction('profileItems', 'readwrite')
+      const store = tx.objectStore('profileItems')
+      const read = store.getAll()
+      read.onsuccess = () => {
+        const { profileId, record } = read.result.find(row => row.record.name === 'Молоко')
+        for (const quantity of [1, 3]) {
+          const id = crypto.randomUUID()
+          store.add({ key: JSON.stringify([profileId, id]), profileId, record: {
+            ...record, id, name: 'МОЛОКО', quantity, unit: 'уп.', purchased: true,
+          } })
+        }
+      }
+      tx.oncomplete = () => { database.close(); resolve() }
+      tx.onabort = () => { database.close(); reject(tx.error) }
+    }
+  }))
+  await page.reload()
+  const marker = page.getByRole('img', { name: 'Совпадение названий товаров' })
+  await expect(marker).toBeVisible()
+  const conflict = page.getByRole('list', { name: 'Совпадения названий' }).getByRole('button')
+  await conflict.click()
+  const dialog = page.getByRole('dialog', { name: 'Совпадение названий' })
+  await expect(dialog.getByText('Куплено', { exact: false }).first()).toBeVisible()
+  await dialog.getByRole('button', { name: 'Позже' }).click()
+  await input.fill('Хлеб')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Хлеб' })).toBeVisible()
+
+  await conflict.click()
+  await dialog.getByRole('region', { name: /^Позиция/ }).filter({ hasText: 'уп. · Куплено' })
+    .first().getByRole('button', { name: 'Переименовать' }).click()
+  await dialog.getByLabel('Новое название').fill('Сливки')
+  await dialog.getByRole('button', { name: 'Сохранить название' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Сливки', exact: false })).toBeVisible()
+  await expect(marker).toBeVisible()
+
+  await conflict.click()
+  const milk = dialog.getByRole('region', { name: /^Позиция/ }).filter({ hasText: '2 л · Не куплено' })
+  await milk.getByRole('button', { name: 'Оставить эту позицию' }).click()
+  await expect(marker).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('checkbox', { name: 'Молоко · 2 л' })).not.toBeChecked()
+  await expect(page.getByRole('checkbox', { name: 'Хлеб' })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Сливки', exact: false })).toBeVisible()
+})
