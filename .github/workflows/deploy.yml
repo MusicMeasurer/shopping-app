@@ -17,6 +17,7 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     env:
       VITE_SUPABASE_URL: https://tdcrtwpewbngoermckmx.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_J-vpyyyrVE27NTO1l-Q3ow_xDUzAcoR
@@ -37,8 +38,6 @@ jobs:
         run: npm run build
       - name: Identify deployed revision
         run: git rev-parse HEAD > dist/revision.txt
-      - name: Install mobile browser engines
-        run: npx playwright install --with-deps chromium webkit
       - name: Verify the clean PWA in Chromium and WebKit
         run: npx playwright test tests/interim-clean-deployment.spec.ts
       - name: Configure GitHub Pages
