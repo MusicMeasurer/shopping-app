@@ -405,7 +405,7 @@ nav .list-conflict-marker{
 .shopping-e4 nav.list-rail .list-tile { touch-action:pan-x pan-y pinch-zoom; }
 .shopping-e4 nav.list-rail .list-select { height:100%; }
 .shopping-e4 nav.list-rail .list-tile:has(.list-rail-controls) .list-select {
-  padding-bottom:36px;
+  padding-bottom:44px;
 }
 .rail-create { display:flex; margin:0; min-width:0; }
 .shopping-e4 nav.list-rail .rail-create .create-list-tile {
@@ -436,10 +436,12 @@ nav .list-conflict-marker{
   pointer-events:auto;
 }
 .list-rail-controls button span {
-  width:23px;
-  height:6px;
+  width:3px;
+  height:34px;
   margin:0;
   background:currentColor;
   clip-path:polygon(0 50%, 100% 0, 100% 100%);
 }
+.shopping-e4 nav.list-rail .list-rail-controls .move-left { justify-items:start; padding-left:4px; }
+.shopping-e4 nav.list-rail .list-rail-controls .move-right { justify-items:end; padding-right:4px; }
 .list-rail-controls .move-right span { transform:scaleX(-1); }
