@@ -161,8 +161,8 @@ test('E4: menu is within viewport and card trigger has no visible circle', async
 test('E4: card density setting persists and leaves list data unchanged', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await expect(page.getByRole('menuitemradio', { name: 'Крупный (2 в ряд)', exact: true })).toBeChecked()
-  await page.getByRole('menuitemradio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await expect(page.getByRole('radio', { name: 'Крупный (2 в ряд)', exact: true })).toBeChecked()
+  await page.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await expect(page.locator('nav .list-tile')).toHaveCount(2)
@@ -181,7 +181,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await page.reload()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('menuitemradio', { name: 'Крупный (2 в ряд)', exact: true }).check()
+  await page.getByRole('radio', { name: 'Крупный (2 в ряд)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
   await expect(tile.locator('.list-symbol')).toHaveCSS('font-size', '34.5px')
@@ -259,7 +259,7 @@ test('E4: swipe from list card area opens archive', async ({ page }) => {
 test('E4: card and content sizing are independent', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('menuitemradio', { name: /Стандартный \(3 в ряд\)/ }).check()
+  await page.getByRole('radio', { name: /Стандартный \(3 в ряд\)/ }).check()
   await page.locator('input[name="content-size"][type="radio"]').last().check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
@@ -432,7 +432,7 @@ test('E4: dismissing overlays preserves the selected list and saved values', asy
 
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Настройки приложения' })
-  await settings.getByRole('menuitemradio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await settings.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
   await settings.getByRole('button', { name: 'Отмена' }).click()
   await expect(settings).toHaveCount(0)
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
