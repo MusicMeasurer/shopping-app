@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { createItemBatch, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
+import { createItemBatch, normalizeItemName, parseItems, type Item, type ListId, type ParsedItem } from '../domain/shopping'
 import { filterNewItemNames, hasItemName, itemNameKey, type ItemNameDecision } from '../domain/item-names'
 import { ItemSaveError } from '../data/item-save-error'
 import type { ItemStore } from '../data/account-item-store'
@@ -25,15 +25,15 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
   }
   return { items, loading, busy, error, reload, clearError: () => setError(''),
     add: async (listId: ListId, name: string) => {
-      try {
-        const entries = storage.saveMany ? parseItems(name) : [{ name: normalizeItemName(name) }]
-        const { accepted, skipped } = filterNewItemNames(items, listId, entries)
-        if (!accepted.length) return { saved: 0, skipped }
-        const next = createItemBatch(listId, accepted, items)
-        const save = storage.saveMany
-        const success = await mutate(() => save ? save(next) : storage.save(next[0]), current => [...current, ...next])
-        if (success) return { saved: next.length, skipped }
-      } catch (error) { setError((error as Error).message) }
+      let entries: ParsedItem[]
+      try { entries = storage.saveMany ? parseItems(name) : [{ name: normalizeItemName(name) }] }
+      catch { return { validationError: 'Проверьте название: каждый товар должен содержать от 1 до 120 символов.' } }
+      const { accepted, skipped } = filterNewItemNames(items, listId, entries)
+      if (!accepted.length) return { saved: 0, skipped }
+      const next = createItemBatch(listId, accepted, items)
+      const save = storage.saveMany
+      const success = await mutate(() => save ? save(next) : storage.save(next[0]), current => [...current, ...next])
+      if (success) return { saved: next.length, skipped }
     },
     rename: async (item: Item, rawName: string) => {
       try {

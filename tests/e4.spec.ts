@@ -696,7 +696,9 @@ test('iPhone: one name per list and per batch, with independent list sorting', a
   await sort.selectOption('quantity-desc')
   expect(await names()).toEqual(['Мясо · 2 кг', 'Мука · 1 кг', 'Фасоль · 1 уп.', 'Яйца · 10 шт.', 'Морковь · 5 шт.'])
 
-  await page.getByRole('checkbox', { name: 'Мука · 1 кг' }).check()
+  const flour = page.getByRole('checkbox', { name: 'Мука · 1 кг' })
+  await flour.click()
+  await expect(flour).toBeChecked()
   await input.fill('мука 7 кг')
   await add.click()
   await expect(page.getByText('В списке уже есть: мука.')).toBeVisible()
