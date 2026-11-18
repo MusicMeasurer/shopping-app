@@ -797,7 +797,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             if (receipt.mode === 'delete_list')
               setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== remoteListId)))
             clearListOperation(accountId, localListId)
-            setCompletionPreflight(mode === 'delete_list' ? 'Список удалён.' : 'Список завершён.')
+            setCompletionPreflight(receipt.mode === 'delete_list' ? '' : 'Список завершён.')
             setCloudArchives(null)
             setWorkspaceRevision(value => value + 1)
             void loadCloudArchive(true)

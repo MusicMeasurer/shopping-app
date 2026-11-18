@@ -82,15 +82,14 @@ test('real A → B → A isolates local purchases and preserves original guest a
     }), { timeout: 30000 }).toBe(0)
   }
 
-  async function removeAccountList() {
+  async function removeAccountList(name: string) {
     if (!integrated) return
     await waitForCloudWrites()
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
     await page.getByRole('menuitem', { name: /Удалить список/ }).click()
     await page.getByRole('dialog', { name: 'Удалить список?' })
       .getByRole('button', { name: 'Удалить', exact: true }).click()
-    await expect(page.getByRole('region', { name: 'Облачный архив' })
-      .getByRole('status').filter({ hasText: /^(Список удалён|Не удалось удалить)/ })).toHaveText(/^Список удалён/, { timeout: 20000 })
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0, { timeout: 20000 })
   }
 
   const archivedGuest = 'GUEST_ARCHIVE_' + crypto.randomUUID()
@@ -213,7 +212,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
   await selectAccountList(listB)
   await expect(page.getByRole('checkbox', { name: itemB })).toBeVisible()
-  await removeAccountList()
+  await removeAccountList(listB)
   await signOut(page)
   await signIn(page, 0)
   if (integrated) await expect((await openCloudArchive()).getByText(archivedGuest, { exact: true })).toHaveCount(0)
@@ -221,7 +220,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   if (integrated) await expect(page.getByRole('button', { name: listB, exact: true })).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: itemA })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: itemB })).toHaveCount(0)
-  await removeAccountList()
+  await removeAccountList(listA)
   if (integrated) {
     await expect(page.getByRole('button', { name: guestList, exact: true })).toHaveCount(0)
   }
