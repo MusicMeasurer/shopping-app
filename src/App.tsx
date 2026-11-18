@@ -1,3 +1,5 @@
+import { duplicatedItems, itemNameKey, type ItemNameDecision } from './domain/item-names'
+import { ItemNameConflictDialog } from './ItemNameConflictDialog'
 import type { ItemDeletionConflict } from './data/item-conflict'
 import { defaultListSymbol, ListSymbolPicker } from './ListSymbolPicker'
 import { ListIndicators, listKindLabels, type ListKind, type CloudStatus } from './ListIndicators'
@@ -30,7 +32,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -223,7 +225,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <section aria-label="Архив покупок">
+    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <section aria-label="Архив покупок">
       <h2>Завершённые списки</h2>
       {localAccount.archive === null ? <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>
         : localAccount.archive.length === 0 ? <p>Архив пока пуст.</p>
@@ -236,7 +238,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
@@ -523,8 +525,16 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   const [itemSort, setItemSort] = useState<Record<ListId, ItemSort>>({})
   const sort = itemSort[active] ?? 'recent'
-  const rows = sortShoppingItems(shopping.items.filter(item => item.listId === active &&
-    !listConflicts.some(conflict => conflict.item.id === item.id)), sort)
+  const [nameConflict, setNameConflict] = useState<{ listId: ListId; key: string }>()
+  const nameConflicts = duplicatedItems(shopping.items.filter(item =>
+    !itemConflicts.some(conflict => conflict.item.id === item.id)))
+  const activeNameConflicts = nameConflicts.filter(group => group[0].listId === active)
+  const selectedNameConflict = nameConflict?.listId === active
+    ? activeNameConflicts.find(group => itemNameKey(group[0].name) === nameConflict.key)
+    : undefined
+  const hiddenIds = new Set([...listConflicts.map(conflict => conflict.item.id),
+    ...activeNameConflicts.flatMap(group => group.map(item => item.id))])
+  const rows = sortShoppingItems(shopping.items.filter(item => item.listId === active && !hiddenIds.has(item.id)), sort)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [completionListId, setCompletionListId] = useState<ListId | null>(null)
   const [purchaseArchive, setPurchaseArchive] = useState<{ listId: ListId; itemIds: string[] } | null>(null)
@@ -577,7 +587,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const editingItem = rows.find(item => item.id === editingId)
   const deletionItems = deleteListId ? itemsForList(shopping.items, deleteListId) : []
   const hasMarkedItems = deletionItems.some(item => item.purchased)
-  const remaining = rows.filter(item => !item.purchased).length
+  const remaining = shopping.items.filter(item => item.listId === active && !item.purchased &&
+    !listConflicts.some(conflict => conflict.item.id === item.id)).length
   const list = visibleLists.find(list => list.id === active)
   const menuList = menuTarget && visibleLists.find(row => row.id === menuTarget.id)
   const renameList = renaming && visibleLists.find(row => row.id === renaming)
@@ -701,7 +712,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!showArchive && accountId !== null && !onCreateCloudList && <p role="status">Для создания, переименования и удаления облачных списков войдите в этот аккаунт. Товары в сохранённых списках доступны.</p>}
     {!showArchive && <nav ref={cardSize === 'large' ? listRail : undefined} className={`lists-grid ${cardSize}${cardSize === 'large' ? ' list-rail' : ''}`} aria-label="Списки покупок" onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
       {visibleLists.map((row, index) => <div className={`list-tile${draggingId===row.id?' dragging':''}${overId===row.id&&draggingId!==row.id?' drag-over':''}`} data-list-id={row.id} key={row.id} onPointerDown={event=>{ if (!listLocked(row.id)) startPress(event,row.id) }} onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
-        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={event=>{if(suppressClick.current){event.preventDefault();return}setActive(row.id);setName('');setMenuTarget(null)}}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
+        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={event=>{if(suppressClick.current){event.preventDefault();return}setActive(row.id);setName('');setItemNotice('');setMenuTarget(null)}}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
         <div className="list-card-indicators"><ListIndicators kind={row.kind}/></div>
         <div className="menu-anchor">{menuTrigger(row, 'card')}</div>
         {cardSize === 'large' && active === row.id && canEditList && <div className="list-rail-controls" role="group" aria-label="Порядок выбранного списка">
@@ -719,6 +730,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           })}
         </div>}
         {itemConflicts.some(conflict => conflict.localListId === row.id) && <span className="list-conflict-marker" role="img" title="Конфликт удаления товара" aria-label="Конфликт удаления товара">!</span>}
+        {nameConflicts.some(group => group[0].listId === row.id) && <span className="list-conflict-marker" role="img"
+          title="Совпадение названий товаров" aria-label="Совпадение названий товаров">!</span>}
       </div>)}
       {cardSize === 'large' && <div className="list-create-control rail-create">{createListTile}</div>}
     </nav>}
@@ -891,10 +904,31 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         }}><strong>{conflict.item.name}</strong><span>{conflict.deleted === 'cloud'
           ? 'Удалён в облаке, изменён здесь' : 'Удалён здесь, изменён в облаке'}</span></button></li>)}
       </ul>}
-      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length ? null : <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy || activeListLocked} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
+      {activeNameConflicts.length > 0 && <ul className="item-conflicts" aria-label="Совпадения названий">
+        {activeNameConflicts.map(group => {
+          const key = itemNameKey(group[0].name)
+          return <li key={key}><button type="button" disabled={listMutationBusy || activeListLocked}
+            onClick={() => setNameConflict({ listId: active, key })}>
+            <strong>{group[0].name}</strong><span>Совпадение названий · {group.length} позиции</span>
+          </button></li>
+        })}
+      </ul>}
+      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><span aria-hidden="true">✓</span><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy || activeListLocked} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
       {accountId !== null && completionStatus && <p role="status">{completionStatus}</p>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
+    {!showArchive && selectedNameConflict && <ItemNameConflictDialog
+      key={JSON.stringify(selectedNameConflict.map(item => item.id))}
+      group={selectedNameConflict} items={shopping.items}
+      available={accountId === null || !!onResolveItemName}
+      onDismiss={() => { setNameConflict(undefined); shopping.clearError() }}
+      onResolve={async decision => {
+        if (activeListLocked || shopping.loading || shopping.busy) throw new Error('List is busy')
+        if (accountId !== null) {
+          if (!onResolveItemName) throw new Error('Cloud is unavailable')
+          await onResolveItemName(decision)
+        } else if (!await shopping.resolveName(decision)) throw new Error('Local item changed')
+      }}/>}
     {!showArchive && selectedConflict && <WorkspaceDialog className="e4-editor" label="Конфликт удаления" onDismiss={() => {
       if (!resolvingConflict) setConflictId(undefined)
     }}>

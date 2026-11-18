@@ -7,8 +7,8 @@ export function profileItemStore(storage: Storage, profileId: string): ItemStore
   if (!profileId.trim()) throw new Error('Profile ID required')
   return {
     read: (): Promise<Item[]> => storage.readProfileItems(profileId),
-    save: (item: Item): Promise<void> => storage.saveProfileItem(profileId, item),
+    save: (item: Item, _wait?: boolean, pair?: { keep: Item; change: Item }): Promise<void> => storage.saveProfileItem(profileId, item, pair),
     saveMany: (items: Item[]): Promise<void> => storage.saveProfileItems(profileId, items),
-    remove: (id: string): Promise<void> => storage.removeProfileItem(profileId, id),
+    remove: (id: string, pair?: { keep: Item; change: Item }): Promise<void> => storage.removeProfileItem(profileId, id, pair),
   }
 }

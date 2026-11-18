@@ -1,10 +1,11 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ListId, Item } from '../domain/shopping'
-import type { Storage } from './storage'
+import { duplicatedItems, itemNameKey, matchingNamePair, sameItemSnapshot, type ItemNameDecision } from '../domain/item-names'
+import type { Storage, VersionedNameChange } from './storage'
 import { mergeItemEdit, type ItemDeletionConflict } from './item-conflict'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
-import { fetchRemoteItems, fetchRemoteTombstones } from './remote-snapshot'
+import { fetchRemoteItems, fetchRemoteTombstones, type RemoteItem } from './remote-snapshot'
 import { planVersionedTombstones } from './versioned-tombstone-plan'
 import { planReconciliation } from './reconciliation-plan'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
@@ -19,7 +20,7 @@ import { resolveVersionedMutation } from './versioned-mutation'
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readSyncableAccountPending'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readSyncableAccountPending' | 'applyVersionedNameChanges'>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -108,33 +109,57 @@ export function createAccountSync(
     return entries.length
   }
 
-  async function importRemoteOnly(): Promise<number> {
+  const pendingIds = (pending: readonly PendingItemOperation[]) => new Set(pending.map(operation =>
+    operation.kind === 'upsert' ? operation.item.id : operation.itemId))
+  const asLocal = (item: RemoteItem): Item => ({
+    id: item.id, listId: localListId, name: item.name, purchased: item.purchased,
+    createdAt: Date.parse(item.createdAt),
+    ...(item.quantity !== undefined ? { quantity: item.quantity } : {}),
+    ...(item.unit !== undefined ? { unit: item.unit } : {}),
+  })
+  async function importRemoteOnly({ reconcileNames = false } = {}): Promise<number> {
     assertActive()
     await verifyMapping()
-    const [local, pending, remote] = await Promise.all([
+    const [local, pending, remote, versions] = await Promise.all([
       storage.readAccountItems(accountId),
       storage.readAccountPending(accountId),
       fetchRemoteItems(client, remoteListId),
+      reconcileNames ? storage.readAccountItemVersions(accountId) : [],
     ])
     assertActive()
     const localItems = local.filter(item => item.listId === localListId)
-    const remoteItems = remote.map(item => ({
-      id: item.id, listId: localListId, name: item.name,
-      purchased: item.purchased, createdAt: Date.parse(item.createdAt),
-      ...(item.quantity !== undefined ? { quantity: item.quantity } : {}),
-      ...(item.unit !== undefined ? { unit: item.unit } : {}),
-    }))
+    const remoteItems = remote.map(asLocal)
     const plan = planReconciliation(localItems, remoteItems, pending)
-    if (plan.conflicts.length) throw new Error('Resolve conflicting items before import')
+    if (!reconcileNames && plan.conflicts.length) throw new Error('Resolve conflicting items before import')
     const remoteById = new Map(remote.map(item => [item.id, item]))
     const entries = plan.remoteOnly.map(item => {
       const source = remoteById.get(item.id)
       if (!source) throw new Error('Missing remote item version')
       return { item, version: source.version }
     })
-    assertActive()
-    // Detect server edits that occurred while the first snapshot was being reviewed.
-    // This is an optimistic check, not a server-side transaction or a lock.
+    const nameChanges: VersionedNameChange[] = []
+    if (reconcileNames) {
+      const localDuplicates = duplicatedItems(localItems).flat()
+      const nameEvidence = new Set([...localDuplicates, ...duplicatedItems(remoteItems).flat()].map(item => item.id))
+      const activeNames = new Set(remoteItems.map(item => itemNameKey(item.name)))
+      const missingDuplicates = localDuplicates.filter(item =>
+        !remoteById.has(item.id) && activeNames.has(itemNameKey(item.name)))
+      const tombstones = missingDuplicates.length ? await fetchRemoteTombstones(client, remoteListId) : []
+      const deleted = new Map(tombstones.map(row => [row.id, row.version]))
+      const canSync = new Map(versions.filter(row => row.remoteListId === remoteListId)
+        .map(row => [row.itemId, row.version]))
+      const pendingItemIds = pendingIds(pending)
+      const candidates = new Set(missingDuplicates.map(item => item.id))
+      for (const before of localItems) {
+        if (!nameEvidence.has(before.id) || pendingItemIds.has(before.id)) continue
+        const expectedVersion = canSync.get(before.id)
+        const source = remoteById.get(before.id)
+        const version = source?.version ?? (candidates.has(before.id) ? deleted.get(before.id) : undefined)
+        if (version === undefined || expectedVersion === undefined || version <= expectedVersion) continue
+        nameChanges.push({ before, expectedVersion, version, after: source && asLocal(source) })
+      }
+    }
+    // Confirm that the reviewed remote snapshot is still current before importing.
     const latest = await fetchRemoteItems(client, remoteListId)
     assertActive()
     const signature = (rows: typeof remote) => JSON.stringify(rows.map(item => [
@@ -144,7 +169,51 @@ export function createAccountSync(
       throw new Error('Remote list changed during import; retry comparison')
     }
     await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
-    return entries.length
+    assertActive()
+    const changed = nameChanges.length
+      ? await storage.applyVersionedNameChanges(accountId, localListId, remoteListId, nameChanges)
+      : 0
+    // Unrelated confirmed imports can proceed while an item has a pending edit.
+    const processed = new Set(nameChanges.map(entry => entry.before.id))
+    if (reconcileNames && entries.length === 0 && changed === 0 &&
+        plan.conflicts.some(id => !processed.has(id) && !pendingIds(pending).has(id))) {
+      throw new Error('Resolve conflicting items before import')
+    }
+    return entries.length + changed
+  }
+
+  async function resolveItemName(decision: ItemNameDecision) {
+    await verifyMapping()
+    const { operationId, keep, change, name } = decision
+    if (!matchingNamePair(keep, change) || change.listId !== localListId) throw new Error('Name conflict changed')
+    const [items, pending, versions] = await Promise.all([
+      storage.readAccountItems(accountId), storage.readAccountPending(accountId), storage.readAccountItemVersions(accountId),
+    ])
+    assertActive()
+    const versionsForList = new Map(versions.filter(row => row.remoteListId === remoteListId)
+      .map(row => [row.itemId, row.version]))
+    const pendingItemIds = pendingIds(pending)
+    const confirmed = (item: Item) => {
+      const cached = items.find(row => row.id === item.id)
+      const version = versionsForList.get(item.id)
+      if (!cached || !sameItemSnapshot(cached, item) || version === undefined || pendingItemIds.has(item.id))
+        throw new Error('Name conflict changed')
+      return version
+    }
+    const keepVersion = confirmed(keep)
+    const changeVersion = confirmed(change)
+    const { data, error } = await client.rpc('resolve_e4_item_name_conflict', {
+      p_operation: operationId, p_list: remoteListId, p_keep: keep.id, p_keep_version: keepVersion,
+      p_change: change.id, p_change_version: changeVersion, p_name: name ?? null,
+    })
+    assertActive()
+    if (error) throw error
+    if (data?.operation_id !== operationId || !Number.isSafeInteger(data.item_version) ||
+        data.item_version <= changeVersion) throw new Error('Invalid name resolution receipt')
+    await storage.applyVersionedNameChanges(accountId, localListId, remoteListId, [{
+      before: change, expectedVersion: changeVersion, version: data.item_version,
+      after: name === undefined ? undefined : { ...change, name },
+    }])
   }
   async function fetchItemState(itemId: string) {
     const rows = await fetchRemoteItems(client, remoteListId, true)
@@ -276,5 +345,5 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion }
+  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName }
 }

@@ -147,6 +147,10 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/028_e4_item_attributes_RPC_CI_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/031_e4_item_field_clocks.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_item_attributes.sql
+      - name: Verify ordered cloud additions and atomic duplicate-name resolution
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/034_e4_ordered_item_and_name_conflict_CI_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_ordered_item_and_name_conflict.sql
       - name: Check atomic guest import and replay
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/029_e4_guest_import_RPC_CI_ONLY.sql

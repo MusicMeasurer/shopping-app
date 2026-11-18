@@ -260,6 +260,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           }
         } while (flushRequested.current && activeAccount.current === accountId)
         if (activeAccount.current === accountId) {
+          setCloudMappingRevision(value => value + 1)
           setSyncError('')
           setPushState({ account: accountId, status: 'done' })
         }
@@ -400,7 +401,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               localListId,
               remoteListId: row.id,
               isActive: stillActive,
-            }).importRemoteOnly()
+            }).importRemoteOnly({ reconcileNames: true })
             if (!stillActive()) return
             if (!mapping?.metadata) {
               await storage.cacheAccountListMetadata(accountId, [row], { partial: true })
@@ -995,6 +996,21 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   return <>
     {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
     <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
+        const listId = decision.change.listId
+        const remoteListId = cloudBindings[listId]
+        if (!remoteListId || activeAccount.current !== currentAccount || await verifiedAccountId(client) !== currentAccount)
+          throw new Error('Account changed')
+        try {
+          await createAccountSync(storage, client, {
+            accountId: currentAccount, localListId: listId, remoteListId,
+            isActive: () => activeAccount.current === currentAccount,
+          }).resolveItemName(decision)
+        } finally {
+          setCloudMappingRevision(value => value + 1)
+          setWorkspaceRevision(value => value + 1)
+        }
+      } : undefined}
       onResolveItemDeletion={client && currentAccount && readyAccount === currentAccount ? async (conflict, keepItem) => {
         if (activeAccount.current !== currentAccount || await verifiedAccountId(client) !== currentAccount) throw new Error('Account changed')
         try {

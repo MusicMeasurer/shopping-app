@@ -37,3 +37,19 @@ export function duplicatedItems(items: readonly Item[]): Item[][] {
   }
   return [...lists.values()].flatMap(names => [...names.values()].filter(entries => entries.length > 1))
 }
+
+export interface ItemNameDecision {
+  operationId: string
+  keep: Item
+  change: Item
+  name?: string
+}
+
+export function sameItemSnapshot(a: Item, b: Item): boolean {
+  return a.id === b.id && a.listId === b.listId && a.name === b.name &&
+    a.purchased === b.purchased && a.quantity === b.quantity && a.unit === b.unit
+}
+
+export function matchingNamePair(keep: Item, change: Item): boolean {
+  return keep.id !== change.id && keep.listId === change.listId && itemNameKey(keep.name) === itemNameKey(change.name)
+}

@@ -13,13 +13,13 @@ export function itemStoreForAccount(storage: Storage, accountId: string | null) 
     read: (): Promise<Item[]> => accountId === null
       ? storage.read()
       : storage.readAccountItems(accountId),
-    save: (item: Item): Promise<void> => accountId === null
-      ? storage.save(item)
+    save: (item: Item, _wait?: boolean, pair?: { keep: Item; change: Item }): Promise<void> => accountId === null
+      ? storage.save(item, pair)
       : storage.saveAccountItem(accountId, item),
     saveMany: accountId === null ? (items: Item[]): Promise<void> => storage.saveItems(items) : undefined,
-    remove: (id: string): Promise<void> => accountId === null
-      ? storage.remove(id)
+    remove: (id: string, pair?: { keep: Item; change: Item }): Promise<void> => accountId === null
+      ? storage.remove(id, pair)
       : storage.removeAccountItem(accountId, id),
   }
 }
-export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'remove'> & { save: (item: Item, waitForSync?: boolean) => Promise<void>; saveMany?: (items: Item[]) => Promise<void> }
+export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'remove'> & { save: (item: Item, waitForSync?: boolean, pair?: { keep: Item; change: Item }) => Promise<void>; saveMany?: (items: Item[]) => Promise<void> }

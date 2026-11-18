@@ -464,3 +464,22 @@ nav .list-conflict-marker{
   border: 1px solid currentColor;
   border-radius: .6rem;
 }
+
+.item-name-pair {
+  display: grid;
+  gap: .5rem;
+}
+
+.item-name-pair section {
+  padding: .75rem;
+  border: 1px solid var(--line);
+  border-radius: .6rem;
+}
+
+.item-name-pair p {
+  margin-block: .25rem .5rem;
+}
+
+.item-name-pair button {
+  margin: .25rem .25rem .25rem 0;
+}

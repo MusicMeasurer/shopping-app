@@ -12,6 +12,7 @@ export function resolveVersionedMutation(operation: PendingItemOperation): Remot
       return {
         kind: 'add', operationId: operation.operationId, listId: operation.remoteListId,
         itemId: operation.itemId, name: operation.item.name, purchased: operation.item.purchased, ...attributes,
+        ...(operation.preserveCreatedAt ? { createdAt: operation.item.createdAt } : {}),
       }
     case 'cloud-update':
       return {

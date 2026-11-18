@@ -8,7 +8,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 interface ItemAttributes { quantity: number | null; unit: string | null }
 
 export type RemoteMutation =
-  | { kind: 'add'; operationId: string; listId: string; itemId: string; name: string; purchased: boolean; attributes?: ItemAttributes }
+  | { kind: 'add'; operationId: string; listId: string; itemId: string; name: string; purchased: boolean; attributes?: ItemAttributes; createdAt?: number }
   | { kind: 'update'; operationId: string; listId: string; itemId: string; expectedVersion: number; name?: string; purchased?: boolean; attributes?: ItemAttributes }
   | { kind: 'delete'; operationId: string; listId: string; itemId: string; expectedVersion: number }
 
@@ -50,9 +50,26 @@ export async function applyRemoteMutation(
     p_expected_version: mutation.kind === 'add' ? null : mutation.expectedVersion,
   }
   const attributes = mutation.kind === 'delete' ? undefined : mutation.attributes
-  const { data, error } = attributes
-    ? await client.rpc('apply_e4_item_change', { ...args, p_quantity: attributes.quantity, p_unit: attributes.unit })
-    : await client.rpc('apply_item_change', args)
+  const sendLegacy = () => attributes
+    ? client.rpc('apply_e4_item_change', { ...args, p_quantity: attributes.quantity, p_unit: attributes.unit })
+    : client.rpc('apply_item_change', args)
+  let result
+  if (mutation.kind === 'add' && mutation.createdAt !== undefined) {
+    if (!Number.isSafeInteger(mutation.createdAt)) throw new Error('Invalid item creation time')
+    result = await client.rpc('add_e4_ordered_item', {
+      p_operation: args.p_operation, p_list: args.p_list, p_item: args.p_item,
+      p_name: mutation.name, p_purchased: mutation.purchased,
+      p_quantity: attributes?.quantity ?? null, p_unit: attributes?.unit ?? null,
+      p_created_at: new Date(mutation.createdAt).toISOString(),
+    })
+    // Older servers lack this function. Only a definite missing-RPC response is safe to fall back from.
+    if (result.error?.code === 'PGRST202') result = await client.rpc('apply_e4_item_change', {
+      ...args, p_quantity: attributes?.quantity ?? null, p_unit: attributes?.unit ?? null,
+    })
+  } else {
+    result = await sendLegacy()
+  }
+  const { data, error } = result
   if (error) throw error
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid mutation receipt')
   const receipt = data as Record<string, unknown>

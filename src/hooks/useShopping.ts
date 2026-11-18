@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { createItemBatch, normalizeItemName, parseItems, type Item, type ListId } from '../domain/shopping'
-import { filterNewItemNames, hasItemName, itemNameKey } from '../domain/item-names'
+import { filterNewItemNames, hasItemName, itemNameKey, type ItemNameDecision } from '../domain/item-names'
 import { ItemSaveError } from '../data/item-save-error'
 import type { ItemStore } from '../data/account-item-store'
 export function useShopping(storage: ItemStore, refreshRevision = 0) {
@@ -60,6 +60,15 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
         if (name === item.name && quantity === item.quantity && normalizedUnit === item.unit) return true
         return await mutate(() => storage.save(updated, true), current => current.map(row => row.id === item.id ? updated : row))
       } catch (error) { setError((error as Error).message); return false }
+    },
+    resolveName: (decision: ItemNameDecision) => {
+      if (decision.name !== undefined) {
+        const updated = { ...decision.change, name: decision.name }
+        return mutate(() => storage.save(updated, false, decision),
+          current => current.map(item => item.id === updated.id ? updated : item))
+      }
+      return mutate(() => storage.remove(decision.change.id, decision),
+        current => current.filter(item => item.id !== decision.change.id))
     },
     toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },
     remove: (id: string) => mutate(() => storage.remove(id), current => current.filter(item => item.id !== id)),

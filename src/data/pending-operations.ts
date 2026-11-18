@@ -3,7 +3,7 @@ import type { Item } from '../domain/shopping'
 
 /** Versioned cloud operations remain distinct from legacy local-only records. */
 export type CloudPendingOperation =
-  | { operationId: string; kind: 'cloud-add'; localListId: Item['listId']; remoteListId: string; itemId: string; item: Item }
+  | { operationId: string; kind: 'cloud-add'; localListId: Item['listId']; remoteListId: string; itemId: string; item: Item; preserveCreatedAt?: true }
   | { operationId: string; kind: 'cloud-update'; localListId: Item['listId']; remoteListId: string; itemId: string; expectedVersion: number; item: Item; base?: Item; editTimes?: EditTimes }
   | { operationId: string; kind: 'cloud-delete'; localListId: Item['listId']; remoteListId: string; itemId: string; expectedVersion: number; base?: Item }
 

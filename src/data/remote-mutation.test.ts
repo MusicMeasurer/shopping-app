@@ -6,7 +6,7 @@ const operationId = '123e4567-e89b-42d3-a456-426614174000'
 const listId = '223e4567-e89b-42d3-a456-426614174001'
 const itemId = '323e4567-e89b-42d3-a456-426614174002'
 function fakeClient(data: unknown = { operation_id: operationId, list_revision: 4, item_version: 2 }, error: unknown = null) {
-  const rpc = vi.fn(async () => ({ data, error }))
+  const rpc = vi.fn(async (_name: string, _args: Record<string, unknown>) => ({ data, error }))
   return { client: { rpc } as unknown as Pick<SupabaseClient, 'rpc'>, rpc }
 }
 describe('remote mutation adapter', () => {
@@ -58,4 +58,19 @@ describe('remote mutation adapter', () => {
       kind: 'add', operationId, listId, itemId, name: 'Хлеб', purchased: false,
     })).rejects.toThrow('Invalid mutation receipt')
   })
+})
+
+it('uploads the creation time of a new batch without changing retry semantics', async () => {
+  const mutation = { kind: 'add' as const, operationId, listId, itemId, name: 'Рис', purchased: false, createdAt: 123 }
+  const olderServer = fakeClient()
+  olderServer.rpc.mockResolvedValueOnce({ data: null, error: { code: 'PGRST202' } })
+  await applyRemoteMutation(olderServer.client, mutation)
+  expect(olderServer.rpc.mock.calls.map(call => call[0])).toEqual(['add_e4_ordered_item', 'apply_e4_item_change'])
+  expect(olderServer.rpc).toHaveBeenNthCalledWith(1, 'add_e4_ordered_item', expect.objectContaining({
+    p_created_at: '1970-01-01T00:00:00.123Z',
+  }))
+
+  const ambiguousFailure = fakeClient(null, { code: '504' })
+  await expect(applyRemoteMutation(ambiguousFailure.client, mutation)).rejects.toMatchObject({ code: '504' })
+  expect(ambiguousFailure.rpc).toHaveBeenCalledTimes(1)
 })

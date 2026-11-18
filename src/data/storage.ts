@@ -1,7 +1,7 @@
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema, type IDBPObjectStore } from 'idb'
 import { MAX_LOCAL_PROFILES, profileName, addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
-import { hasItemName, itemNameKey } from '../domain/item-names'
+import { hasItemName, itemNameKey, matchingNamePair, sameItemSnapshot } from '../domain/item-names'
 import { ItemSaveError } from './item-save-error'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import type { CloudArchiveCompletion } from './cloud-archive'
@@ -26,6 +26,19 @@ function checkItemNames(existing: Item[], updates: readonly Item[]) {
       throw new ItemSaveError('Товар с таким названием уже есть в списке.')
     byId.set(item.id, item)
   }
+}
+
+function checkNamePair(keep: Item | undefined, change: Item | undefined, expectedKeep: Item, expectedChange: Item) {
+  if (!keep || !change || !matchingNamePair(keep, change) ||
+      !sameItemSnapshot(keep, expectedKeep) || !sameItemSnapshot(change, expectedChange))
+    throw new ItemSaveError('Товары изменились. Проверьте конфликт ещё раз.')
+}
+
+export interface VersionedNameChange {
+  before: Item
+  expectedVersion: number
+  after?: Item
+  version: number
 }
 
 export interface CloudCompletionIntent {
@@ -767,7 +780,7 @@ export function createStorage(name = 'shopping-app') {
     /** All profile writes require an existing profile and completed legacy cutover.
      * This guard prevents accidental cross-profile writes before migration.
      */
-    async saveProfileItem(profileId: string, item: Item): Promise<void> {
+    async saveProfileItem(profileId: string, item: Item, pair?: { keep: Item; change: Item }): Promise<void> {
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
       if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
@@ -782,6 +795,8 @@ export function createStorage(name = 'shopping-app') {
         if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
         const key = JSON.stringify([profileId, item.id])
         const store = tx.objectStore('profileItems')
+        if (pair) checkNamePair((await store.get(JSON.stringify([profileId, pair.keep.id])))?.record,
+          (await store.get(key))?.record, pair.keep, pair.change)
         checkItemNames((await store.index('byProfile').getAll(profileId)).map(row => row.record), [item])
         await store.put({ key, profileId, record: item })
         await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
@@ -820,7 +835,7 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
-    async removeProfileItem(profileId: string, itemId: string): Promise<void> {
+    async removeProfileItem(profileId: string, itemId: string, pair?: { keep: Item; change: Item }): Promise<void> {
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
       if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
@@ -833,7 +848,11 @@ export function createStorage(name = 'shopping-app') {
         const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
         if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
         if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
-        await tx.objectStore('profileItems').delete(JSON.stringify([profileId, itemId]))
+        const store = tx.objectStore('profileItems')
+        const key = JSON.stringify([profileId, itemId])
+        if (pair) checkNamePair((await store.get(JSON.stringify([profileId, pair.keep.id])))?.record,
+          (await store.get(key))?.record, pair.keep, pair.change)
+        await store.delete(key)
         await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
         await done
       } catch (error) {
@@ -1105,15 +1124,20 @@ export function createStorage(name = 'shopping-app') {
       })
     },
     async read(): Promise<Item[]> { return (await database).getAll('items') },
-    async save(item: Item): Promise<void> {
+    async save(item: Item, pair?: { keep: Item; change: Item }): Promise<void> {
       await legacyMutation(['items'], async tx => {
         const store = tx.objectStore('items')
+        if (pair) checkNamePair(await store.get(pair.keep.id), await store.get(item.id), pair.keep, pair.change)
         checkItemNames(await store.getAll(), [item])
         await store.put(item)
       })
     },
-    async remove(id: string): Promise<void> {
-      await legacyMutation(['items'], async tx => { await tx.objectStore('items').delete(id) })
+    async remove(id: string, pair?: { keep: Item; change: Item }): Promise<void> {
+      await legacyMutation(['items'], async tx => {
+        const store = tx.objectStore('items')
+        if (pair) checkNamePair(await store.get(pair.keep.id), await store.get(id), pair.keep, pair.change)
+        await store.delete(id)
+      })
     },
     // Guest items remain in the original store until explicit migration.
     async cacheAccountArchive(accountId: string, snapshots: CloudArchiveCompletion[]): Promise<void> {
@@ -1481,7 +1505,7 @@ export function createStorage(name = 'shopping-app') {
         for (const item of items) {
           const operation: CloudPendingOperation = {
             kind: 'cloud-add', operationId: crypto.randomUUID(), localListId: listId,
-            remoteListId: mapping.remoteListId, itemId: item.id, item,
+            remoteListId: mapping.remoteListId, itemId: item.id, item, preserveCreatedAt: true,
           }
           await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
           await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
@@ -1594,6 +1618,44 @@ export function createStorage(name = 'shopping-app') {
         await tx.done.catch(() => {})
         throw error
       }
+    },
+    /** Apply newer cloud evidence to conflict rows only, without replacing pending local work. */
+    async applyVersionedNameChanges(accountId: string, localListId: string, remoteListId: string,
+      entries: readonly VersionedNameChange[]): Promise<number> {
+      if (!entries.length) return 0
+      const db = await database
+      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations',
+        'accountListMappings', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      const mappings = tx.objectStore('accountListMappings')
+      const mapping = await mappings.get(accountKey(accountId, localListId))
+      const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+      const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, remoteListId))
+      if (mapping?.remoteListId !== remoteListId || request || intents.some(row => row.intent.remoteListId === remoteListId)) {
+        await tx.done
+        return 0
+      }
+      const operations = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+      const pending = new Set(operations.map(({ operation }) =>
+        operation.kind === 'upsert' ? operation.item.id : operation.itemId))
+      const items = tx.objectStore('accountItems')
+      const versions = tx.objectStore('accountItemVersions')
+      let applied = 0
+      for (const entry of entries) {
+        const itemId = entry.before.id
+        if (pending.has(itemId) || entry.before.listId !== localListId ||
+            (entry.after && (entry.after.listId !== localListId || entry.after.id !== itemId)) ||
+            !Number.isSafeInteger(entry.version) || entry.version <= entry.expectedVersion) continue
+        const key = accountKey(accountId, itemId)
+        const [current, known] = await Promise.all([items.get(key), versions.get(key)])
+        if (!current || !sameItemSnapshot(current.item, entry.before) ||
+            known?.remoteListId !== remoteListId || known.version !== entry.expectedVersion) continue
+        if (entry.after) await items.put({ key, accountId, item: entry.after })
+        else await items.delete(key)
+        await versions.put({ ...known, version: entry.version })
+        applied++
+      }
+      await tx.done
+      return applied
     },
     /** Explicitly reviewed server deletions, committed atomically only if local evidence is unchanged. */
     async applyReviewedRemoteDeletions(accountId: string, remoteListId: string,
