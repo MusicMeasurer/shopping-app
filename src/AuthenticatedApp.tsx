@@ -500,7 +500,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-      return true
+      return created.id
     } catch (error) {
       if (activeAccount.current === accountId)
         setCloudMetadataError((error as { code?: string })?.code === '23505' ? 'Список с таким названием уже существует.' : 'Создание не подтверждено. Проверьте состояние облака перед повторной попыткой.')
@@ -1008,7 +1008,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
       } : undefined}
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
-      onCreateCloudList={currentAccount && readyAccount === currentAccount ? async (name, kind, symbol) => !!await addCloudList(name, kind, symbol) : undefined}
+      onCreateCloudList={currentAccount && readyAccount === currentAccount ? addCloudList : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
         const row = cloudMetadata.find(list => list.id === (cloudBindings[id] ?? id))
         if (!row) return false

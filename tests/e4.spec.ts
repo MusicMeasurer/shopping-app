@@ -93,6 +93,10 @@ test('E4: list type changes both ways, preserves items, persists and controls co
 
 test('E4: reorder and rename persist after reload', async ({ page }) => {
   await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await page.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
+  await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   const cards = page.locator('nav .list-tile')
   const first = await cards.nth(0).boundingBox()
   const second = await cards.nth(1).boundingBox()
@@ -161,7 +165,7 @@ test('E4: menu is within viewport and card trigger has no visible circle', async
 test('E4: card density setting persists and leaves list data unchanged', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await expect(page.getByRole('radio', { name: 'Крупный (2 в ряд)', exact: true })).toBeChecked()
+  await expect(page.getByRole('radio', { name: 'Крупный (горизонтальная лента)', exact: true })).toBeChecked()
   await page.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
@@ -181,7 +185,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await page.reload()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('radio', { name: 'Крупный (2 в ряд)', exact: true }).check()
+  await page.getByRole('radio', { name: 'Крупный (горизонтальная лента)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
   await expect(tile.locator('.list-symbol')).toHaveCSS('font-size', '34.5px')
@@ -239,22 +243,76 @@ test('E4: header menu changes type and the quick action opens completion', async
   await status.getByRole('img', { name: 'Разовый список' }).click()
   await expect(page.getByRole('dialog', { name: 'Изменить тип списка' })).toHaveCount(0)
 })
-test('E4: swipe from list card area opens archive', async ({ page }) => {
+test('E4: the large list rail keeps its swipe while a swipe outside opens the archive', async ({ page }) => {
   await page.goto('/shopping-app/')
-  await expect(page.locator('nav .list-select').first()).toBeVisible()
-  await page.evaluate(() => {
-    const target = document.querySelector('nav .list-select')!
-    const make = (type: string, x: number, y: number) => {
-      const touch = { identifier: 1, target, clientX: x, clientY: y, pageX: x, pageY: y, screenX: x, screenY: y, radiusX: 1, radiusY: 1, rotationAngle: 0, force: 1 }
+  const rail = page.getByRole('navigation', { name: 'Списки покупок' })
+  await expect(rail).toHaveClass(/list-rail/)
+  await expect(rail.locator('.list-select').first()).toBeVisible()
+  const swipeLeft = (selector: string) => page.evaluate(selector => {
+    const target = document.querySelector(selector)!
+    for (const [type, x] of [['touchstart', 170], ['touchend', 60]] as const) {
+      const touch = { identifier: 1, target, clientX: x, clientY: 120 }
       const event = new Event(type, { bubbles: true, cancelable: true })
       Object.defineProperty(event, 'touches', { value: type === 'touchend' ? [] : [touch] })
       Object.defineProperty(event, 'changedTouches', { value: [touch] })
       target.dispatchEvent(event)
     }
-    make('touchstart', 170, 120)
-    make('touchend', 60, 125)
-  })
+  }, selector)
+  await swipeLeft('nav .list-select')
+  await expect(page.getByRole('button', { name: 'Основные списки' })).toHaveAttribute('aria-current', 'page')
+  await swipeLeft('#list-title')
   await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
+})
+
+test('E4: large cards scroll beyond four lists, reveal new cards and move the selected card', async ({ page, browserName }) => {
+  await page.goto('/shopping-app/')
+  const rail = page.getByRole('navigation', { name: 'Списки покупок' })
+  const names = ['Ремонт', 'Дача', 'Поездка', 'Праздник']
+  for (const name of names) {
+    await rail.getByRole('button', { name: 'Новый список', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Создать список' })
+    await dialog.getByLabel('Название списка').fill(name)
+    await dialog.getByRole('button', { name: 'Создать', exact: true }).click()
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  }
+  const cards = rail.locator('.list-select')
+  await expect(cards).toHaveCount(6)
+  await expect(rail.locator(':scope > :last-child').getByRole('button', { name: 'Новый список' })).toHaveCount(1)
+  await expect.poll(() => rail.evaluate(rail => rail.scrollLeft)).toBeGreaterThan(0)
+  const last = rail.getByRole('button', { name: 'Праздник', exact: true })
+  await expect.poll(() => last.evaluate(button => {
+    const item = button.getBoundingClientRect()
+    const viewport = button.closest('nav')!.getBoundingClientRect()
+    return item.left >= viewport.left - 1 && item.right <= viewport.right + 1
+  })).toBe(true)
+  await expect(rail.getByRole('button', { name: 'Переместить список вправо' })).toBeDisabled()
+  await rail.getByRole('button', { name: 'Переместить список влево' }).click()
+  await expect(cards.nth(4)).toHaveText(/Праздник/)
+  await expect(cards.nth(5)).toHaveText(/Поездка/)
+  await expect(last).toHaveAttribute('aria-pressed', 'true')
+  await page.reload()
+  await expect(cards.nth(4)).toHaveText(/Праздник/)
+  await rail.getByRole('button', { name: 'Переместить список вправо' }).click()
+  await expect(cards.nth(5)).toHaveText(/Праздник/)
+  if (browserName === 'chromium') {
+    await rail.scrollIntoViewIfNeeded()
+    await rail.evaluate(element => element.scrollTo({ left: 0, behavior: 'instant' }))
+    await expect.poll(() => rail.evaluate(element => element.scrollLeft)).toBe(0)
+    const bounds = await rail.boundingBox()
+    if (!bounds) throw new Error('Large card rail is not visible')
+    const session = await page.context().newCDPSession(page)
+    const y = bounds.y + 35
+    const startX = bounds.x + bounds.width * .85
+    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startX, y }] })
+    for (const fraction of [.1, .2, .4, .6]) {
+      await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: startX - bounds.width * fraction, y }] })
+    }
+    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+    await expect.poll(() => rail.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+    await expect(page.getByRole('button', { name: 'Основные списки' })).toHaveAttribute('aria-current', 'page')
+    await session.detach()
+  }
+
 })
 
 test('E4: card and content sizing are independent', async ({ page }) => {
