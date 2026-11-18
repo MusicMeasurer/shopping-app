@@ -292,6 +292,7 @@ test('E4: large cards scroll beyond four lists, reveal new cards and move the se
   await expect(last).toHaveAttribute('aria-pressed', 'true')
   await page.reload()
   await expect(cards.nth(4)).toHaveText(/Праздник/)
+  await expect(last).toHaveAttribute('aria-pressed', 'true')
   await rail.getByRole('button', { name: 'Переместить список вправо' }).click()
   await expect(cards.nth(5)).toHaveText(/Праздник/)
   if (browserName === 'chromium') {
@@ -535,7 +536,7 @@ test('E4: an inactive card menu renames only its own list and header actions sta
   const after = await toolbar.boundingBox()
   expect(after?.x).toBeCloseTo(before!.x, 0)
   expect(after?.y).toBeCloseTo(before!.y, 0)
-  await expect(page.locator('nav.lists-grid').getByRole('button', { name: 'Новый список' })).toHaveCount(0)
+  await expect(page.locator('nav.list-rail > :last-child').getByRole('button', { name: 'Новый список' })).toHaveCount(1)
   await expect(page.getByRole('button', { name: 'Новый список' })).toBeVisible()
 })
 

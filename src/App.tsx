@@ -464,8 +464,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })) : lists.map(row => ({ ...row, kind: 'permanent' as const })))
   useEffect(() => {
+    if (accountId === null && localLists === null) return
     if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
-  }, [visibleLists, active])
+  }, [visibleLists, active, accountId, localLists])
   async function createLocalList(event: FormEvent) {
     event.preventDefault()
     if (accountId !== null || !localLists || creatingList) return
