@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
-import { profileName } from './data/local-profiles'
+import { LocalProfileLimitError, profileName } from './data/local-profiles'
 import { App } from './App'
 import { syncGuestImports } from './data/guest-import'
 import { SiriSetup } from './SiriSetup'
@@ -195,8 +195,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setCloudBindings(Object.fromEntries(confirmedMappings.map(row => [row.localListId, row.remoteListId])))
       }
       if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
-    })().catch(() => {
-      if (!cancelled) setProfileError('Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
+    })().catch((cause: unknown) => {
+      if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
     return () => { cancelled = true; transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
   }, [client, currentAccount, offlineAccount, workspaceAccount, storage])
@@ -437,6 +437,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
       const created = await createCloudList(client, accountId, crypto.randomUUID(), newCloudListName, newCloudListKind)
+      void storage.markAccountListsChanged(accountId).catch(() => {})
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
       const refreshed = await fetchCloudListMetadata(client, accountId)
@@ -480,6 +481,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
       await sendCloudListChange(client, row, crypto.randomUUID(), change)
+      void storage.markAccountListsChanged(accountId).catch(() => {})
       const refreshed = await fetchCloudListMetadata(client, accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
@@ -840,7 +842,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       </>}
     </WorkspaceDialog>}
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
-    {profileError && <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>}
+    {profileError && <>
+      <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>
+      <button type="button" disabled={busy || !controller} onClick={() => void signOut()}>Вернуться к локальным профилям</button>
+      {error && <p role="alert">{error}</p>}
+    </>}
   </main>
   if (view.status === 'checking') return <main>
     <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
@@ -848,30 +854,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   </main>
   return <>
     {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
-    {client && accountDialogOpen && <div className="account-dialog-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setAccountDialogOpen(false) }}>
-      <section className="account-dialog" role="dialog" aria-modal="true" aria-labelledby="account-dialog-title">
-        <div className="account-dialog-heading"><h2 id="account-dialog-title">{view.status === 'account' || view.status === 'offline-account' ? 'Мой аккаунт' : 'Вход в аккаунт'}</h2><button type="button" aria-label="Закрыть окно аккаунта" onClick={() => setAccountDialogOpen(false)}>×</button></div>
-        {view.status === 'account' ? <><p className="account-full-email">{verifiedEmail || 'Аккаунт подтверждён'}</p>
-          <button type="button" onClick={() => {
-            onQueued()
-            setCloudMappingRevision(value => value + 1)
-          }}>Повторить синхронизацию</button>
-          {hasPendingCompletion && <button type="button" disabled={completionBusy}
-            onClick={() => void recoverCloudCompletions()}>Продолжить незавершённые операции</button>}
-          {completionPreflight && <p role="status">{completionPreflight}</p>}
-          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
-          view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
-          <form onSubmit={signIn}>
-            <label htmlFor="auth-email">Email</label>
-            <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
-            <label htmlFor="auth-password">Пароль</label>
-            <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
-            <button disabled={busy || !controller}>Войти</button>
-            <p>Без входа покупки сохраняются только на этом устройстве.</p>
-          </form>}
-        {error && <p role="alert">{error}</p>}
-      </section>
-    </div>}
     <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={currentAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       onResolveItemDeletion={client && currentAccount && readyAccount === currentAccount ? async (conflict, keepItem) => {
         if (activeAccount.current !== currentAccount || await verifiedAccountId(client) !== currentAccount) throw new Error('Account changed')
@@ -918,12 +900,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         </div>}
       </section>) : undefined}
       accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} completionBusy={completionBusy} completionStatus={completionPreflight} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked) => { void completeCloudList(listId, mode, confirmedMarked) } : undefined}
-      headerActions={client ? <div className="account-header-control">
-        {(currentAccount || offlineAccount) && <span className="account-header-email" title={verifiedEmail || (offlineAccount ? 'Локальный профиль' : 'Аккаунт')}>{verifiedEmail || (offlineAccount ? 'Офлайн' : 'Аккаунт')}</span>}
-        <button type="button" className="account-header-button" aria-label={workspaceAccount ? 'Открыть аккаунт' : 'Войти в аккаунт'} aria-pressed={!!workspaceAccount} onClick={() => { setError(''); setAccountDialogOpen(true) }}>
-          <span aria-hidden="true">{workspaceAccount ? '●' : '○'}</span><span>{workspaceAccount ? 'Аккаунт' : 'Войти'}</span>
-        </button>
-      </div> : undefined} />
+      accountMenu={client ? {
+        open: accountDialogOpen,
+        setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
+        busy, name: verifiedEmail || undefined,
+        content: <>
+        {view.status === 'account' ? <>
+          <button type="button" onClick={() => {
+            onQueued()
+            setCloudMappingRevision(value => value + 1)
+          }}>Повторить синхронизацию</button>
+          {hasPendingCompletion && <button type="button" disabled={completionBusy}
+            onClick={() => void recoverCloudCompletions()}>Продолжить незавершённые операции</button>}
+          {completionPreflight && <p role="status">{completionPreflight}</p>}
+          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
+          view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
+          <form onSubmit={signIn}>
+            <label htmlFor="auth-email">Email</label>
+            <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
+            <label htmlFor="auth-password">Пароль</label>
+            <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
+            <button disabled={busy || !controller}>Войти</button>
+            <p>Без входа покупки сохраняются только на этом устройстве.</p>
+          </form>}
+        {error && <p role="alert">{error}</p>}
+        </>,
+      } : undefined} />
     {currentAccount && (cloudRefreshStatus || syncError || transferError) && <div role="status">{transferError && <p>{transferError}</p>}{cloudRefreshStatus && <p>{cloudRefreshStatus}</p>}{syncError && <p>{syncError}</p>}</div>}
     {showLabControls && client && view.status === 'account' && <section aria-label="Облачные списки">
       <details><summary>Служебные операции облака</summary>

@@ -6,8 +6,11 @@ test.use({ actionTimeout: 15000, serviceWorkers: 'block' })
 
 const email = process.env.E3_USER_A_EMAIL!
 const password = process.env.E3_USER_A_PASSWORD!
-async function openSettings(page: Page) { await page.getByRole('button', { name: 'Настройки', exact: true }).click() }
-async function closeSettings(page: Page) { await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Закрыть', exact: true }).click() }
+async function openSettings(page: Page) {
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await page.getByRole('button', { name: 'Настройка профиля', exact: true }).click()
+}
+async function closeSettings(page: Page) { await page.getByRole('button', { name: 'Закрыть окно аккаунта' }).click() }
 async function login(page: Page) {
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
   await page.getByLabel('Email', { exact: true }).fill(email)
@@ -46,11 +49,11 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   const rename = page.getByRole('dialog', { name: 'Имя локального профиля', exact: true })
   await rename.getByLabel('Имя профиля', { exact: true }).fill(guestName)
   await rename.getByRole('button', { name: 'Сохранить имя' }).click()
-  await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(guestName)
+  await expect(page.locator('.profile-menu-heading h2')).toHaveText(guestName)
   await closeSettings(page)
   await page.reload()
   await openSettings(page)
-  await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(guestName)
+  await expect(page.locator('.profile-menu-heading h2')).toHaveText(guestName)
   await closeSettings(page)
   console.log('[transfer]', mode, 'decline first transfer')
   await login(page)
@@ -69,10 +72,10 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   console.log('[transfer]', mode, 'inspect local login name')
   await logout(page)
   await openSettings(page)
-  await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(email)
+  await expect(page.locator('.profile-menu-heading h2')).toHaveText(email)
   await expect(page.getByRole('button', { name: 'Изменить имя профиля' })).toHaveCount(0)
-  await page.getByLabel('Локальный профиль', { exact: true }).selectOption({ label: guestName })
-  // Switching profile remounts the workspace and closes Settings.
+  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: new RegExp(guestName) }).click()
+  // Switching profiles closes the panel and opens the corresponding workspace.
   await expect(page.getByRole('button', { name: 'Новый список', exact: true })).toBeEnabled()
   console.log('[transfer]', mode, 'prepare guest archive and items')
   await createList(page, name)
@@ -118,8 +121,8 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await expect(page.getByRole('checkbox', { name: cloudItem, exact: true })).toHaveCount(mode === 'merge' ? 1 : 0)
   await logout(page)
   await openSettings(page)
-  await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option')).toHaveCount(1)
-  await expect(page.getByLabel('Локальный профиль', { exact: true }).locator('option:checked')).toHaveText(email)
+  await expect(page.locator('.profile-options button')).toHaveCount(0)
+  await expect(page.locator('.profile-menu-heading h2')).toHaveText(email)
   await closeSettings(page)
   await page.getByRole('button', { name: /^Архив,/ }).click()
   await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText(archivedItem, { exact: false })).toBeVisible()

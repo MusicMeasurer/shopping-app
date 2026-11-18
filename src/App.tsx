@@ -15,10 +15,11 @@ import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
-import { profileName } from './data/local-profiles'
+import { MAX_LOCAL_PROFILES, profileName, sortProfiles } from './data/local-profiles'
+import { ProfileBadge, ProfileMenu } from './ProfileMenu'
 import type { LocalProfileRegistry } from './data/local-profiles'
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, completionBusy = false, completionStatus = '', accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists?: Record<string, string>; completionBusy?: boolean; completionStatus?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -47,6 +48,22 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const [profileActionError, setProfileActionError] = useState('')
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileRename, setProfileRename] = useState<string | null>(null)
+  const [localMenuOpen, setLocalMenuOpen] = useState(false)
+  const menuOpen = accountMenu?.open ?? localMenuOpen
+  const setMenuOpen = accountMenu?.setOpen ?? setLocalMenuOpen
+  const [showAllProfiles, setShowAllProfiles] = useState(false)
+  const [menuError, setMenuError] = useState('')
+  const [reservedSources, setReservedSources] = useState<string[]>([])
+  useEffect(() => {
+    if (!menuOpen) setShowAllProfiles(false)
+    if (!menuOpen && accountId === null) return
+    let current = true
+    void Promise.all([storage.readLocalProfiles(), storage.readReservedProfileSources()]).then(([next, reserved]) => {
+      if (current) { setRegistry(next); setReservedSources(reserved) }
+    }).catch(() => { if (current) setMenuError('Не удалось обновить список профилей.') })
+    return () => { current = false }
+  }, [storage, menuOpen, accountId])
+
   useEffect(() => {
     if (accountId !== null) return
     let cancelled = false
@@ -76,28 +93,30 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     return () => { cancelled = true; unsubscribe() }
   }, [storage, accountId])
   async function createGuestProfile() {
-    if (profileBusy || !registry || !guestProfile) return
+    if (profileBusy || accountMenu?.busy || !registry || !guestProfile) return
     setProfileBusy(true)
     try {
       const next = await storage.createLocalProfile(crypto.randomUUID(), Date.now())
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
+      closeMenu()
       setStartupError('')
-    } catch { setStartupError('Не удалось создать локальный профиль. Данные не изменены.') }
+    } catch (error) { setProfileActionError(error instanceof Error ? error.message : 'Не удалось создать локальный профиль.') }
     finally { setProfileBusy(false) }
   }
   async function selectGuestProfile(id: string) {
-    if (profileBusy || !registry || !guestProfile || id === guestProfile) return
+    if (profileBusy || accountMenu?.busy || !registry || !guestProfile || id === guestProfile) return
     setProfileBusy(true)
     try {
       const next = await storage.switchLocalProfile(id)
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
-    } catch { setStartupError('Не удалось переключить локальный профиль. Изменения заблокированы.') }
+      closeMenu()
+    } catch { setProfileActionError('Не удалось переключить локальный профиль.') }
     finally { setProfileBusy(false) }
   }
   async function removeGuestProfile() {
-    if (profileBusy || !registry || !guestProfile || registry.profiles[0]?.id === guestProfile) return
+    if (profileBusy || accountMenu?.busy || !registry || !guestProfile || registry.profiles[0]?.id === guestProfile) return
     setProfileActionError('')
     if (!window.confirm('Удалить локальные списки и архивы этого профиля с устройства? Облачные данные не удаляются. Неотправленные операции блокируют удаление.')) return
     setProfileBusy(true)
@@ -105,6 +124,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       const next = await storage.deleteLocalProfile(guestProfile, guestProfile)
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
+      closeMenu()
     } catch (error) {
       setProfileActionError(error instanceof Error && error.message.includes('unsynced operations')
         ? 'Есть неотправленные изменения. Войдите в этот аккаунт и дождитесь синхронизации перед удалением.'
@@ -115,9 +135,44 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   if (accountId === null && startupError) return <main><p role="alert">{startupError}</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined && upgradeBlocked) return <main><p role="alert">Другая открытая вкладка использует старую версию покупок и не даёт безопасно обновить хранилище. Закройте другие вкладки приложения, затем повторите открытие. Ваши покупки не удалены.</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
-  const profileControls = <>
-    {accountId === null && guestProfile && registry && <div className="profile-controls" role="group" aria-label="Локальные профили"><label htmlFor="local-profile-select">Локальный профиль</label> <select id="local-profile-select" value={guestProfile} disabled={profileBusy} onChange={event => void selectGuestProfile(event.target.value)}>{registry.profiles.map((profile, index) => <option key={profile.id} value={profile.id}>{profileName(profile, index)}</option>)}</select> <button type="button" disabled={profileBusy} onClick={() => void createGuestProfile()}>Добавить профиль</button> {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={profileBusy} onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}</div>}
-    {accountId === null && registry && guestProfile && !registry.profiles.find(p => p.id === guestProfile)?.cloudAccountId && <button type="button" disabled={profileBusy} onClick={() => { setProfileActionError(''); setProfileRename(profileName(registry.profiles.find(p => p.id === guestProfile)!, registry.profiles.findIndex(p => p.id === guestProfile))) }}>Изменить имя профиля</button>}
+  const profile = registry?.profiles.find(row => row.id === guestProfile)
+  const name = accountId ? (accountMenu?.name || registry?.profiles.find(p => p.cloudAccountId === accountId)?.login || 'Аккаунт') :
+    profile ? profileName(profile, registry!.profiles.indexOf(profile)) : 'Мои покупки'
+  const mode = accountId ? (cloudOffline ? 'offline' : 'cloud') : profile?.cloudAccountId ? 'linked' : 'local'
+  const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => row.id !== guestProfile && !reservedSources.includes(row.id))
+  const actionsBusy = profileBusy || accountMenu?.busy
+  function closeMenu() {
+    setMenuOpen(false)
+    setMenuError('')
+    setProfileActionError('')
+  }
+  const profileMenu = <ProfileMenu name={name} mode={mode} open={menuOpen}
+    onToggle={() => menuOpen ? closeMenu() : setMenuOpen(true)} onClose={closeMenu}
+    onRename={mode === 'local' && profile && !actionsBusy ? () => {
+      setProfileActionError('')
+      setProfileRename(name)
+    } : undefined}>
+    {accountMenu?.content}
+    {accountId === null && registry && guestProfile && <div className="profile-switcher" role="group" aria-label="Локальные профили">
+      {otherProfiles.length > 0 && <div className="profile-options" tabIndex={showAllProfiles ? 0 : undefined}>
+        {(showAllProfiles ? otherProfiles : otherProfiles.slice(0, 2)).map(row => <button key={row.id}
+          type="button" disabled={actionsBusy} onClick={() => { setProfileActionError(''); void selectGuestProfile(row.id) }}>
+          <ProfileBadge mode={row.cloudAccountId ? 'linked' : 'local'} />
+          <span>{profileName(row, registry.profiles.indexOf(row))}</span>
+        </button>)}
+      </div>}
+      {otherProfiles.length > 2 && <button type="button" aria-expanded={showAllProfiles}
+        onClick={() => setShowAllProfiles(value => !value)}>{showAllProfiles ? 'Свернуть' : 'Ещё'}</button>}
+      <button type="button" disabled={actionsBusy || registry.profiles.length >= MAX_LOCAL_PROFILES}
+        onClick={() => { setProfileActionError(''); void createGuestProfile() }}>Добавить профиль</button>
+      {registry.profiles.length >= MAX_LOCAL_PROFILES && <p>Достигнут лимит в {MAX_LOCAL_PROFILES} профилей на устройстве.</p>}
+      {registry.profiles[0]?.id !== guestProfile && <button type="button" disabled={actionsBusy}
+        onClick={() => void removeGuestProfile()}>Удалить локальный профиль</button>}
+    </div>}
+    {menuError && <p role="alert">{menuError}</p>}
+    {profileRename === null && profileActionError && <p role="alert">{profileActionError}</p>}
+  </ProfileMenu>
+  const renameDialog = <>
     {profileRename !== null && guestProfile && <WorkspaceDialog label="Имя локального профиля" className="e4-editor profile-name-dialog" onDismiss={() => setProfileRename(null)}>
       <form onSubmit={event => { event.preventDefault(); setProfileBusy(true); void storage.renameLocalProfile(guestProfile, profileRename).then(next => { setRegistry(next); setProfileRename(null); setProfileActionError('') }).catch(error => setProfileActionError(error instanceof Error ? error.message : 'Не удалось изменить имя.')).finally(() => setProfileBusy(false)) }}>
         <h2>Имя локального профиля</h2><label>Имя профиля<input maxLength={120} value={profileRename} onChange={event => setProfileRename(event.target.value)} /></label>
@@ -125,12 +180,12 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
         <button type="submit" disabled={profileBusy || !profileRename.trim()}>Сохранить имя</button><button type="button" onClick={() => setProfileRename(null)}>Отмена</button>
       </form>
     </WorkspaceDialog>}
-    {accountId === null && profileRename === null && profileActionError && <p role="alert">{profileActionError}</p>}
   </>
   return <>
+    {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} completionBusy={completionBusy} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={headerActions} profileControls={profileControls} cloudArchive={localAccount ? <section aria-label="Архив покупок">
+    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} completionBusy={completionBusy} completionStatus={completionStatus} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <section aria-label="Архив покупок">
       <h2>Завершённые списки</h2>
       {localAccount.archive === null ? <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>
         : localAccount.archive.length === 0 ? <p>Архив пока пуст.</p>
@@ -143,7 +198,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, profileControls, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; profileControls?: ReactNode; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, completionBusy, completionStatus, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean) => void; cloudBoundLists: Record<string, string>; completionBusy: boolean; completionStatus: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<boolean>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
@@ -525,7 +580,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <label><input type="radio" name="content-size" checked={draftContentSize === 'standard'} onChange={() => setDraftContentSize('standard')}/> Стандартный</label>
         <label><input type="radio" name="content-size" checked={draftContentSize === 'large'} onChange={() => setDraftContentSize('large')}/> Крупный</label>
       </fieldset>
-      {profileControls}
+      <button type="button" onClick={() => { setSettingsOpen(false); onOpenProfileMenu() }}>Настройка профиля</button>
       <div className="dialog-buttons">
         <button type="button" onClick={() => setSettingsOpen(false)}>
           {draftCardSize === cardSize && draftContentSize === contentSize ? 'Закрыть' : 'Отмена'}

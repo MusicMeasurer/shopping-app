@@ -5,6 +5,7 @@ export interface LocalProfile {
   name?: string
   login?: string
   createdAt: number
+  listsChangedAt?: number
 }
 export interface LocalProfileRegistry {
   profiles: LocalProfile[]
@@ -32,8 +33,23 @@ export function bindProfile(registry: LocalProfileRegistry, profileId: string, v
   if (registry.profiles.some(p => p.id !== profileId && p.cloudAccountId === verifiedAccountId)) throw new Error('Account already has a local profile')
   return { ...registry, profiles: registry.profiles.map(p => p.id === profileId ? { ...p, cloudAccountId: verifiedAccountId } : p) }
 }
+export const MAX_LOCAL_PROFILES = 10
+
+export class LocalProfileLimitError extends Error {
+  constructor() {
+    super('На устройстве уже 10 локальных профилей. Удалите ненужную локальную копию или войдите в уже привязанный аккаунт.')
+  }
+}
+
+export function sortProfiles(profiles: readonly LocalProfile[]): LocalProfile[] {
+  return [...profiles].sort((a, b) => (b.listsChangedAt ?? b.createdAt) - (a.listsChangedAt ?? a.createdAt)
+    || b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+}
+
 /** Never reuse an existing profile ID or silently replace its contents. */
-export function addProfile(registry: LocalProfileRegistry, profile: LocalProfile): LocalProfileRegistry {
+export function addProfile(registry: LocalProfileRegistry, profile: LocalProfile, replacingId?: string): LocalProfileRegistry {
+  const replacing = !!profile.cloudAccountId && registry.profiles.some(p => p.id === replacingId && !p.cloudAccountId)
+  if (registry.profiles.length >= MAX_LOCAL_PROFILES + Number(replacing)) throw new LocalProfileLimitError()
   if (!profile.id.trim() || registry.profiles.some(p => p.id === profile.id)) throw new Error('Duplicate or empty local profile ID')
   if (!Number.isFinite(profile.createdAt)) throw new Error('Valid profile creation timestamp required')
   if (profile.cloudAccountId !== null && !profile.cloudAccountId.trim()) throw new Error('Valid cloud account identity required')

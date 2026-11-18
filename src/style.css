@@ -23,7 +23,7 @@
 .shopping-e4 .settings-panel fieldset{border:0;border-top:1px solid #d8dfd6;padding:12px 0;margin:12px 0}
 .shopping-e4 .settings-panel legend{font-weight:650;padding-right:12px}
 .shopping-e4 .settings-panel label{display:block;margin:12px 0;line-height:1.5}
-.shopping-e4 .settings-panel input{margin-right:8px;accent-color:#25634c}
+.shopping-e4 .settings-panel input[type="radio"]{margin-right:8px;accent-color:#25634c}
 .shopping-e4 nav.lists-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
 .shopping-e4 nav.lists-grid.standard{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .shopping-e4 nav.lists-grid .list-select{min-width:0;min-height:100px;text-align:left;overflow-wrap:anywhere}
@@ -125,7 +125,7 @@ header .header-copy{min-width:0;flex:1}
 .settings-panel fieldset{border:0;padding:8px 0;margin:8px 0}
 .settings-panel legend{font-size:13px;font-weight:650}
 .settings-panel label{display:flex;align-items:center;gap:9px;min-height:44px;font-size:14px}
-.settings-panel input{accent-color:#25634c;width:18px;height:18px}
+.settings-panel input[type="radio"]{accent-color:#25634c;width:18px;height:18px}
 .settings-panel>button{min-height:44px;padding:8px 14px;border:1px solid #cbd9cd;border-radius:10px;background:#eef3eb}
 nav.lists-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 nav.lists-grid.standard{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
@@ -225,7 +225,7 @@ section[aria-label="Облачные списки"] li > button {
 
 /* Match the list-creation overlay and stay inside the visible area above the keyboard. */
 html:has(.workspace-dialog[open]){overflow:hidden}
-.shopping-e4 .workspace-dialog,.profile-transfer-dialog{
+.shopping-e4 .workspace-dialog,.profile-transfer-dialog,.profile-name-dialog{
   position:fixed;inset:var(--visible-top,0px) 0 auto;margin:0 auto;
   top:calc(var(--visible-top,0px) + 12px);
   width:min(calc(100% - 32px),420px);max-width:none;
@@ -236,6 +236,7 @@ html:has(.workspace-dialog[open]){overflow:hidden}
 .workspace-dialog::backdrop{background:#17281f88}
 .workspace-dialog .dialog-buttons{flex-wrap:wrap}
 .workspace-dialog.e4-editor form button{min-height:44px}
+.workspace-dialog.profile-name-dialog form > label{display:grid;gap:6px}
 
 .shopping-e4 > header{display:block}
 .workspace-topbar{display:flex;justify-content:space-between;align-items:center;gap:8px}
@@ -331,3 +332,25 @@ nav .list-conflict-marker{
 .profile-transfer-dialog > button{display:block;width:100%;margin-top:10px;white-space:normal}
 
 .profile-transfer-dialog{overflow-wrap:anywhere}
+
+.profile-menu-anchor{position:relative;margin-left:auto;min-width:0;max-width:calc(100% - 52px)}
+.profile-menu-trigger{display:flex;align-items:center;gap:7px;min-height:44px;max-width:100%;padding:6px 10px;border:1px solid #d8dfd6;border-radius:24px;background:white;color:#203b30}
+.profile-button-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile-badge{display:inline-flex;position:relative;flex:0 0 31px;width:31px;height:25px;align-items:center;color:#425e52}
+.profile-badge svg{width:21px;height:21px}
+.profile-sync{position:absolute;right:0;bottom:0;font-size:13px;line-height:1;font-weight:700}
+.profile-badge[data-mode="cloud"]{color:#18704c}
+.profile-badge[data-mode="local"] .profile-sync{border:1px solid;border-radius:50%;width:11px;height:11px;text-align:center;font-size:9px}
+.profile-badge .sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+.profile-menu.account-dialog{position:absolute;right:0;top:calc(100% + 6px);z-index:40;width:min(360px,calc(100vw - 40px));max-height:70dvh;overscroll-behavior:contain;box-sizing:border-box}
+.profile-menu-heading{display:flex;align-items:flex-start;gap:8px;border-bottom:1px solid #d8dfd6;padding-bottom:8px}
+.profile-menu-heading div{min-width:0;flex:1}
+.profile-menu-heading h2{font-size:1.05rem;margin:0;overflow-wrap:anywhere}
+.profile-menu-heading p{font-size:.85rem;margin:4px 0 0}
+.profile-menu button{min-height:44px}
+.profile-menu-heading button{min-width:44px;padding:0;border:0;border-radius:8px;background:#eef3eb;color:#203b30;font-size:1.2rem}
+.profile-menu form input{font-size:16px;min-height:44px;padding:8px;border:1px solid #a6b5ad;border-radius:8px}
+.profile-switcher{display:grid;gap:6px;margin-top:12px}
+.profile-options{display:grid;gap:4px;max-height:200px;overflow:auto;overscroll-behavior:contain}
+.profile-options button{display:flex;align-items:center;text-align:left;gap:6px;width:100%;border:1px solid #d8dfd6;border-radius:8px;padding:6px;background:#f6f8f5;color:#203b30;overflow-wrap:anywhere}
+.profile-switcher p{font-size:.85rem;margin:0}
