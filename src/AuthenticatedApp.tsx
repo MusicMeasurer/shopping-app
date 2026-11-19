@@ -2,6 +2,8 @@ import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
+import { AccountEmailDialog, type AccountEmailMode } from './AccountEmailDialog'
+import { createAccountEmailClient } from './data/cloud-client'
 import { LocalProfileLimitError, profileName, type LocalProfile } from './data/local-profiles'
 import { App } from './App'
 import { syncGuestImports } from './data/guest-import'
@@ -30,6 +32,7 @@ import type { SessionCandidate } from './data/auth-scope'
 type Controller = ReturnType<typeof createAuthController>
 
 const localWorkspaceKey = 'shopping-show-local-workspace'
+const accountEmailEnabled = import.meta.env.VITE_ACCOUNT_EMAIL_CODES === 'true'
 const showLabControls = import.meta.env.VITE_LAB_CONTROLS === 'true'
 
 export function AuthenticatedApp({ storage, client }: { storage: Storage; client: SupabaseClient | null }) {
@@ -50,6 +53,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [accountEmailMode, setAccountEmailMode] = useState<AccountEmailMode | null>(null)
+  const [accountEmailNotice, setAccountEmailNotice] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
   const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
   const [cloudMetadataError, setCloudMetadataError] = useState('')
@@ -765,11 +770,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setError('')
     setAccountDialogOpen(true)
   }
+  function openAccountEmail(mode: AccountEmailMode) {
+    setError('')
+    setPassword('')
+    setAccountEmailNotice('')
+    setAccountDialogOpen(false)
+    setAccountEmailMode(mode)
+  }
   async function signIn(event: FormEvent) {
     event.preventDefault()
     if (!controller || !client || busy) return
     setBusy(true)
     setError('')
+    setAccountEmailNotice('')
     let changingSession = false
     try {
       if (sessionAccount) {
@@ -1081,6 +1094,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudMappingRevision(value => value + 1)
   }
   return <>
+    {client && !sessionAccount && accountEmailMode && <AccountEmailDialog
+      mode={accountEmailMode} initialEmail={email} createClient={createAccountEmailClient}
+      onDismiss={() => { setAccountEmailMode(null); setAccountDialogOpen(true) }}
+      onCompleted={(address, message) => {
+        setEmail(address)
+        setAccountEmailMode(null)
+        setAccountEmailNotice(message)
+        setAccountDialogOpen(true)
+      }} />}
     {client && offlineAccount && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
     <App key={workspaceAccount ?? 'local'} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
@@ -1162,6 +1184,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <label htmlFor="auth-password">Пароль</label>
             <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
             <button disabled={busy || !controller}>Войти</button>
+            {accountEmailEnabled && !sessionAccount && !loginTarget && <>
+              <button type="button" disabled={busy} onClick={() => openAccountEmail('register')}>Создать аккаунт</button>
+              <button type="button" disabled={busy} onClick={() => openAccountEmail('recover')}>Забыли пароль?</button>
+            </>}
+            {accountEmailNotice && <p role="status">{accountEmailNotice}</p>}
             <p>Без входа покупки сохраняются только на этом устройстве.</p>
           </form>}
         </>}

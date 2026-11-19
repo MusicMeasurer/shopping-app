@@ -31,3 +31,19 @@ jobs:
       - run: npm ci
       - run: npm run build
       - run: npx playwright test tests/e4.spec.ts tests/profile-menu.spec.ts tests/e4-completion-acceptance.spec.ts
+  account-email:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    env:
+      VITE_ACCOUNT_EMAIL_CODES: 'true'
+      VITE_SUPABASE_URL: https://account-email-test.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright test tests/account-email.spec.ts

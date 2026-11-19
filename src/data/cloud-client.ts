@@ -26,15 +26,22 @@ export function fetchWithCloudTimeout(authOrigin: string, fetcher: typeof fetch)
 export function createCloudClient(
   url: string | undefined = import.meta.env.VITE_SUPABASE_URL,
   key: string | undefined = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
+  mode: 'workspace' | 'email-code' = 'workspace',
 ): SupabaseClient | null {
   const config = parseCloudConfig(url, key)
   if (!config) return null
   return createClient(config.url, config.publishableKey, {
     global: { fetch: fetchWithCloudTimeout(new URL(config.url).origin, globalThis.fetch.bind(globalThis)) },
     auth: {
-      persistSession: true,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      persistSession: mode === 'workspace',
+      autoRefreshToken: mode === 'workspace',
+      detectSessionInUrl: mode === 'workspace',
+      ...(mode === 'email-code' ? { storageKey: 'shopping-auth-email-code-' + crypto.randomUUID() } : {}),
     },
   })
+}
+
+/** Email confirmation and password recovery use a throwaway, in-memory session. */
+export function createAccountEmailClient() {
+  return createCloudClient(undefined, undefined, 'email-code')
 }
