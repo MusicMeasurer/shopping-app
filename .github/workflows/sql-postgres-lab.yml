@@ -78,3 +78,5 @@ jobs:
           test "$remaining" = 'f'
       - name: RLS isolation A/B and anon
         run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_acl_rls.sql
+      - name: Check list revision broadcasts and account isolation
+        run: psql -X -v ON_ERROR_STOP=1 -f tests/sql/test_e4_realtime.sql

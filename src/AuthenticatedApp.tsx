@@ -9,6 +9,7 @@ import { SiriSetup } from './SiriSetup'
 import { lists, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudListMetadata, type CloudListMetadata } from './data/e4-cloud-list-metadata'
+import { watchCloudListChanges } from './data/cloud-list-watch'
 import { sendCloudListChange, type CloudListChange } from './data/e4-cloud-list-operations'
 import { createCloudList } from './data/e4-cloud-list-create'
 import { fetchCloudArchive, type CloudArchiveCompletion } from './data/cloud-archive'
@@ -368,19 +369,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     const accountId = currentAccount
     let disposed = false
     let running = false
-    let refreshRequested = false
-    async function refresh() {
+    let queued: 'all' | 'changed' | undefined
+    const pulledRevisions = new Map<string, number>()
+    async function refresh(mode: 'all' | 'changed' = 'all') {
       if (!client || disposed || document.visibilityState === 'hidden' || !navigator.onLine) return
       if (running) {
-        refreshRequested = true
+        if (mode === 'all' || !queued) queued = mode
         return
       }
       running = true
-      setPullState({ account: accountId, status: 'syncing' })
-      setDismissedSyncError(false)
-      refreshRequested = false
+      queued = undefined
       let imported = 0
       let failed = false
+      let pulling = false
       try {
         if (activeAccount.current !== accountId) return
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
@@ -392,9 +393,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
         const completing = new Set(completions.map(row => row.remoteListId))
-        for (const row of owned) {
+        const toPull = owned.filter(row => !completing.has(row.id) &&
+          (mode === 'all' || pulledRevisions.get(row.id) !== row.revision))
+        if (!stillActive() || !toPull.length) return
+        pulling = true
+        setPullState({ account: accountId, status: 'syncing' })
+        setDismissedSyncError(false)
+        for (const row of toPull) {
           if (!stillActive()) return
-          if (completing.has(row.id)) continue
           const mapping = mappingsByRemoteId.get(row.id)
           const localListId = mapping?.localListId ?? row.id
           try {
@@ -415,10 +421,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               setCloudLists(current => current.some(list => list.id === row.id) ? current
                 : [...current, { id: row.id, name: row.name }])
             }
+            pulledRevisions.set(row.id, row.revision)
           } catch {
             // Keep processing other bound lists, but never import conflicting
             // items from this list or hide the error from the account owner.
             if (disposed || activeAccount.current !== accountId) return
+            pulledRevisions.delete(row.id)
             failed = true
           }
         }
@@ -426,25 +434,27 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         // Identity, mapping, or network errors outside a single list.
         failed = true
       } finally {
-        if (!disposed && activeAccount.current === accountId) {
+        if (!disposed && activeAccount.current === accountId && (pulling || failed || mode === 'all')) {
           setPullState({ account: accountId, status: failed ? 'error' : 'done' })
           if (imported > 0) setWorkspaceRevision(value => value + 1)
           if (failed) setCloudRefreshStatus(imported > 0
-            ? 'Получено новых покупок: ' + imported + '. Некоторые списки не удалось обновить.'
+            ? 'Обновлено покупок: ' + imported + '. Некоторые списки не удалось обновить.'
             : 'Не удалось обновить некоторые списки. Повторите синхронизацию.')
-          else setCloudRefreshStatus(imported > 0 ? 'Получено новых покупок из облака: ' + imported : '')
+          else setCloudRefreshStatus(imported > 0 ? 'Обновлено покупок из облака: ' + imported : '')
         }
         running = false
-        if (refreshRequested) void refresh()
+        if (queued) void refresh(queued)
       }
     }
     const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
     const onOnline = () => void refresh()
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
+    const stopWatching = watchCloudListChanges(client, accountId, () => void refresh('changed'))
     void refresh()
     return () => {
       disposed = true
+      stopWatching()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
