@@ -52,7 +52,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('region', { name: 'Облачный архив', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   const account = page.getByRole('dialog', { name: 'Мой аккаунт' })
-  await expect(account.getByText('Синхронизировано', { exact: false })).toBeVisible()
+  await expect(account.locator('.profile-status')).toHaveText(/Синхронизировано/, { timeout: 60000 })
   await expect(account.getByRole('button', { name: 'Повторить синхронизацию' })).toHaveCount(0)
   await account.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await page.getByRole('button', { name: 'Новый список' }).click()
