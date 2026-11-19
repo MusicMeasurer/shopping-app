@@ -23,13 +23,14 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
       onQueued?.()
     },
     async save(item: Item, waitForSync = false): Promise<void> {
+      validateCloudItem(item)
+      if (await storage.writeDraftItem(accountId, item)) { onQueued?.(); return }
       const bindings = await storage.readAccountListMappings(accountId)
       const binding = bindings.find(row => row.localListId === item.listId)
       if (!binding) {
         await storage.saveAccountItem(accountId, item)
         return
       }
-      validateCloudItem(item)
       if (await storage.mergeUnsentAccountEdit(accountId, item, binding.remoteListId)) {
         onQueued?.()
         return
@@ -67,6 +68,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
       const items = await storage.readAccountItems(accountId)
       const item = items.find(row => row.id === itemId)
       if (!item) throw new Error('Item not found')
+      if (await storage.writeDraftItem(accountId, item, true)) { onQueued?.(); return }
       const bindings = await storage.readAccountListMappings(accountId)
       const binding = bindings.find(row => row.localListId === item.listId)
       if (!binding) {

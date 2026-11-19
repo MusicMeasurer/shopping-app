@@ -842,3 +842,54 @@ test('merges local lists and saves a transferred duplicate under an available na
   await page.reload()
   await expect(page.getByRole('checkbox', { name: /Молоко в дорогу/ })).toBeVisible()
 })
+
+test('creates a list and queues and cancels completion in a signed-out account copy after restart', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('shopping-app')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction('localProfileRegistry', 'readwrite')
+        tx.oncomplete = () => resolve()
+        tx.onabort = () => reject(tx.error)
+        const profiles = tx.objectStore('localProfileRegistry')
+        const request = profiles.get('device')
+        request.onsuccess = () => {
+          const record = request.result
+          const id = crypto.randomUUID()
+          record.registry.profiles.push({ id, cloudAccountId: crypto.randomUUID(), login: 'offline@example.test', createdAt: Date.now() })
+          record.registry.activeProfileId = id
+          profiles.put(record)
+        }
+      })
+    } finally { db.close() }
+  })
+  await page.reload()
+  await page.getByRole('button', { name: 'Новый список', exact: true }).click()
+  const create = page.getByRole('dialog', { name: 'Создать список' })
+  await create.getByLabel('Название списка').fill('На выходные')
+  await create.getByLabel('Тип списка').selectOption('oneoff')
+  await create.getByRole('button', { name: 'Создать', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'На выходные', exact: true })).toBeVisible()
+  await page.getByLabel('Что нужно купить?', { exact: false }).fill('Чай')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeVisible()
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
+  const queue = page.getByRole('list', { name: 'Операции со списками' })
+  await expect(queue).toContainText('«На выходные» ожидает синхронизации')
+  await page.reload()
+  await expect(queue).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeDisabled()
+  await queue.getByRole('button', { name: 'Отменить операцию' }).click()
+  await expect(queue).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeEnabled()
+  await page.getByRole('button', { name: /^Архив,/ }).click()
+  await expect(page.getByText('Архив ещё не сохранён на этом устройстве.', { exact: false })).toBeVisible()
+})

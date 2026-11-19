@@ -55,6 +55,7 @@ export interface CloudCompletionRequest {
   name: string
   mode: CompletionMode
   confirmedMarked?: boolean
+  fromLocalCopy?: boolean
   confirmedItemIds?: readonly string[]
   createdAt: number
 }
@@ -65,6 +66,12 @@ function completionItemSnapshot(items: Item[]): string {
     .sort((left, right) => String(left[0]).localeCompare(String(right[0]))))
 }
 interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
+export interface AccountDraftList extends ShoppingListRecord {
+  accountId: string
+  operationId: string
+  nameConflict?: boolean
+}
+interface ScopedDraftList extends AccountDraftList { key: string }
 interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string; symbol?: string; metadata?: { name: string; kind: 'permanent' | 'oneoff'; position: number } }
 interface ScopedOperation {
   key: string
@@ -119,6 +126,7 @@ interface ShoppingDB extends DBSchema {
   accountItems: { key: string; value: ScopedItem; indexes: { byAccount: string } }
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
+  accountDraftLists: { key: string; value: ScopedDraftList; indexes: { byAccount: string } }
   accountArchiveCache: { key: string; value: { accountId: string; snapshots: CloudArchiveCompletion[] } }
   accountCompletionRequests: { key: string; value: ScopedCompletionRequest; indexes: { byAccount: string } }
   accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
@@ -132,12 +140,16 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 15, {
+  const database = openDB<ShoppingDB>(name, 16, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
       if (!db.objectStoreNames.contains('accountArchiveCache')) db.createObjectStore('accountArchiveCache', { keyPath: 'accountId' })
+      if (!db.objectStoreNames.contains('accountDraftLists')) {
+        const store = db.createObjectStore('accountDraftLists', { keyPath: 'key' })
+        store.createIndex('byAccount', 'accountId')
+      }
       if (!db.objectStoreNames.contains('accountCompletionRequests')) {
         const store = db.createObjectStore('accountCompletionRequests', { keyPath: 'key' })
         store.createIndex('byAccount', 'accountId')
@@ -739,7 +751,7 @@ export function createStorage(name = 'shopping-app') {
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
         'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
-        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache',
+        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists',
       ], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
@@ -752,13 +764,14 @@ export function createStorage(name = 'shopping-app') {
         if (cutover.profileId === profileId) throw new Error('Original guest profile cannot be deleted')
         const accountId = current.registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId
         if (accountId) {
-          const [operations, completions, requests, imports] = await Promise.all([
+          const [operations, completions, requests, drafts, imports] = await Promise.all([
             tx.objectStore('accountOperations').index('byAccount').count(accountId),
             tx.objectStore('accountCompletions').index('byAccount').count(accountId),
             tx.objectStore('accountCompletionRequests').index('byAccount').count(accountId),
+            tx.objectStore('accountDraftLists').index('byAccount').count(accountId),
             tx.objectStore('guestImports').getAll(),
           ])
-          if (operations || completions || requests || imports.some(batch => batch.accountId === accountId && !batch.imported))
+          if (operations || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported))
             throw new Error('Profile has unsynced operations; deletion blocked')
           await tx.objectStore('profileMigrations').put({
             key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
@@ -1263,24 +1276,136 @@ export function createStorage(name = 'shopping-app') {
     async acknowledgePending(operationId: string): Promise<void> {
       await legacyMutation(['pendingOperations'], async tx => { await tx.objectStore('pendingOperations').delete(operationId) })
     },
+    async readAccountDraftLists(accountId: string): Promise<AccountDraftList[]> {
+      const rows = await (await database).getAllFromIndex('accountDraftLists', 'byAccount', accountId)
+      return rows.map(({ key: _key, ...row }) => row).sort((a, b) => a.createdAt - b.createdAt)
+    },
+    async saveAccountDraftList(accountId: string, list: ShoppingListRecord): Promise<void> {
+      const tx = (await database).transaction(['accountDraftLists', 'accountListMappings', 'localProfileRegistry'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = tx.objectStore('localProfileRegistry')
+        if (!(await registry.get('device'))?.registry.profiles.some(row => row.cloudAccountId === accountId))
+          throw new Error('Локальная копия аккаунта недоступна.')
+        const store = tx.objectStore('accountDraftLists')
+        const key = accountKey(accountId, list.id)
+        const existing = await store.get(key)
+        if (existing && !existing.nameConflict) throw new Error('Этот список уже ожидает синхронизации.')
+        const name = list.name.trim()
+        if (!name || name.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+        const [drafts, bindings] = await Promise.all([
+          store.index('byAccount').getAll(accountId),
+          tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
+        ])
+        assertFreeListName([...drafts, ...bindings.flatMap(row => row.metadata ? [{ id: row.localListId, name: row.metadata.name }] : [])], list.id, name)
+        await store.put({ ...list, name, key, accountId, operationId: crypto.randomUUID(), nameConflict: undefined })
+        await markListsChanged(registry, { accountId })
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async markAccountDraftNameConflict(draft: AccountDraftList): Promise<boolean> {
+      const tx = (await database).transaction('accountDraftLists', 'readwrite')
+      const key = accountKey(draft.accountId, draft.id)
+      const current = await tx.store.get(key)
+      const matched = current?.operationId === draft.operationId
+      if (matched) await tx.store.put({ ...current, nameConflict: true })
+      await tx.done
+      return matched
+    },
+    async promoteAccountDraft(draft: AccountDraftList, remote: { id: string; ownerId: string; name: string; kind: ShoppingListRecord['kind']; position: number }): Promise<string | undefined> {
+      if (remote.ownerId !== draft.accountId || remote.name !== draft.name || remote.kind !== draft.kind)
+        throw new Error('Подтверждение создания не совпадает с локальным списком.')
+      const tx = (await database).transaction(['accountDraftLists', 'accountListMappings', 'accountItems', 'accountOperations', 'accountCompletionRequests'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const { accountId } = draft
+        const drafts = tx.objectStore('accountDraftLists')
+        const key = accountKey(accountId, draft.id)
+        const current = await drafts.get(key)
+        const mappings = tx.objectStore('accountListMappings')
+        const remoteMapping = (await mappings.index('byAccount').getAll(accountId)).find(row => row.remoteListId === remote.id)
+        if (!current || current.operationId !== draft.operationId) {
+          await done
+          return remoteMapping?.localListId
+        }
+        const localListId = remoteMapping?.localListId ?? draft.id
+        const { name, kind, position } = remote
+        await mappings.put({ key: accountKey(accountId, localListId), accountId, localListId, remoteListId: remote.id,
+          metadata: remoteMapping?.metadata ?? { name, kind, position }, symbol: draft.symbol })
+        const items = tx.objectStore('accountItems')
+        const operations = tx.objectStore('accountOperations')
+        const rows = (await items.index('byAccount').getAll(accountId)).filter(row => row.item.listId === draft.id)
+        for (const row of rows) {
+          const item = { ...row.item, listId: localListId }
+          await items.put({ ...row, item })
+          const operation: CloudPendingOperation = { kind: 'cloud-add', operationId: crypto.randomUUID(),
+            localListId, remoteListId: remote.id, itemId: item.id, item, preserveCreatedAt: true }
+          await operations.add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
+        }
+        const requests = tx.objectStore('accountCompletionRequests')
+        const request = await requests.get(key)
+        if (request) {
+          await requests.delete(key)
+          await requests.add({ ...request, key: accountKey(accountId, remote.id), localListId, remoteListId: remote.id, name })
+        }
+        await drafts.delete(key)
+        await done
+        return localListId
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async writeDraftItem(accountId: string, item: Item, remove = false): Promise<boolean> {
+      const tx = (await database).transaction(['accountDraftLists', 'accountItems', 'accountCompletionRequests'], 'readwrite')
+      const key = accountKey(accountId, item.listId)
+      if (!await tx.objectStore('accountDraftLists').get(key)) { await tx.done; return false }
+      try {
+        if (await tx.objectStore('accountCompletionRequests').get(key))
+          throw new Error('Завершение ожидает синхронизации. Отмените его, чтобы изменить список.')
+        const items = tx.objectStore('accountItems')
+        const rowKey = accountKey(accountId, item.id)
+        if (remove) await items.delete(rowKey)
+        else {
+          checkItemNames((await items.index('byAccount').getAll(accountId)).map(row => row.item), [item])
+          await items.put({ key: rowKey, accountId, item })
+        }
+        await tx.done
+        return true
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
     async readAccountCompletionRequests(accountId: string): Promise<CloudCompletionRequest[]> {
       const rows = await (await database).getAllFromIndex('accountCompletionRequests', 'byAccount', accountId)
       return rows.map(({ key: _key, items: _items, ...request }) => request)
         .sort((left, right) => left.createdAt - right.createdAt)
     },
-    async queueAccountCompletion(request: CloudCompletionRequest): Promise<void> {
+    async queueAccountCompletion(request: CloudCompletionRequest, local = false): Promise<void> {
       const { accountId, localListId, remoteListId } = request
-      const tx = (await database).transaction(['accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems'], 'readwrite')
+      const tx = (await database).transaction(['accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems', 'accountDraftLists'], 'readwrite')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, localListId))
-        if (mapping?.remoteListId !== remoteListId) throw new Error('Unverified list mapping')
+        const draft = local && !mapping && localListId === remoteListId &&
+          await tx.objectStore('accountDraftLists').get(accountKey(accountId, localListId))
+        if (!draft && mapping?.remoteListId !== remoteListId) throw new Error('Unverified list mapping')
         const requests = tx.objectStore('accountCompletionRequests')
         const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
         if (intents.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion already pending')
         const items = (await tx.objectStore('accountItems').index('byAccount').getAll(accountId))
           .map(row => row.item).filter(item => item.listId === localListId)
+        if (local && (!items.length || request.mode === 'delete_list')) throw new Error('Список недоступен для завершения.')
         if (request.mode === 'archive_purchased') checkConfirmedPurchases(items, request.confirmedItemIds)
-        await requests.add({ ...request, key: accountKey(accountId, remoteListId), items: completionItemSnapshot(items) })
+        await requests.add({ ...request, ...(local ? { fromLocalCopy: true } : {}), key: accountKey(accountId, remoteListId), items: completionItemSnapshot(items) })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
     },
@@ -1297,15 +1422,16 @@ export function createStorage(name = 'shopping-app') {
     },
     async hasAccountSyncWork(accountId: string): Promise<boolean> {
       const db = await database
-      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountCompletionRequests', 'guestImports'])
-      const [items, completions, requests, imports] = await Promise.all([
+      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountCompletionRequests', 'guestImports', 'accountDraftLists'])
+      const [items, completions, requests, drafts, imports] = await Promise.all([
         tx.objectStore('accountOperations').index('byAccount').count(accountId),
         tx.objectStore('accountCompletions').index('byAccount').count(accountId),
         tx.objectStore('accountCompletionRequests').index('byAccount').count(accountId),
+        tx.objectStore('accountDraftLists').index('byAccount').count(accountId),
         tx.objectStore('guestImports').getAll(),
       ])
       await tx.done
-      return !!(items || completions || requests || imports.some(batch => batch.accountId === accountId && !batch.imported))
+      return !!(items || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported))
     },
     /** Durable intent is written before RPC; account edits are fenced by the same transaction. */
     async beginAccountCompletion(intent: CloudCompletionIntent, queuedRequest = false): Promise<void> {
@@ -1549,6 +1675,10 @@ export function createStorage(name = 'shopping-app') {
         await tx.done
         throw new Error('List mapping cannot be silently replaced')
       }
+      if (!existing && (await tx.store.index('byAccount').getAll(accountId)).some(row => row.remoteListId === remoteListId)) {
+        await tx.done
+        throw new Error('Cloud list is already bound to another local ID')
+      }
       if (!existing) await tx.store.add({ key, accountId, localListId, remoteListId })
       await tx.done
     },
@@ -1558,22 +1688,25 @@ export function createStorage(name = 'shopping-app') {
       if (!listId || items.some(item => item.listId !== listId))
         throw new Error('Batch must belong to one list')
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, listId))
-        if (!mapping) throw new Error('Missing verified list mapping')
+        const draft = !mapping && await tx.objectStore('accountDraftLists').get(accountKey(accountId, listId))
+        if (!mapping && !draft) throw new Error('Missing verified list mapping')
+        const remoteListId = mapping?.remoteListId ?? listId
         const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
-        const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, mapping.remoteListId))
-        if (request || intents.some(row => row.intent.remoteListId === mapping.remoteListId))
+        const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, remoteListId))
+        if (request || intents.some(row => row.intent.remoteListId === remoteListId))
           throw new Error('Completion pending; list edits are temporarily locked')
         const itemStore = tx.objectStore('accountItems')
         checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
         for (const item of items) {
+          await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
+          if (!mapping) continue
           const operation: CloudPendingOperation = {
             kind: 'cloud-add', operationId: crypto.randomUUID(), localListId: listId,
             remoteListId: mapping.remoteListId, itemId: item.id, item, preserveCreatedAt: true,
           }
-          await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
           await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
         }
         await tx.done
