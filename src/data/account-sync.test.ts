@@ -19,14 +19,14 @@ function setup(pending: PendingItemOperation[] = []) {
   const acknowledgeAccountPending = vi.fn(async () => {})
   const commitAccountReceipt = vi.fn(async () => {})
   const importRemoteOnlyBatch = vi.fn(async () => {})
-  const applyVersionedNameChanges = vi.fn(async () => 1)
+  const applyVersionedItemChanges = vi.fn(async () => 1)
   const applyReviewedRemoteDeletions = vi.fn(async () => {})
   const order = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
   const tombstoneRead = vi.fn(async (): Promise<{ data: Record<string, unknown>[]; error: null }> => ({ data: [], error: null }))
   const from = vi.fn(() => ({ select: () => ({ eq: () => ({ is: () => ({ order }), not: tombstoneRead }) }) }))
   const rpc = vi.fn(async () => ({ data: { operation_id: operationId, list_revision: 2, item_version: 1 }, error: null }))
   const claimAccountPending = vi.fn(async (_accountId: string, id: string) => pending.find(row => row.operationId === id)!)
-  const storage = { readSyncableAccountPending: readAccountPending, reconcileRejectedEdit: vi.fn(), claimAccountPending, readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions, applyVersionedNameChanges } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'readSyncableAccountPending' | 'reconcileRejectedEdit' | 'applyVersionedNameChanges'>
+  const storage = { readSyncableAccountPending: readAccountPending, reconcileRejectedEdit: vi.fn(), claimAccountPending, readAccountItems, readAccountPending, acknowledgeAccountPending, readAccountListMappings, commitAccountReceipt, importRemoteOnlyBatch, readAccountItemVersions, applyReviewedRemoteDeletions, applyVersionedItemChanges } as unknown as Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'readSyncableAccountPending' | 'reconcileRejectedEdit' | 'applyVersionedItemChanges'>
   const client = { from, rpc } as unknown as Pick<SupabaseClient, 'from' | 'rpc'>
   let active = true
   const sync = createAccountSync(storage, client, {
@@ -38,7 +38,7 @@ function setup(pending: PendingItemOperation[] = []) {
       name: 'Молоко', purchased: false,
     }),
   })
-  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, applyVersionedNameChanges, readAccountItemVersions, tombstoneRead, order, rpc, deactivate: () => { active = false } }
+  return { sync, readAccountItems, readAccountPending, readAccountListMappings, acknowledgeAccountPending, commitAccountReceipt, importRemoteOnlyBatch, applyReviewedRemoteDeletions, applyVersionedItemChanges, readAccountItemVersions, tombstoneRead, order, rpc, deactivate: () => { active = false } }
 }
 describe('account-scoped sync binding', () => {
   it('preserves durable pending operations when server rejects a mutation', async () => {
@@ -305,7 +305,7 @@ describe('duplicate-name reconciliation', () => {
     expect(test.importRemoteOnlyBatch).toHaveBeenCalledWith(accountId, listId, [
       { item: expect.objectContaining({ id: unrelated }), version: 1 },
     ])
-    expect(test.applyVersionedNameChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
+    expect(test.applyVersionedItemChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
       { before: expect.objectContaining({ id: otherId, name: 'Сливки' }), expectedVersion: 1, version: 2,
         after: expect.objectContaining({ id: otherId, name: 'МОЛОКО' }) },
     ])
@@ -317,12 +317,12 @@ describe('duplicate-name reconciliation', () => {
     test.readAccountItemVersions.mockResolvedValue([known(itemId, 1), known(otherId, 1)])
     test.order.mockResolvedValue({ data: [row(itemId, 'Молоко', 1)], error: null })
     await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(0)
-    expect(test.applyVersionedNameChanges).not.toHaveBeenCalled()
+    expect(test.applyVersionedItemChanges).not.toHaveBeenCalled()
     test.tombstoneRead.mockResolvedValue({ data: [{
       id: otherId, list_id: listId, version: 2, deleted_at: '2026-11-18T00:00:00Z',
     }], error: null })
     await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(1)
-    expect(test.applyVersionedNameChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
+    expect(test.applyVersionedItemChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
       { before: other, expectedVersion: 1, version: 2, after: undefined },
     ])
   })
@@ -341,8 +341,45 @@ describe('duplicate-name reconciliation', () => {
       p_operation: operationId, p_list: listId, p_keep: itemId, p_keep_version: 1,
       p_change: otherId, p_change_version: 1, p_name: 'Сливки',
     })
-    expect(test.applyVersionedNameChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
+    expect(test.applyVersionedItemChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
       { before: other, expectedVersion: 1, version: 2, after: { ...other, name: 'Сливки' } },
     ])
+  })
+})
+
+describe('receiving checkmarks from another device', () => {
+  it.each([true, false])('applies or acknowledges the newer server checkmark %s', async purchased => {
+    const test = setup()
+    const remote = { id: itemId, list_id: listId, name: 'Молоко', purchased,
+      created_at: new Date(1).toISOString(), version: 2 }
+    test.order.mockResolvedValue({ data: [remote], error: null })
+    test.readAccountItemVersions.mockResolvedValue([{ key: 'version', accountId, itemId, remoteListId: listId, version: 1 }])
+
+    await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(1)
+    expect(test.applyVersionedItemChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
+      expect.objectContaining({ expectedVersion: 1, version: 2, after: expect.objectContaining({ purchased }) }),
+    ])
+  })
+
+  it('leaves a local pending edit in the existing conflict path', async () => {
+    const test = setup([{ kind: 'cloud-update', operationId, itemId, localListId: 'groceries',
+      remoteListId: listId, expectedVersion: 1,
+      item: { id: itemId, listId: 'groceries', name: 'Молоко', purchased: false, createdAt: 1 },
+    }])
+    test.order.mockResolvedValue({ data: [{ id: itemId, list_id: listId, name: 'Молоко',
+      purchased: true, created_at: new Date(1).toISOString(), version: 2 }], error: null })
+    test.readAccountItemVersions.mockResolvedValue([{ key: 'version', accountId, itemId, remoteListId: listId, version: 1 }])
+
+    await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(0)
+    expect(test.applyVersionedItemChanges).not.toHaveBeenCalled()
+  })
+
+  it('does not overwrite an unversioned local item', async () => {
+    const test = setup()
+    test.order.mockResolvedValue({ data: [{ id: itemId, list_id: listId, name: 'Молоко',
+      purchased: true, created_at: new Date(1).toISOString(), version: 2 }], error: null })
+
+    await expect(test.sync.importRemoteOnly({ reconcileNames: true })).rejects.toThrow('conflicting items')
+    expect(test.applyVersionedItemChanges).not.toHaveBeenCalled()
   })
 })

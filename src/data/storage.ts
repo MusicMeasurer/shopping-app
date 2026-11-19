@@ -34,7 +34,7 @@ function checkNamePair(keep: Item | undefined, change: Item | undefined, expecte
     throw new ItemSaveError('Товары изменились. Проверьте конфликт ещё раз.')
 }
 
-export interface VersionedNameChange {
+export interface VersionedItemChange {
   before: Item
   expectedVersion: number
   after?: Item
@@ -1619,9 +1619,9 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
-    /** Apply newer cloud evidence to conflict rows only, without replacing pending local work. */
-    async applyVersionedNameChanges(accountId: string, localListId: string, remoteListId: string,
-      entries: readonly VersionedNameChange[]): Promise<number> {
+    /** Apply newer cloud evidence if the local item and version are still current. */
+    async applyVersionedItemChanges(accountId: string, localListId: string, remoteListId: string,
+      entries: readonly VersionedItemChange[]): Promise<number> {
       if (!entries.length) return 0
       const db = await database
       const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations',
