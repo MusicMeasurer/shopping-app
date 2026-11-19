@@ -198,10 +198,17 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       <label className="profile-transfer-preference"><input type="checkbox" checked={!!profile.skipTransferPrompt} disabled={actionsBusy}
         onChange={event => {
           const skipped = event.currentTarget.checked
+          const displayPreference = (value: boolean) => setRegistry(current => current && ({
+            ...current,
+            profiles: current.profiles.map(row => row.id === profile.id ? { ...row, skipTransferPrompt: value } : row),
+          }))
+          displayPreference(skipped)
           setProfileBusy(true)
           setProfileActionError('')
-          void storage.setProfileTransferPromptSkipped(profile.id, skipped).then(setRegistry)
-            .catch(() => setProfileActionError('Не удалось сохранить настройку синхронизации.')).finally(() => setProfileBusy(false))
+          void storage.setProfileTransferPromptSkipped(profile.id, skipped).then(setRegistry).catch(() => {
+            displayPreference(!!profile.skipTransferPrompt)
+            setProfileActionError('Не удалось сохранить настройку синхронизации.')
+          }).finally(() => setProfileBusy(false))
         }} /> Не спрашивать о синхронизации этого профиля</label>}
     {registry && (guestProfile || accountId !== null) && <div className="profile-switcher" role="group" aria-label="Локальные профили">
       {otherProfiles.length > 0 && <div className="profile-options" tabIndex={showAllProfiles ? 0 : undefined}>

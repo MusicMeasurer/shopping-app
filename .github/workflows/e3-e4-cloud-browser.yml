@@ -23,6 +23,7 @@ permissions:
 jobs:
   authenticated-cloud-browser:
     runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
     timeout-minutes: 12
     environment: e3-lab
     env:
@@ -47,7 +48,6 @@ jobs:
           test -n "$E3E4_LAB_TEST_PASSWORD" || { echo "::error::Missing disposable test password"; exit 1; }
           test -n "$E3E4_LAB_TEST_LIST_ID" || { echo "::error::Missing owned disposable test list"; exit 1; }
       - run: npm run build
-      - run: npx playwright install --with-deps webkit
       - name: User-facing cloud archive and account controls
         run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts --project=iphone-webkit --workers=1
       - run: npm run build
