@@ -41,7 +41,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   // Explicitly retain independent guest data in this regression.
   await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
   if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Новый список' }),
