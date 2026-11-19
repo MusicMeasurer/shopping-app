@@ -803,3 +803,42 @@ test('E4: the standard rail scrolls and each local profile keeps its own card st
   await expect(rail).toHaveClass(/standard.*list-rail/)
   await expect(rail.getByRole('button', { name: 'Пятая карточка', exact: true })).toBeVisible()
 })
+
+test('merges local lists and saves a transferred duplicate under an available name', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const add = async (name: string) => {
+    await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
+  }
+  await add('Молоко 2 л\nЯйца')
+  await page.getByRole('button', { name: 'Хозяйственные покупки', exact: true }).click()
+  await add('Молоко 1 л')
+  const open = async () => {
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Объединить со списком' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Объединить списки' })
+    await dialog.getByLabel('Список-получатель').selectOption({ label: 'Продукты' })
+    await dialog.getByRole('button', { name: 'Посмотреть результат' }).click()
+    return dialog
+  }
+  const cancelled = await open()
+  await cancelled.getByRole('button', { name: 'Отмена' }).click()
+  await expect(page.getByRole('checkbox', { name: /Молоко/ })).toBeVisible()
+  const dialog = await open()
+  await dialog.getByRole('radio', { name: /Продукты.*Молоко/ }).check()
+  await dialog.getByLabel('Сохранить переносимую позицию под новым именем').check()
+  const rename = dialog.getByLabel('Новое имя')
+  await rename.fill(' яйца ')
+  await expect(dialog.getByText(/уже есть в итоговом списке/)).toBeVisible()
+  const confirm = dialog.getByRole('button', { name: 'Объединить', exact: true })
+  await expect(confirm).toBeDisabled()
+  await rename.fill('Молоко в дорогу')
+  await confirm.click()
+  await expect(dialog).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Продукты', exact: true })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Молоко в дорогу.*1 л/ })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: /Молоко.*2 л/ })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Хозяйственные покупки', exact: true })).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('checkbox', { name: /Молоко в дорогу/ })).toBeVisible()
+})

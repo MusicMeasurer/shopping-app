@@ -4,6 +4,7 @@ import { MAX_LOCAL_PROFILES, profileName, addProfile, bindProfile, initializePro
 import { hasItemName, itemNameKey, matchingNamePair, sameItemSnapshot } from '../domain/item-names'
 import { ItemSaveError } from './item-save-error'
 import { lists as defaultLists, type Item } from '../domain/shopping'
+import { ListMergeConflict, planListMerge, sameMergeSnapshot, type ListMergeSnapshot, type MergeChoice } from '../domain/list-merge'
 import type { CloudArchiveCompletion } from './cloud-archive'
 import type { CompletionMode } from './cloud-completion-rpc'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
@@ -994,6 +995,57 @@ export function createStorage(name = 'shopping-app') {
       await tx.objectStore('profileLists').put({ ...existing, record: { ...existing.record, kind } })
       await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
       await tx.done
+    },
+    async readProfileListMerge(profileId: string, sourceId: string, targetId: string): Promise<ListMergeSnapshot> {
+      const tx = (await database).transaction(['profileLists', 'profileItems'])
+      const lists = tx.objectStore('profileLists')
+      const [source, target, rows] = await Promise.all([
+        lists.get(JSON.stringify([profileId, sourceId])),
+        lists.get(JSON.stringify([profileId, targetId])),
+        tx.objectStore('profileItems').index('byProfile').getAll(profileId),
+      ])
+      await tx.done
+      if (!source || !target || sourceId === targetId) throw new Error('Один из списков недоступен.')
+      return { source: source.record, target: target.record,
+        items: rows.map(row => row.record).filter(item => item.listId === sourceId || item.listId === targetId) }
+    },
+    async mergeProfileLists(profileId: string, expected: ListMergeSnapshot, choices: ReadonlyMap<string, MergeChoice>): Promise<void> {
+      const tx = (await database).transaction(['localProfileRegistry', 'profileLists', 'profileItems', 'profilePendingOperations', 'guestImports'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const registry = tx.objectStore('localProfileRegistry')
+        const profile = (await registry.get('device'))?.registry.profiles.find(row => row.id === profileId)
+        if (!profile || profile.cloudAccountId || (await tx.objectStore('guestImports').get(profileId))?.removeSource)
+          throw new Error('Локальный профиль недоступен для объединения.')
+        const lists = tx.objectStore('profileLists')
+        const items = tx.objectStore('profileItems')
+        const sourceKey = JSON.stringify([profileId, expected.source.id])
+        const targetKey = JSON.stringify([profileId, expected.target.id])
+        const [source, target, allRows, pending] = await Promise.all([
+          lists.get(sourceKey), lists.get(targetKey), items.index('byProfile').getAll(profileId),
+          tx.objectStore('profilePendingOperations').index('byProfile').getAll(profileId),
+        ])
+        const includesList = (id: string) => id === expected.source.id || id === expected.target.id
+        const rows = allRows.filter(row => includesList(row.record.listId))
+        if (!source || !target) throw new ListMergeConflict()
+        const current = { source: source.record, target: target.record, items: rows.map(row => row.record) }
+        if (!sameMergeSnapshot(expected, current)) throw new ListMergeConflict()
+        if (pending.some(({ record }) => 'localListId' in record ? includesList(record.localListId)
+          : record.kind === 'upsert' ? includesList(record.item.listId) : rows.some(row => row.record.id === record.itemId)))
+          throw new Error('В этих списках есть ожидающие операции. Повторите после синхронизации.')
+        const result = planListMerge(current, choices)
+        const keptIds = new Set(result.map(item => item.id))
+        for (const row of rows) if (!keptIds.has(row.record.id)) await items.delete(row.key)
+        for (const record of result) await items.put({ profileId, key: JSON.stringify([profileId, record.id]), record })
+        await lists.delete(sourceKey)
+        await markListsChanged(registry, { profileId })
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await done.catch(() => {})
+        throw error
+      }
     },
     async completeProfileList(profileId: string, listId: string, archiveId: string, completedAt: number, mode: Exclude<CompletionMode, 'delete_list'> = 'all_purchased', confirmedItemIds?: readonly string[]): Promise<void> {
       const db = await database

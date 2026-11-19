@@ -519,3 +519,7 @@ nav .list-conflict-marker{
 .profile-transfer-preference input{flex:none;width:20px;height:20px;accent-color:#25634c}
 .profile-option .profile-cloud-entry{width:auto}
 .profile-option:has(.profile-delete) .profile-cloud-entry{grid-column:1/-1;justify-self:end}
+.list-merge fieldset{border:1px solid #d8dfd6;border-radius:12px;margin:12px 0;padding:12px;min-width:0}
+.list-merge select,.list-merge input:not([type=radio]):not([type=checkbox]){max-width:100%;width:100%}
+.list-merge label{display:block;margin:8px 0}
+.list-merge input:is([type=radio],[type=checkbox]){margin-inline-end:6px}

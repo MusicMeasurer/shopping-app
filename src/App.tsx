@@ -1,3 +1,5 @@
+import { ListMergeDialog } from './ListMergeDialog'
+import type { ListMergeActions } from './domain/list-merge'
 import { PurchaseHistory } from './PurchaseHistory'
 import { ListActionNotice, type ListActionMessage } from './ListActionNotice'
 import { duplicatedItems, itemNameKey, type ItemNameDecision } from './domain/item-names'
@@ -34,7 +36,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; linkedTarget?: string }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; linkedTarget?: string }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -252,13 +254,13 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive}>
+    } onCompleteCloudList={onCompleteCloudList} cloudMerge={cloudMerge} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive}>
       {localAccount.archive === null && <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>}
     </PurchaseHistory> : cloudArchive} cloudArchiveCount={localAccount ? localAccount.archive?.length : cloudArchiveCount} onOpenCloudArchive={localAccount ? undefined : onOpenCloudArchive} />}
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
   const cardSizeKey = workspaceKey + ':card-size'
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
@@ -581,6 +583,19 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     }
     setDeleteListId(id)
   }
+  const [mergeSourceId, setMergeSourceId] = useState<ListId>()
+  const mergeSource = visibleLists.find(row => row.id === mergeSourceId)
+  const mergeActions: ListMergeActions | undefined = accountId === null && guestProfileId ? {
+    read: (source, target) => storage.readProfileListMerge(guestProfileId, source, target),
+    apply: async (snapshot, choices) => {
+      await storage.mergeProfileLists(guestProfileId, snapshot, choices)
+      const updated = await storage.readProfileLists(guestProfileId)
+      setLocalLists(orderLists(updated))
+      await shopping.reload()
+    },
+  } : cloudMerge
+  const mergeTargets = (from: ListId) => visibleLists.filter(row => row.id !== from && !listLocked(row.id) &&
+    (accountId === null || !!cloudBoundLists[row.id]))
   const editingItem = rows.find(item => item.id === editingId)
   const deletionItems = deleteListId ? itemsForList(shopping.items, deleteListId) : []
   const hasMarkedItems = deletionItems.some(item => item.purchased)
@@ -783,12 +798,23 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           </button>)}
         </div>
         <div className="menu-separator"/>
+        {mergeActions && <button type="button" role="menuitem"
+          disabled={listMutationBusy || listLocked(menuList.id) || !mergeTargets(menuList.id).length ||
+            (accountId !== null && !cloudBoundLists[menuList.id])}
+          onClick={() => { setMergeSourceId(menuList.id); setMenuTarget(null) }}>Объединить со списком</button>}
         <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem"
           onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>✓ Завершить список</button>
         <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem" className="danger"
           onClick={() => { setMenuTarget(null); requestDeletion(menuList.id) }}>▤ Удалить список</button>
       </div>}
     </>, document.body)}
+    {mergeSource && mergeActions && <ListMergeDialog source={mergeSource} targets={mergeTargets(mergeSource.id)}
+      actions={mergeActions} onDismiss={() => setMergeSourceId(undefined)} onMerged={id => {
+        setMergeSourceId(undefined)
+        setActive(id)
+        setRevealCard({ id })
+        setLocalNotice({ text: 'Списки объединены.', at: Date.now() })
+      }}/>}
     {newListDialog && <WorkspaceDialog label="Создать список" className="create-dialog"
       onDismiss={() => { if (!creatingList && !cloudListBusy) setNewListDialog(false) }}>
         <div className="account-dialog-heading"><h2 id="new-list-title">Создать список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
