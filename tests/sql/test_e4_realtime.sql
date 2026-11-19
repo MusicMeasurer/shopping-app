@@ -13,9 +13,9 @@ LANGUAGE sql STABLE AS $$
   SELECT current_setting('realtime.topic', true)
 $$;
 CREATE FUNCTION realtime.send(payload jsonb, event text, topic text, private boolean)
-RETURNS void LANGUAGE sql SECURITY DEFINER SET search_path = '' AS $$
+RETURNS void LANGUAGE sql SET search_path = '' AS $$
   INSERT INTO realtime.messages(topic, extension, event, payload, private)
-  VALUES ($3, 'broadcast', $2, $1, $4)
+  VALUES ($3, 'broadcast', $2, $1 || jsonb_build_object('id', gen_random_uuid()), $4)
 $$;
 CREATE POLICY lab_broad_select ON realtime.messages FOR SELECT USING (true);
 CREATE POLICY lab_broad_insert ON realtime.messages FOR INSERT WITH CHECK (true);
@@ -23,16 +23,19 @@ CREATE POLICY lab_broad_insert ON realtime.messages FOR INSERT WITH CHECK (true)
 
 BEGIN;
 INSERT INTO auth.users(id) VALUES ('00000000-0000-4000-8000-000000000001');
+SET LOCAL ROLE authenticated;
+SELECT set_config('request.jwt.claim.sub', '00000000-0000-4000-8000-000000000001', true);
 INSERT INTO public.shopping_lists(id, owner_id, name)
 VALUES ('10000000-0000-4000-8000-000000000001',
         '00000000-0000-4000-8000-000000000001', 'Private title');
+RESET ROLE;
 UPDATE public.shopping_lists SET revision = revision WHERE name = 'Private title';
 UPDATE public.shopping_lists SET revision = revision + 1 WHERE name = 'Private title';
 DO $$
 BEGIN
   IF (SELECT count(*) FROM realtime.messages) <> 2 OR NOT EXISTS (
     SELECT 1 FROM realtime.messages WHERE private AND event = 'list_revision'
-      AND payload = '{"list_id":"10000000-0000-4000-8000-000000000001","revision":1}'::jsonb
+      AND (payload - 'id') = '{"list_id":"10000000-0000-4000-8000-000000000001","revision":1}'::jsonb
   ) THEN RAISE EXCEPTION 'unexpected broadcasts or payload'; END IF;
 END;
 $$;

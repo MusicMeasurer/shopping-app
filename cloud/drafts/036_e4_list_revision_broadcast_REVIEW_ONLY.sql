@@ -23,9 +23,14 @@ CREATE POLICY shopping_list_revisions_server_only ON realtime.messages AS RESTRI
 FOR INSERT TO PUBLIC
 WITH CHECK (topic NOT LIKE 'shopping-lists:%');
 
-CREATE FUNCTION public.broadcast_shopping_list_revision()
+CREATE SCHEMA IF NOT EXISTS shoppingapp_internal;
+REVOKE ALL ON SCHEMA shoppingapp_internal FROM PUBLIC, anon, authenticated;
+
+-- The trigger is server-owned, including when a client inserts an allowed list.
+-- realtime.send runs with its caller's privileges and this topic is server-only.
+CREATE FUNCTION shoppingapp_internal.broadcast_shopping_list_revision()
 RETURNS trigger
-LANGUAGE plpgsql
+LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = ''
 AS $$
 DECLARE
@@ -52,10 +57,10 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.broadcast_shopping_list_revision() FROM PUBLIC, anon, authenticated;
+REVOKE ALL ON FUNCTION shoppingapp_internal.broadcast_shopping_list_revision() FROM PUBLIC, anon, authenticated;
 
 CREATE TRIGGER shopping_list_revision_broadcast
 AFTER INSERT OR UPDATE OF revision, deleted_at OR DELETE ON public.shopping_lists
-FOR EACH ROW EXECUTE FUNCTION public.broadcast_shopping_list_revision();
+FOR EACH ROW EXECUTE FUNCTION shoppingapp_internal.broadcast_shopping_list_revision();
 
 COMMIT;
