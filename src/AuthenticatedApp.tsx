@@ -248,15 +248,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // A verified session is not enough: the account workspace must have a
   // durable local profile before any background sync or refresh may run.
   activeAccount.current = readyAccount === currentAccount ? currentAccount : null
-  const automaticFlushRunning = useRef(false)
-  const flushRequested = useRef(false)
+  const automaticFlushRunning = useRef(new Set<string>())
+  const flushRequested = useRef(new Set<string>())
   const onQueued = useCallback(() => {
     setSyncQueueRevision(revision => revision + 1)
     if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
-    flushRequested.current = true
-    if (automaticFlushRunning.current) return
     const accountId = currentAccount
-    automaticFlushRunning.current = true
+    if (automaticFlushRunning.current.has(accountId)) {
+      flushRequested.current.add(accountId)
+      return
+    }
+    automaticFlushRunning.current.add(accountId)
     setPushState({ account: accountId, status: 'syncing' })
     setDismissedSyncError(false)
     void (async () => {
@@ -264,7 +266,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (activeAccount.current !== accountId) return
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
         do {
-          flushRequested.current = false
+          flushRequested.current.delete(accountId)
           const [mappings, owned] = await Promise.all([
             storage.readAccountListMappings(accountId),
             fetchOwnedCloudLists(client, accountId),
@@ -281,7 +283,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             onReconciled: () => setWorkspaceRevision(value => value + 1),
           }).flush()
           }
-        } while (flushRequested.current && activeAccount.current === accountId)
+        } while (flushRequested.current.has(accountId) && activeAccount.current === accountId)
         if (activeAccount.current === accountId) {
           setCloudMappingRevision(value => value + 1)
           setSyncError('')
@@ -293,8 +295,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           setPushState({ account: accountId, status: 'error' })
         }
       } finally {
-        automaticFlushRunning.current = false
-        if (activeAccount.current !== accountId) flushRequested.current = false
+        automaticFlushRunning.current.delete(accountId)
+        const requested = flushRequested.current.delete(accountId)
+        if (requested && activeAccount.current === accountId) onQueued()
       }
     })()
   }, [client, currentAccount, readyAccount, storage])

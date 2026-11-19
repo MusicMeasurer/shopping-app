@@ -792,5 +792,5 @@ test('E4: the standard rail scrolls and each local profile keeps its own card st
   await profileMenu.click()
   await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).first().click()
   await expect(rail).toHaveClass(/standard.*list-rail/)
-  await expect(rail.getByRole('button', { name: 'Пятая карточка' })).toBeVisible()
+  await expect(rail.getByRole('button', { name: 'Пятая карточка', exact: true })).toBeVisible()
 })

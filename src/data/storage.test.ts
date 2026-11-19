@@ -739,3 +739,23 @@ it('records recency only after successful list and item changes for the affected
   expect(profiles.find(profile => profile.id === original)!.listsChangedAt).toBeUndefined()
   await storage.close()
 })
+
+it('persists transfer opt-out per independent local profile and allows resetting it', async () => {
+  const storage = createStorage('profile-transfer-preference-' + crypto.randomUUID())
+  try {
+    const first = await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    const second = (await storage.createLocalProfile('second', Date.now())).activeProfileId
+    await storage.setProfileTransferPromptSkipped(first, true)
+    await storage.switchLocalProfile(first)
+    const registry = await storage.readLocalProfiles()
+    expect(registry?.profiles.find(profile => profile.id === first)?.skipTransferPrompt).toBe(true)
+    expect(registry?.profiles.find(profile => profile.id === second)?.skipTransferPrompt).toBeUndefined()
+    await storage.setProfileTransferPromptSkipped(first, false)
+    expect((await storage.readLocalProfiles())?.profiles.find(profile => profile.id === first)?.skipTransferPrompt).toBe(false)
+    const linked = await storage.ensureVerifiedAccountProfile('linked-account')
+    await expect(storage.setProfileTransferPromptSkipped(linked.activeProfileId, true)).rejects.toThrow('independent')
+  } finally {
+    await storage.close()
+  }
+})

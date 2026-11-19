@@ -277,10 +277,15 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await dialog.getByLabel('Больше не спрашивать для этого профиля').check()
   await dialog.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await page.getByLabel('Стандартный (горизонтальная лента)').check()
+  await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
+  await expect(page.locator('nav.list-rail')).toHaveClass(/standard/)
 
   await profile.click()
   await localProfiles.getByRole('button', { name: /Мои покупки/ }).first().click()
   await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+  await expect(page.locator('nav.list-rail')).toHaveClass(/large/)
   await page.reload()
   await expect(profile).toHaveAttribute('data-profile-mode', 'local')
   await profile.click()
@@ -289,6 +294,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
   await expect(dialog).toHaveCount(0)
   expect(sessionWrites).toHaveLength(1)
+  await expect(page.locator('nav.list-rail')).toHaveClass(/standard/)
 
   await profile.click()
   await localProfiles.getByRole('button', { name: /Мои покупки/ }).first().click()
