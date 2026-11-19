@@ -1,3 +1,5 @@
+import { applyCloudListMerge, previewCloudListMerge } from './data/cloud-list-merge'
+import type { ListMergeActions } from './domain/list-merge'
 import { PurchaseHistory } from './PurchaseHistory'
 import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
@@ -414,14 +416,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       try {
         if (activeAccount.current !== accountId) return
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
-        const [mappings, owned, completions] = await Promise.all([
-          storage.readAccountListMappings(accountId),
-          fetchCloudListMetadata(client, accountId),
-          storage.readAccountCompletions(accountId),
+        const [mappings, completions] = await Promise.all([
+          storage.readAccountListMappings(accountId), storage.readAccountCompletions(accountId),
         ])
+        const owned = await fetchCloudListMetadata(client, accountId)
         const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
         const completing = new Set(completions.map(row => row.remoteListId))
+        const activeIds = new Set(owned.map(row => row.id))
+        const retired = new Set(mappings.filter(row => row.metadata && !activeIds.has(row.remoteListId) &&
+          !completing.has(row.remoteListId)).map(row => row.remoteListId))
+        if (retired.size && stillActive()) {
+          setCloudMetadata(rows => rows?.filter(row => !retired.has(row.id)) ?? null)
+          setCloudLists(rows => rows.filter(row => !retired.has(row.id)))
+        }
         const toPull = owned.filter(row => !completing.has(row.id) &&
           (mode === 'all' || pulledRevisions.get(row.id) !== row.revision))
         if (!stillActive() || !toPull.length) return
@@ -505,6 +513,49 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current === accountId)
         setCloudMetadataError('Не удалось проверить метаданные облачных списков. Данные не изменены.')
     } finally { setCloudLoading(false) }
+  }
+
+  function cloudListMergeActions(account: string, connection: SupabaseClient): ListMergeActions {
+    const stillActive = () => activeAccount.current === account
+    async function bindings(sourceId: string, targetId: string) {
+      if (!navigator.onLine) throw new Error('Подключитесь к интернету для объединения облачных списков.')
+      if (!stillActive() || await verifiedAccountId(connection) !== account || !stillActive())
+        throw new Error('Войдите в аккаунт, чтобы продолжить.')
+      const [mappings, pending, requests, intents, conflicts] = await Promise.all([
+        storage.readAccountListMappings(account), storage.readAccountPending(account),
+        storage.readAccountCompletionRequests(account), storage.readAccountCompletions(account),
+        storage.readItemDeletionConflicts(account),
+      ])
+      const relevant = (row: { localListId: string }) => row.localListId === sourceId || row.localListId === targetId
+      if ([...pending, ...requests, ...intents, ...conflicts].some(row => 'localListId' in row && relevant(row)))
+        throw new Error('Дождитесь синхронизации обоих списков и разрешите возможные конфликты.')
+      const source = mappings.find(row => row.localListId === sourceId)
+      const target = mappings.find(row => row.localListId === targetId)
+      if (!source || !target || !stillActive()) throw new Error('Один из списков недоступен.')
+      return [source, target] as const
+    }
+    return {
+      read: async (sourceId, targetId) => {
+        const [source, target] = await bindings(sourceId, targetId)
+        return previewCloudListMerge(connection, source, target)
+      },
+      apply: async (snapshot, choices, operationId) => {
+        const [source, target] = await bindings(snapshot.source.id, snapshot.target.id)
+        await applyCloudListMerge(connection, snapshot, source, target, choices, operationId)
+        if (!stillActive()) return
+        // The RPC receipt comes before the cache refresh. A failed refresh must
+        // never turn an acknowledged mutation into an unconfirmed mutation.
+        setCloudMetadata(rows => rows?.filter(row => row.id !== source.remoteListId) ?? null)
+        setCloudLists(rows => rows.filter(row => row.id !== source.remoteListId))
+        try {
+          await createAccountSync(storage, connection, { accountId: account, localListId: target.localListId,
+            remoteListId: target.remoteListId, isActive: stillActive }).importRemoteOnly({ reconcileNames: true })
+          if (stillActive()) setWorkspaceRevision(value => value + 1)
+        } catch {
+          if (stillActive()) setPullState({ account, status: 'error' })
+        }
+      },
+    }
   }
 
   async function addCloudList(newCloudListName: string, newCloudListKind: 'permanent' | 'oneoff', symbol?: string) {
@@ -1146,6 +1197,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
       } : undefined}
       cloudBoundLists={currentAccount ? cloudBindings : offlineLists?.accountId === offlineAccount ? offlineLists?.bindings : {}}
+      cloudMerge={currentAccount && client ? cloudListMergeActions(currentAccount, client) : undefined}
       onCreateCloudList={currentAccount && readyAccount === currentAccount ? addCloudList : undefined}
       onChangeCloudList={currentAccount && readyAccount === currentAccount && cloudMetadata ? async (id, action, value) => {
         const row = cloudMetadata.find(list => list.id === (cloudBindings[id] ?? id))

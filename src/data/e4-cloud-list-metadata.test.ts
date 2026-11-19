@@ -7,7 +7,9 @@ const list = '223e4567-e89b-42d3-a456-426614174001'
 const row = { id: list, owner_id: account, name: 'Продукты', kind: 'permanent', position: 0, revision: 2 }
 
 function fake(rows: unknown, error: unknown = null) {
-  const order = vi.fn(async () => ({ data: rows, error }))
+  const range = vi.fn(async () => ({ data: rows, error }))
+  const order = vi.fn().mockReturnValue({ range })
+  order.mockReturnValueOnce({ order })
   const is = vi.fn(() => ({ order }))
   const eq = vi.fn(() => ({ is }))
   const select = vi.fn(() => ({ eq }))

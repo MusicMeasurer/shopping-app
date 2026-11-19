@@ -64,9 +64,12 @@ export function planListMerge(snapshot: ListMergeSnapshot, choices: ReadonlyMap<
     const choice = choices.get(key)
     const keep = group.find(item => item.id === choice?.keepId)
     if (!choice || !keep) throw new Error('Выберите итоговую позицию для «' + group[0].name + '».')
-    if (choice.custom?.quantity !== undefined && (!Number.isFinite(choice.custom.quantity) || choice.custom.quantity <= 0))
-      throw new Error('Количество должно быть больше нуля.')
-    result.push({ ...keep, ...choice.custom, listId: target.id })
+    const quantity = choice.custom?.quantity
+    if (quantity !== undefined && (!Number.isFinite(quantity) || quantity <= 0 || quantity >= 1e9 ||
+      Math.abs(quantity - Math.round(quantity * 1000) / 1000) > 1e-9))
+      throw new Error('Введите положительное количество с точностью до трёх знаков после запятой.')
+    const custom = choice.custom && { ...choice.custom, unit: choice.custom.unit?.trim() || undefined }
+    result.push({ ...keep, ...custom, listId: target.id })
     for (const item of group) {
       if (item.id === keep.id || item.listId !== source.id || !Object.hasOwn(choice.renamed, item.id)) continue
       const name = validateName(choice.renamed[item.id])

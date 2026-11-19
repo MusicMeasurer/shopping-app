@@ -38,11 +38,17 @@ export async function fetchCloudListMetadata(
   client: Pick<SupabaseClient, 'from'>, accountId: string,
 ): Promise<CloudListMetadata[]> {
   if (!uuid.test(accountId)) throw new Error('Verified account ID required')
-  const { data, error } = await client.from('shopping_lists')
-    .select('id,owner_id,name,kind,position,revision')
-    .eq('owner_id', accountId)
-    .is('deleted_at', null)
-    .order('position', { ascending: true })
-  if (error) throw error
-  return parseCloudListMetadata(data, accountId)
+  const rows: unknown[] = []
+  for (let from = 0; ; from += 500) {
+    const { data, error } = await client.from('shopping_lists')
+      .select('id,owner_id,name,kind,position,revision')
+      .eq('owner_id', accountId)
+      .is('deleted_at', null)
+      .order('position', { ascending: true })
+      .order('id', { ascending: true })
+      .range(from, from + 499)
+    if (error) throw error
+    rows.push(...(data ?? []))
+    if (!data || data.length < 500) return parseCloudListMetadata(rows, accountId)
+  }
 }

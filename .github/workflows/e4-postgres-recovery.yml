@@ -163,6 +163,10 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/032_e4_profile_merge.sql
       - name: Verify profile merge replay, name collisions and isolation
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_profile_merge.sql
+      - name: Verify atomic personal-list merge, replay and account ownership
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/037_e4_merge_personal_lists_REVIEW_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_personal_list_merge.sql
       - name: Verify E4 completion and focused browser regressions
         run: |
           docker run --rm --ipc=host --user "$(id -u):$(id -g)" \
