@@ -26,6 +26,10 @@ jobs:
   hosted-ab:
     name: Real Auth A/B, RLS, RPC, offline queue and receipts
     runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 18
     environment: e3-lab
     env:
@@ -51,13 +55,6 @@ jobs:
           [[ "$E3_LAB_URL" == "https://gmrqeubhotjpmtwokfeq.supabase.co" ]] || { echo "::error::Refusing non-lab target"; exit 1; }
           [[ "$E3_LAB_PUBLISHABLE_KEY" == sb_publishable_* ]] || { echo "::error::Publishable key required"; exit 1; }
       - run: npm ci
-      - name: Install mobile browsers
-        run: |
-          if [[ "$GITHUB_REF_NAME" == feature/e4-accepted-reintegration ]]; then
-            npx playwright install --with-deps webkit
-          else
-            npx playwright install --with-deps chromium webkit
-          fi
       - name: Build PWA against pinned disposable lab
         env:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
