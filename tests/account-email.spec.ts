@@ -1,6 +1,8 @@
 import { expect, test, type Page } from '@playwright/test'
 
 const project = 'account-email-test.supabase.co'
+const fixturePath = '/__account-email-fixture'
+test.use({ serviceWorkers: 'block' })
 const email = 'registration@example.test'
 const password = 'a long test password'
 const accountId = '1fc6fe3b-1eab-456c-939f-3e2f0da33528'
@@ -13,25 +15,25 @@ const session = { access_token: token({ alg: 'HS256', typ: 'JWT' }) + '.' +
 
 async function mockCloud(page: Page, duplicate = false) {
   const calls: { method: string; path: string; body: Record<string, unknown> }[] = []
-  page.on('requestfailed', request => {
-    const url = new URL(request.url())
-    if (url.hostname === project) console.log(request.method(), url.pathname, request.failure()?.errorText)
-  })
-  await page.route(`https://${project}/**`, async route => {
-    const request = route.request()
-    const path = new URL(request.url()).pathname
-    const method = request.method()
-    if (method === 'OPTIONS') {
-      await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
-        'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-supabase-api-version' } })
-      return
+  // Route fake Auth calls to a local endpoint before the browser does DNS.
+  // WebKit can resolve a cross-origin hostname before Playwright intercepts it.
+  await page.addInitScript(({ project, fixturePath }) => {
+    const fetchFromBrowser = window.fetch.bind(window)
+    window.fetch = (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), window.location.href)
+      if (url.hostname !== project) return fetchFromBrowser(input, init)
+      const localUrl = window.location.origin + fixturePath + url.pathname + url.search
+      return fetchFromBrowser(input instanceof Request ? new Request(localUrl, input) : localUrl, init)
     }
+  }, { project, fixturePath })
+  await page.route(`**${fixturePath}/**`, async route => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname.slice(fixturePath.length)
+    const method = request.method()
     const body = request.postDataJSON() ?? {}
     calls.push({ method, path, body })
     const respond = (json: object, status = 200) => route.fulfill({
-      status, json, headers: { 'access-control-allow-origin': '*',
-      'access-control-expose-headers': 'x-supabase-api-version', 'x-supabase-api-version': '2024-01-01' },
+      status, json, headers: { 'x-supabase-api-version': '2024-01-01' },
     })
     if (path === '/auth/v1/signup') {
       await (duplicate ? respond({ code: 'user_already_exists', msg: 'User already registered' }, 422) : respond(user))
