@@ -67,8 +67,6 @@ jobs:
         run: npm test -- --run
       - name: Typecheck and build PWA
         run: npm run build
-      - name: Install mobile browser engines
-        run: npx playwright install --with-deps chromium webkit
       - name: Check captured recovery inventories
         run: python -m unittest discover -s tests/recovery -p 'test_*.py' -v
       - name: Audit live function source coverage and known gaps
@@ -165,10 +163,14 @@ jobs:
         run: psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/032_e4_profile_merge.sql
       - name: Verify profile merge replay, name collisions and isolation
         run: psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_profile_merge.sql
-      - name: Run real browser E4 completion acceptance (mobile Chromium and WebKit)
-        run: npx playwright test tests/e4-completion-acceptance.spec.ts
-      - name: Verify the card rail, item sorting and name conflicts in both mobile browsers
-        run: npx playwright test tests/e4.spec.ts --grep 'large list rail|large cards scroll|one name per list|persistent duplicate'
+      - name: Verify E4 completion and focused browser regressions
+        run: |
+          docker run --rm --ipc=host --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp -e CI=true -v "$GITHUB_WORKSPACE:/work" -w /work \
+            mcr.microsoft.com/playwright:v1.64.1-noble bash -e -c '
+              npx playwright test tests/e4-completion-acceptance.spec.ts
+              npx playwright test tests/e4.spec.ts --grep "large list rail|large cards scroll|one name per list|persistent duplicate"
+            '
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
