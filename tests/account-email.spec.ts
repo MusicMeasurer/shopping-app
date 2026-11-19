@@ -13,13 +13,18 @@ const session = { access_token: token({ alg: 'HS256', typ: 'JWT' }) + '.' +
 
 async function mockCloud(page: Page, duplicate = false) {
   const calls: { method: string; path: string; body: Record<string, unknown> }[] = []
+  page.on('requestfailed', request => {
+    const url = new URL(request.url())
+    if (url.hostname === project) console.log(request.method(), url.pathname, request.failure()?.errorText)
+  })
   await page.route(`https://${project}/**`, async route => {
     const request = route.request()
     const path = new URL(request.url()).pathname
     const method = request.method()
     if (method === 'OPTIONS') {
       await route.fulfill({ status: 204, headers: { 'access-control-allow-origin': '*',
-        'access-control-allow-methods': 'GET, POST, PUT, OPTIONS', 'access-control-allow-headers': '*' } })
+        'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+        'access-control-allow-headers': 'authorization, apikey, content-type, x-client-info, x-supabase-api-version' } })
       return
     }
     const body = request.postDataJSON() ?? {}
@@ -64,9 +69,14 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   expect(calls.some(call => call.path === '/auth/v1/signup')).toBe(false)
   await registration.getByLabel('Повторите пароль').fill(password)
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
+  await expect(registration.getByLabel('Код из письма'),
+    'Signup should enter the code screen without an Auth error').toBeVisible()
   await registration.getByLabel('Код из письма').fill('999999')
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   await expect(registration.getByRole('alert')).toContainText('Код неверный')
+  await registration.getByRole('button', { name: 'Запросить новый код' }).click()
+  await expect(registration.getByLabel('Код из письма')).toHaveValue('')
+  expect(calls.find(call => call.path === '/auth/v1/resend')?.body).toMatchObject({ email, type: 'signup' })
   await registration.getByLabel('Код из письма').fill('123456')
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   const signIn = page.getByRole('dialog', { name: 'Вход в аккаунт' })

@@ -67,6 +67,7 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
         const { data, error: issue } = await isolated.auth.verifyOtp({
           email: address, token: code.trim(), type: registering ? 'email' : 'recovery',
         })
+        if (issue && (issue.status === 0 || (issue.status ?? 0) >= 500)) throw issue
         if (issue || !data.session) {
           setError('Код неверный или больше не действует. Проверьте письмо или запросите новый код.')
           return
@@ -88,7 +89,9 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
       const issue = cause as { code?: string; status?: number }
       if (issue?.status === 429 || issue?.code === 'over_email_send_rate_limit') {
         setError('Слишком много запросов. Подождите и попробуйте снова.')
-      } else if (recoveryVerified && (issue?.code === 'weak_password' || issue?.code === 'same_password')) {
+      } else if (issue?.code === 'weak_password') {
+        setError('Выберите более надёжный пароль.')
+      } else if (recoveryVerified && issue?.code === 'same_password') {
         setError('Выберите новый пароль, который отличается от прежнего.')
       } else {
         setError(recoveryVerified ? 'Не удалось обновить пароль. Проверьте соединение и повторите попытку.'

@@ -1184,8 +1184,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <label htmlFor="auth-password">Пароль</label>
             <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
             <button disabled={busy || !controller}>Войти</button>
-            {accountEmailEnabled && !sessionAccount && !loginTarget && <>
-              <button type="button" disabled={busy} onClick={() => openAccountEmail('register')}>Создать аккаунт</button>
+            {accountEmailEnabled && !sessionAccount && <>
+              {!loginTarget && <button type="button" disabled={busy} onClick={() => openAccountEmail('register')}>Создать аккаунт</button>}
               <button type="button" disabled={busy} onClick={() => openAccountEmail('recover')}>Забыли пароль?</button>
             </>}
             {accountEmailNotice && <p role="status">{accountEmailNotice}</p>}
