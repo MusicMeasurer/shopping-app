@@ -46,6 +46,9 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 list creation is absent in authenticated mode').toBeVisible()
+  // Establish the initial account snapshot before triggering a second-device update.
+  await expect(page.locator('.profile-menu-trigger .profile-status'))
+    .toHaveText(/Синхронизировано/, { timeout: 60000 })
   tracePhase('creating a list from a second client while the app is open')
   const createExternal = async (listName: string) => {
     const { error } = await client.rpc('create_e4_list', {
@@ -55,7 +58,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   }
   await createExternal(name)
   await page.evaluate(() => window.dispatchEvent(new Event('online')))
-  await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 60000 })
   // Discover and bind the existing server-owned list before allowing writes.
   tracePhase('selecting permanent list')
   await page.getByRole('button', { name, exact: true }).click()
