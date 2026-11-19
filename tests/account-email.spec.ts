@@ -4,7 +4,7 @@ const project = 'account-email-test.supabase.co'
 const fixturePath = '/__account-email-fixture'
 test.use({ serviceWorkers: 'block' })
 const email = 'registration@example.test'
-const password = 'a long test password'
+const password = 'Test8765'
 const accountId = '1fc6fe3b-1eab-456c-939f-3e2f0da33528'
 const user = { id: accountId, email, aud: 'authenticated', role: 'authenticated',
   app_metadata: {}, user_metadata: {}, created_at: '2026-11-19T00:00:00Z' }
@@ -64,6 +64,12 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   await page.getByRole('button', { name: 'Создать аккаунт' }).click()
   const registration = page.getByRole('dialog', { name: 'Регистрация аккаунта' })
   await registration.getByLabel('Email').fill(email)
+  const tooShort = password.slice(0, 7)
+  await registration.getByLabel('Новый пароль').pressSequentially(tooShort)
+  await registration.getByLabel('Повторите пароль').fill(tooShort)
+  await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
+  await expect(registration.getByText('Не менее 8 символов.')).toBeVisible()
+  expect(calls.some(call => call.path === '/auth/v1/signup')).toBe(false)
   await registration.getByLabel('Новый пароль').fill(password)
   await registration.getByLabel('Повторите пароль').fill('different password')
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()

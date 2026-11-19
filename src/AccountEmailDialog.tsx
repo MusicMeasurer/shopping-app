@@ -3,8 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
 
 export type AccountEmailMode = 'register' | 'recover'
-const minPasswordLength = 12
-const passwordHelp = 'Не менее 12 символов.'
+const minPasswordLength = 8
+const passwordHelp = `Не менее ${minPasswordLength} символов.`
 
 export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss, onCompleted }: {
   mode: AccountEmailMode
@@ -36,7 +36,7 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
     event.preventDefault()
     if (busy) return
     if (showPassword && (password.length < minPasswordLength || password !== confirmation)) {
-      setError(password.length < minPasswordLength ? 'Пароль должен содержать не менее 12 символов.' : 'Пароли не совпадают.')
+      setError(password.length < minPasswordLength ? `Пароль должен содержать не менее ${minPasswordLength} символов.` : 'Пароли не совпадают.')
       return
     }
     setError('')
