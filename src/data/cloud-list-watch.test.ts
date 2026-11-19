@@ -13,7 +13,7 @@ function connect(refresh = vi.fn<() => void>()) {
     on: vi.fn((_type, _filter, callback) => { broadcast = callback; return channel }),
     subscribe: vi.fn(callback => { status = callback; return channel }),
   }
-  const client = { channel: vi.fn(() => channel), removeChannel: vi.fn() }
+  const client = { channel: vi.fn(() => channel), removeChannel: vi.fn(async () => 'ok') }
   const stop = watchCloudListChanges(client as unknown as SupabaseClient, 'account-a', refresh)
   return { client, channel, broadcast: () => broadcast(), status: (value: Parameters<typeof status>[0]) => status(value), refresh, stop }
 }
@@ -88,4 +88,17 @@ it('pulls a newer checkmark into the existing local list when a signal arrives',
     stop()
     await storage.close()
   }
+})
+
+it('waits for asynchronous removal before subscribing again to the same topic', async () => {
+  const { client, stop } = connect()
+  let acknowledgeRemoval: (status: string) => void = () => {}
+  client.removeChannel.mockImplementationOnce(() => new Promise(resolve => { acknowledgeRemoval = resolve }))
+  stop()
+  const closeReplacement = watchCloudListChanges(client as unknown as SupabaseClient, 'account-a', vi.fn())
+  expect(client.channel).toHaveBeenCalledTimes(1)
+  acknowledgeRemoval('ok')
+  await vi.advanceTimersByTimeAsync(0)
+  expect(client.channel).toHaveBeenCalledTimes(2)
+  closeReplacement()
 })
