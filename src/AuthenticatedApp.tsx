@@ -2,7 +2,7 @@ import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
-import { LocalProfileLimitError, profileName } from './data/local-profiles'
+import { LocalProfileLimitError, profileName, type LocalProfile } from './data/local-profiles'
 import { App } from './App'
 import { syncGuestImports } from './data/guest-import'
 import { SiriSetup } from './SiriSetup'
@@ -29,6 +29,7 @@ import type { SessionCandidate } from './data/auth-scope'
 
 type Controller = ReturnType<typeof createAuthController>
 
+const localWorkspaceKey = 'shopping-show-local-workspace'
 const showLabControls = import.meta.env.VITE_LAB_CONTROLS === 'true'
 
 export function AuthenticatedApp({ storage, client }: { storage: Storage; client: SupabaseClient | null }) {
@@ -38,6 +39,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [password, setPassword] = useState('')
   const [accountDialogOpen, setAccountDialogOpen] = useState(false)
   const [verifiedEmail, setVerifiedEmail] = useState('')
+  const [localBrowsing, setLocalBrowsing] = useState(() => {
+    try { return sessionStorage.getItem(localWorkspaceKey) === 'yes' } catch { return false }
+  })
+  const [loginTarget, setLoginTarget] = useState<{ id: string; login?: string }>()
+  const offerTransfer = useRef(false)
+  function selectLocalBrowsing(value: boolean) {
+    setLocalBrowsing(value)
+    try { sessionStorage.setItem(localWorkspaceKey, value ? 'yes' : 'no') } catch { /* storage unavailable */ }
+  }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
@@ -72,8 +82,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [dismissedSyncError, setDismissedSyncError] = useState(false)
   const completionWorkers = useRef(new Set<string>())
   const completionRequested = useRef(new Set<string>())
-  const currentAccount = view.status === 'account' ? view.accountId : null
-  const offlineAccount = view.status === 'offline-account' ? view.accountId : null
+  const signedInAccount = view.status === 'account' ? view.accountId : null
+  const sessionAccount = signedInAccount ?? (view.status === 'offline-account' ? view.accountId : null)
+  const currentAccount = localBrowsing ? null : signedInAccount
+  const offlineAccount = !localBrowsing && view.status === 'offline-account' ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
   useEffect(() => {
     const update = () => setSyncOnline(navigator.onLine)
@@ -98,16 +110,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => { setSyncError('') }, [currentAccount])
 
   useEffect(() => {
-    if (!currentAccount || !client) { setVerifiedEmail(''); return }
+    if (!signedInAccount || !client) { setVerifiedEmail(''); return }
     let cancelled = false
     void client.auth.getUser().then(({ data, error }) => {
-      if (!cancelled && !error && data.user?.id === currentAccount) setVerifiedEmail(data.user.email ?? '')
+      if (!cancelled && !error && data.user?.id === signedInAccount) setVerifiedEmail(data.user.email ?? '')
     }).catch(() => {})
     return () => { cancelled = true }
-  }, [currentAccount, client])
+  }, [signedInAccount, client])
   useEffect(() => {
-    if (view.status === 'account') { setAccountDialogOpen(false); setPassword('') }
-  }, [view.status])
+    if (currentAccount) { setAccountDialogOpen(false); setPassword('') }
+  }, [currentAccount])
   const [offlineLists, setOfflineLists] = useState<{
     accountId: string; bindings: Record<string, string>;
     lists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[]
@@ -116,8 +128,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [profileError, setProfileError] = useState('')
   const [transferError, setTransferError] = useState('')
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
-  const transferAnswer = useRef<((answer: 'skip' | 'separate' | 'merge' | 'yes') => void) | null>(null)
-  function answerTransfer(answer: 'skip' | 'separate' | 'merge' | 'yes') {
+  const [rememberDecline, setRememberDecline] = useState(false)
+  type TransferAnswer = 'skip' | 'skip-saved' | 'separate' | 'merge' | 'yes'
+  const transferAnswer = useRef<((answer: TransferAnswer) => void) | null>(null)
+  function answerTransfer(answer: TransferAnswer) {
     transferAnswer.current?.(answer)
     transferAnswer.current = null
     setTransferPrompt(null)
@@ -162,16 +176,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const source = registry?.profiles.find(p => p.id === registry.activeProfileId && !p.cloudAccountId)
       const pending = await storage.readGuestImports(currentAccount)
       let collisionMode: 'separate' | 'merge' | undefined
-      if (source && !pending.length) {
+      if (source && offerTransfer.current && !source.skipTransferPrompt && !pending.length) {
         const prompt = { name: profileName(source, registry!.profiles.indexOf(source)),
           existing: registry!.profiles.some(p => p.cloudAccountId === currentAccount), collisions: [] as string[] }
-        const ask = (phase: 'consent' | 'collision', collisions: string[] = []) => new Promise<'skip' | 'separate' | 'merge' | 'yes'>(resolve => {
+        const ask = (phase: 'consent' | 'collision', collisions: string[] = []) => new Promise<TransferAnswer>(resolve => {
           if (cancelled) { resolve('skip'); return }
           transferAnswer.current = resolve
+          setRememberDecline(false)
           setTransferPrompt({ ...prompt, phase, collisions })
         })
         const answer = await ask('consent')
         if (cancelled) return
+        if (answer === 'skip-saved') await storage.setProfileTransferPromptSkipped(source.id, true)
         if (answer === 'yes') {
           const [local, remote] = await Promise.all([storage.readProfileLists(source.id), fetchCloudListMetadata(client, currentAccount)])
           if (cancelled) return
@@ -219,7 +235,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setCloudLists(rows.map(row => ({ id: row.id, name: row.name })))
         setCloudBindings(Object.fromEntries(confirmedMappings.map(row => [row.localListId, row.remoteListId])))
       }
-      if (!cancelled && await verifiedAccountId(client) === currentAccount) setReadyAccount(currentAccount)
+      if (!cancelled && await verifiedAccountId(client) === currentAccount) {
+        offerTransfer.current = false
+        setReadyAccount(currentAccount)
+      }
     })().catch((cause: unknown) => {
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
@@ -313,7 +332,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       },
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
-      signOut: () => client.auth.signOut(),
+      signOut: scope => scope ? client.auth.signOut({ scope }) : client.auth.signOut(),
     }, setView, guard, session => verifySessionIdentity(client, session), async session => {
       if (navigator.onLine || guard.isPending()) return null
       const id = session.user?.id?.toLowerCase()
@@ -330,7 +349,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
 
   // On reconnect, revalidate the server identity before allowing cloud access.
   useEffect(() => {
-    if (!offlineAccount || !controller) return
+    if (view.status !== 'offline-account' || !controller) return
     const recheck = () => {
       if (navigator.onLine) {
         void controller.initialize()
@@ -338,7 +357,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
     window.addEventListener('online', recheck)
     return () => window.removeEventListener('online', recheck)
-  }, [offlineAccount, controller])
+  }, [view.status, controller])
 
   // Clear transient controls on identity change; startup publishes verified
   // metadata and bindings together after the snapshot has been restored.
@@ -717,16 +736,60 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
 
+  function enterLocalWorkspace() {
+    offerTransfer.current = false
+    setLoginTarget(undefined)
+    setPassword('')
+    selectLocalBrowsing(true)
+    setAccountDialogOpen(false)
+  }
+  function resumeCloudWorkspace(offerLocalTransfer: boolean) {
+    offerTransfer.current = offerLocalTransfer
+    setLoginTarget(undefined)
+    setPassword('')
+    setAccountDialogOpen(false)
+    selectLocalBrowsing(false)
+  }
+  function openLinkedWorkspace(profile: LocalProfile) {
+    if (!profile.cloudAccountId) return
+    if (profile.cloudAccountId === sessionAccount) {
+      resumeCloudWorkspace(false)
+      return
+    }
+    enterLocalWorkspace()
+    setLoginTarget({ id: profile.cloudAccountId, login: profile.login })
+    setEmail(profile.login ?? '')
+    setError('')
+    setAccountDialogOpen(true)
+  }
   async function signIn(event: FormEvent) {
     event.preventDefault()
-    if (!controller || busy) return
+    if (!controller || !client || busy) return
     setBusy(true)
     setError('')
+    let changingSession = false
     try {
+      if (sessionAccount) {
+        if (!loginTarget || !navigator.onLine) throw new Error('Подключитесь к интернету для смены аккаунта.')
+        changingSession = true
+        await controller.signOut('local')
+        changingSession = false
+      }
+      offerTransfer.current = !loginTarget
       await controller.signIn(email.trim(), password)
+      if (loginTarget && await verifiedAccountId(client) !== loginTarget.id) {
+        changingSession = true
+        await controller.signOut('local')
+        changingSession = false
+        throw new Error('Вход выполнен в другой аккаунт. Проверьте адрес выбранного профиля.')
+      }
       setPassword('')
+      setLoginTarget(undefined)
+      selectLocalBrowsing(false)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Не удалось войти')
+      offerTransfer.current = false
+      setError(changingSession ? 'Не удалось завершить прежнюю сессию. Повторите выход после восстановления связи.'
+        : cause instanceof Error ? cause.message : 'Не удалось войти')
     } finally {
       setBusy(false)
     }
@@ -954,8 +1017,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setBusy(true)
     setError('')
     try {
-      await controller.signOut()
-      setAccountDialogOpen(false)
+      await controller.signOut(loginTarget ? 'local' : undefined)
+      setAccountDialogOpen(!!loginTarget)
+      if (!loginTarget) selectLocalBrowsing(false)
       setVerifiedEmail('')
     } catch {
       setError('Не удалось завершить выход на сервере. Проверьте подключение.')
@@ -970,8 +1034,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p>Списки, товары и архив будут перенесены в аккаунт. Профиль будет называться логином аккаунта.</p>
         {transferPrompt.existing && <p>На устройстве уже есть профиль этого аккаунта. Данные будут объединены с ним, а исходный локальный профиль удалён после успешного переноса.</p>}
         <p>Если отказаться, локальный профиль останется отдельным.</p>
+        <label className="profile-transfer-preference"><input type="checkbox" checked={rememberDecline}
+          onChange={event => setRememberDecline(event.currentTarget.checked)} /> Больше не спрашивать для этого профиля</label>
         <button type="button" onClick={() => answerTransfer('yes')}>Синхронизировать профиль</button>
-        <button type="button" onClick={() => answerTransfer('skip')}>Не синхронизировать</button>
+        <button type="button" onClick={() => answerTransfer(rememberDecline ? 'skip-saved' : 'skip')}>Не синхронизировать</button>
       </> : <>
         <h2>Совпадают названия списков</h2>
         <p>Выберите действие для всех совпадений ({transferPrompt.collisions.length}).</p>
@@ -1012,8 +1078,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudMappingRevision(value => value + 1)
   }
   return <>
-    {client && view.status === 'offline-account' && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
-    <App storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+    {client && offlineAccount && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
+    <App key={workspaceAccount ?? 'local'} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
         const listId = decision.change.listId
         const remoteListId = cloudBindings[listId]
@@ -1078,12 +1144,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
         busy, name: verifiedEmail || undefined, syncState,
+        onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, linkedTarget: loginTarget?.id,
         content: <>
-        {view.status === 'account' ? <>
+        {workspaceAccount ? (view.status === 'account' ? <>
           {(syncFailed || listSyncFailed) && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
-          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button></> :
-          view.status === 'offline-account' ? <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p> :
-          <form onSubmit={signIn}>
+          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button>
+        </> : <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p>) : <>
+          {sessionAccount && <button type="button" disabled={busy} onClick={() => resumeCloudWorkspace(true)}>
+            Вернуться в облачный профиль{verifiedEmail && ` «${verifiedEmail}»`}
+          </button>}
+          {(!sessionAccount || loginTarget) && <form onSubmit={signIn}>
             <label htmlFor="auth-email">Email</label>
             <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
             <label htmlFor="auth-password">Пароль</label>
@@ -1091,6 +1161,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <button disabled={busy || !controller}>Войти</button>
             <p>Без входа покупки сохраняются только на этом устройстве.</p>
           </form>}
+        </>}
         {error && <p role="alert">{error}</p>}
         </>,
       } : undefined} />
@@ -1100,7 +1171,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       <button type="button" onClick={retrySync}>Повторить</button>
       <button type="button" onClick={() => setDismissedSyncError(true)}>Продолжить без синхронизации</button>
     </section>}
-    {showLabControls && client && view.status === 'account' && <section aria-label="Облачные списки">
+    {showLabControls && client && currentAccount && <section aria-label="Облачные списки">
       <details><summary>Служебные операции облака</summary>
       <button type="button" disabled={cloudLoading || !currentAccount} onClick={() => void loadCloudMetadata()}>
         Проверить типы и порядок облачных списков

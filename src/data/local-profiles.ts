@@ -4,6 +4,7 @@ export interface LocalProfile {
   cloudAccountId: string | null
   name?: string
   login?: string
+  skipTransferPrompt?: boolean
   createdAt: number
   listsChangedAt?: number
 }

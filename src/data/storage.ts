@@ -625,6 +625,20 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    async setProfileTransferPromptSkipped(profileId: string, skipped: boolean): Promise<LocalProfileRegistry> {
+      const tx = (await database).transaction('localProfileRegistry', 'readwrite')
+      const current = await tx.store.get('device')
+      const profile = current?.registry.profiles.find(row => row.id === profileId)
+      if (!current || !profile || profile.cloudAccountId) {
+        await tx.done
+        throw new Error('An independent local profile is required')
+      }
+      const registry = { ...current.registry, profiles: current.registry.profiles.map(row =>
+        row.id === profileId ? { ...row, skipTransferPrompt: skipped } : row) }
+      await tx.store.put({ key: 'device', registry })
+      await tx.done
+      return registry
+    },
     async renameLocalProfile(profileId: string, name: string): Promise<LocalProfileRegistry> {
       name = name.trim()
       if (!name || name.length > 120) throw new Error('Введите имя от 1 до 120 символов.')

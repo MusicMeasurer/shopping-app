@@ -94,28 +94,11 @@ test('E4: list type changes both ways, preserves items, persists and controls co
 test('E4: reorder and rename persist after reload', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await page.getByRole('radio', { name: 'Стандартный (горизонтальная лента)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
-  const cards = page.locator('nav .list-tile')
-  const first = await cards.nth(0).boundingBox()
-  const second = await cards.nth(1).boundingBox()
-  if (!first || !second) throw new Error('List cards are not visible')
-  // Both mobile projects must exercise identical touch-pointer semantics.
-  await page.evaluate(async ({ first, second }) => {
-    const source = document.querySelector<HTMLElement>('nav .list-tile')
-    if (!source) throw new Error('Missing draggable tile')
-    const pointerId = 17
-    const dispatch = (type: string, x: number, y: number) => {
-      const event = new PointerEvent(type, { bubbles: true, cancelable: true, pointerId, pointerType: 'touch', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })
-      source.dispatchEvent(event)
-    }
-    const x = first.x + 45, y = first.y + first.height / 2
-    dispatch('pointerdown', x, y)
-    await new Promise(resolve => setTimeout(resolve, 450))
-    dispatch('pointermove', second.x + 45, second.y + second.height / 2)
-    dispatch('pointerup', second.x + 45, second.y + second.height / 2)
-  }, { first, second })
+  await page.getByRole('button', { name: 'Продукты', exact: true }).click()
+  await page.getByRole('button', { name: 'Переместить список вправо' }).click()
   await expect(page.locator('nav .list-select').first()).toContainText('Хозяйственные покупки')
   await page.reload()
   await expect(page.locator('nav .list-select').first()).toContainText('Хозяйственные покупки')
@@ -166,7 +149,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   await expect(page.getByRole('radio', { name: 'Крупный (горизонтальная лента)', exact: true })).toBeChecked()
-  await page.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await page.getByRole('radio', { name: 'Стандартный (горизонтальная лента)', exact: true }).check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await expect(page.locator('nav .list-tile')).toHaveCount(2)
@@ -319,7 +302,7 @@ test('E4: large cards scroll beyond four lists, reveal new cards and move the se
 test('E4: card and content sizing are independent', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
-  await page.getByRole('radio', { name: /Стандартный \(3 в ряд\)/ }).check()
+  await page.getByRole('radio', { name: /Стандартный \(горизонтальная лента\)/ }).check()
   await page.locator('input[name="content-size"][type="radio"]').last().check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
@@ -495,7 +478,7 @@ test('E4: dismissing overlays preserves the selected list and saved values', asy
 
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Настройки приложения' })
-  await settings.getByRole('radio', { name: 'Стандартный (3 в ряд)', exact: true }).check()
+  await settings.getByRole('radio', { name: 'Стандартный (горизонтальная лента)', exact: true }).check()
   await settings.getByRole('button', { name: 'Отмена' }).click()
   await expect(settings).toHaveCount(0)
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
@@ -778,4 +761,36 @@ test('iPhone: persistent duplicate conflicts can be deferred and resolved one it
   await expect(page.getByRole('checkbox', { name: 'Молоко · 2 л' })).not.toBeChecked()
   await expect(page.getByRole('checkbox', { name: 'Хлеб' })).toBeVisible()
   await expect(page.getByRole('checkbox', { name: 'Сливки', exact: false })).toBeVisible()
+})
+
+test('E4: the standard rail scrolls and each local profile keeps its own card style', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const rail = page.getByRole('navigation', { name: 'Списки покупок' })
+  await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+  await page.getByRole('radio', { name: 'Стандартный (горизонтальная лента)', exact: true }).check()
+  await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
+  await expect(rail).toHaveClass(/standard.*list-rail/)
+  const add = rail.getByRole('button', { name: 'Новый список', exact: true })
+  for (const name of ['Третья карточка', 'Четвёртая карточка', 'Пятая карточка']) {
+    await add.click()
+    const dialog = page.getByRole('dialog', { name: 'Создать список' })
+    await dialog.getByLabel('Название списка', { exact: true }).fill(name)
+    await dialog.getByRole('button', { name: 'Создать', exact: true }).click()
+    await expect(rail.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'true')
+  }
+  await expect.poll(() => rail.evaluate(element => element.scrollWidth - element.clientWidth)).toBeGreaterThan(0)
+  await expect.poll(() => rail.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
+  await expect(rail.locator(':scope > :last-child')).toHaveClass(/rail-create/)
+
+  const profileMenu = page.locator('.profile-menu-trigger')
+  await profileMenu.click()
+  await page.getByRole('button', { name: 'Добавить профиль' }).click()
+  await expect(profileMenu).toContainText('Локальный профиль 2')
+  await expect(rail).toHaveClass(/large.*list-rail/)
+  await page.reload()
+  await expect(rail).toHaveClass(/large.*list-rail/)
+  await profileMenu.click()
+  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).first().click()
+  await expect(rail).toHaveClass(/standard.*list-rail/)
+  await expect(rail.getByRole('button', { name: 'Пятая карточка' })).toBeVisible()
 })

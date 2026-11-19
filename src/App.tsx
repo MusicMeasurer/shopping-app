@@ -7,7 +7,7 @@ import { ListIndicators, listKindLabels, type ListKind, type CloudStatus } from 
 import { version } from '../package.json'
 import { ListHeading } from './ListHeading'
 import { WorkspaceDialog } from './WorkspaceDialog'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type PointerEvent as ReactPointerEvent, type TouchEvent as ReactTouchEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
 import { lists, itemsForList, sortShoppingItems, type ItemSort, type ListId } from './domain/shopping'
@@ -20,7 +20,7 @@ import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
 import { MAX_LOCAL_PROFILES, profileName, sortProfiles } from './data/local-profiles'
 import { DeleteProfileButton, ProfileBadge, ProfileMenu, type ProfileSyncState } from './ProfileMenu'
-import type { LocalProfileRegistry } from './data/local-profiles'
+import type { LocalProfile, LocalProfileRegistry } from './data/local-profiles'
 export interface ListOperationStatus {
   accountId: string
   localListId: string
@@ -33,7 +33,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; linkedTarget?: string }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -118,14 +118,16 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     } catch (error) { setProfileActionError(error instanceof Error ? error.message : 'Не удалось создать локальный профиль.') }
     finally { setProfileBusy(false) }
   }
-  async function selectGuestProfile(id: string) {
-    if (profileBusy || accountMenu?.busy || !registry || !guestProfile || id === guestProfile) return
+  async function selectGuestProfile(id: string, openLinked?: LocalProfile) {
+    if (profileBusy || accountMenu?.busy || !registry) return
     setProfileBusy(true)
     try {
       const next = await storage.switchLocalProfile(id)
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
       closeMenu()
+      if (openLinked && accountMenu) accountMenu.onOpenLinked(openLinked)
+      else if (accountId !== null) accountMenu?.onSelectLocal()
     } catch { setProfileActionError('Не удалось переключить локальный профиль.') }
     finally { setProfileBusy(false) }
   }
@@ -168,7 +170,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const name = accountId ? (accountMenu?.name || registry?.profiles.find(p => p.cloudAccountId === accountId)?.login || 'Аккаунт') :
     profile ? profileName(profile, registry!.profiles.indexOf(profile)) : 'Мои покупки'
   const mode = accountId ? (cloudOffline ? 'offline' : 'cloud') : profile?.cloudAccountId ? 'linked' : 'local'
-  const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => row.id !== guestProfile && !reservedSources.includes(row.id))
+  const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => (accountId !== null || row.id !== guestProfile) && !reservedSources.includes(row.id))
   const actionsBusy = profileBusy || accountMenu?.busy
   function closeMenu() {
     setMenuOpen(false)
@@ -190,7 +192,18 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {accountId === null && profile && pendingProfiles.has(profile.id) && deletable(profile.id) &&
       <p className="profile-delete-hint">Для удаления копии сначала синхронизируйте изменения.</p>}
     {accountMenu?.content}
-    {accountId === null && registry && guestProfile && <div className="profile-switcher" role="group" aria-label="Локальные профили">
+    {accountMenu && accountId === null && profile?.cloudAccountId && accountMenu.linkedTarget !== profile.cloudAccountId &&
+      <button type="button" disabled={actionsBusy} onClick={() => accountMenu.onOpenLinked(profile)}>Войти в облачный профиль «{name}»</button>}
+    {accountMenu && accountId === null && profile && !profile.cloudAccountId &&
+      <label className="profile-transfer-preference"><input type="checkbox" checked={!!profile.skipTransferPrompt} disabled={actionsBusy}
+        onChange={event => {
+          const skipped = event.currentTarget.checked
+          setProfileBusy(true)
+          setProfileActionError('')
+          void storage.setProfileTransferPromptSkipped(profile.id, skipped).then(setRegistry)
+            .catch(() => setProfileActionError('Не удалось сохранить настройку синхронизации.')).finally(() => setProfileBusy(false))
+        }} /> Не спрашивать о синхронизации этого профиля</label>}
+    {registry && (guestProfile || accountId !== null) && <div className="profile-switcher" role="group" aria-label="Локальные профили">
       {otherProfiles.length > 0 && <div className="profile-options" tabIndex={showAllProfiles ? 0 : undefined}>
         {(showAllProfiles ? otherProfiles : otherProfiles.slice(0, 2)).map(row => {
           const label = profileName(row, registry.profiles.indexOf(row))
@@ -199,16 +212,21 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
               <ProfileBadge mode={row.cloudAccountId ? 'linked' : 'local'} />
               <span>{label}</span>
             </button>
-            {deleteProfileButton(row.id, label, !!row.cloudAccountId)}
-            {pendingProfiles.has(row.id) && deletable(row.id) && <p>Для удаления копии сначала синхронизируйте изменения.</p>}
+            {accountId === null && deleteProfileButton(row.id, label, !!row.cloudAccountId)}
+            {accountMenu && row.cloudAccountId && <button type="button" className="profile-cloud-entry"
+              aria-label={`Войти в облачный профиль «${label}»`} disabled={actionsBusy}
+              onClick={() => { setProfileActionError(''); void selectGuestProfile(row.id, row) }}>В облако</button>}
+            {accountId === null && pendingProfiles.has(row.id) && deletable(row.id) && <p>Для удаления копии сначала синхронизируйте изменения.</p>}
           </div>
         })}
       </div>}
       {otherProfiles.length > 2 && <button type="button" aria-expanded={showAllProfiles}
         onClick={() => setShowAllProfiles(value => !value)}>{showAllProfiles ? 'Свернуть' : 'Ещё'}</button>}
-      <button type="button" disabled={actionsBusy || registry.profiles.length >= MAX_LOCAL_PROFILES}
-        onClick={() => { setProfileActionError(''); void createGuestProfile() }}>Добавить профиль</button>
-      {registry.profiles.length >= MAX_LOCAL_PROFILES && <p>Достигнут лимит в {MAX_LOCAL_PROFILES} профилей на устройстве.</p>}
+      {accountId === null && <>
+        <button type="button" disabled={actionsBusy || registry.profiles.length >= MAX_LOCAL_PROFILES}
+          onClick={() => { setProfileActionError(''); void createGuestProfile() }}>Добавить профиль</button>
+        {registry.profiles.length >= MAX_LOCAL_PROFILES && <p>Достигнут лимит в {MAX_LOCAL_PROFILES} профилей на устройстве.</p>}
+      </>}
     </div>}
     {menuError && <p role="alert">{menuError}</p>}
     {profileRename === null && profileActionError && <p role="alert">{profileActionError}</p>}
@@ -240,8 +258,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
 }
 
 function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+  const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
+  const cardSizeKey = workspaceKey + ':card-size'
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
-    try { return localStorage.getItem('shopping-card-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
+    try { return (localStorage.getItem(cardSizeKey) ?? localStorage.getItem('shopping-card-size')) === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
   const [contentSize, setContentSize] = useState<'large' | 'standard'>(() => {
     try { return localStorage.getItem('shopping-content-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
@@ -256,13 +276,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   function chooseCardSize(value: 'large' | 'standard') {
     setCardSize(value)
-    try { localStorage.setItem('shopping-card-size', value) } catch { /* storage disabled */ }
+    try { localStorage.setItem(cardSizeKey, value) } catch { /* storage disabled */ }
   }
   function chooseContentSize(value: 'large' | 'standard') {
     setContentSize(value)
     try { localStorage.setItem('shopping-content-size', value) } catch { /* storage disabled */ }
   }
-  const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
   const [active, setActive] = useState<ListId>(() => { try { return localStorage.getItem(workspaceKey + ':list') ?? 'groceries' } catch { return 'groceries' } })
   const [localLists, setLocalLists] = useState<ShoppingListRecord[] | null>(null)
   const [localNotice, setLocalNotice] = useState<ListActionMessage>()
@@ -304,10 +323,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const [renaming, setRenaming] = useState<ListId | null>(null)
   const [typeSaving, setTypeSaving] = useState(false)
   const [renameName, setRenameName] = useState('')
-  const [draggingId, setDraggingId] = useState<string | null>(null)
-  const [overId, setOverId] = useState<string | null>(null)
-  const drag = useRef<{timer: ReturnType<typeof setTimeout> | null,id:string|null,target:string|null,started:boolean,x:number,y:number}>({timer:null,id:null,target:null,started:false,x:0,y:0})
-  const suppressClick = useRef(false)
   const listRail = useRef<HTMLElement>(null)
   const [revealCard, setRevealCard] = useState<{ id: ListId; previousLeft?: number } | null>(null)
   const movingCard = useRef(false)
@@ -374,7 +389,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     const id = await onCreateCloudList?.(newListName, newListKind, newListSymbol)
     if (!id) return
     setNewListDialog(false)
-    if (cardSize === 'large') setRevealCard({ id })
+    setRevealCard({ id })
   }
 
   async function completeLocalList(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>, confirmedItemIds?: readonly string[]) {
@@ -426,31 +441,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     }
     finally { setChangingList(false) }
   }
-  function startPress(event: ReactPointerEvent<HTMLDivElement>, id: string) {
-    if (cardSize === 'large' || (accountId !== null && !onChangeCloudList) || changingList || cloudListBusy || event.button !== 0 || (event.target as HTMLElement).closest('.menu-anchor')) return
-    if (drag.current.timer) clearTimeout(drag.current.timer)
-    drag.current={timer:null,id,target:id,started:false,x:event.clientX,y:event.clientY}
-    const element=event.currentTarget,pointerId=event.pointerId
-    drag.current.timer=setTimeout(()=>{
-      if (drag.current.id!==id) return
-      try {element.setPointerCapture(pointerId)} catch {/* pointer ended */}
-      drag.current.started=true;setDraggingId(id);setOverId(id);setMenuTarget(null)
-      if(navigator.vibrate) navigator.vibrate(15)
-    },380)
-  }
-  function movePress(event: ReactPointerEvent<HTMLDivElement>) {
-    const state=drag.current
-    if(!state.id)return
-    if(!state.started){if(Math.hypot(event.clientX-state.x,event.clientY-state.y)>12){if(state.timer)clearTimeout(state.timer);drag.current.id=null}return}
-    const target=document.elementFromPoint(event.clientX,event.clientY)?.closest<HTMLElement>('[data-list-id]')?.dataset.listId
-    if(target){state.target=target;setOverId(target)}
-  }
-  function finishPress(){
-    const state=drag.current
-    if(state.timer)clearTimeout(state.timer)
-    if(state.started&&state.id){suppressClick.current=true;if(state.target&&state.target!==state.id){if(accountId===null)void placeLocalList(state.id,state.target);else void onChangeCloudList?.(state.id,'reorder',state.target)};window.setTimeout(()=>{suppressClick.current=false},0)}
-    drag.current={timer:null,id:null,target:null,started:false,x:0,y:0};setDraggingId(null);setOverId(null)
-  }
   function openArchive() {
     setMenuTarget(null)
     setShowArchive(true)
@@ -463,7 +453,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   function endSwipe(event:ReactTouchEvent<HTMLElement>){
     const origin=swipe.current;swipe.current=null
-    if(!origin||event.changedTouches.length!==1||draggingId)return
+    if(!origin||event.changedTouches.length!==1)return
     const dx=event.changedTouches[0].clientX-origin.x,dy=event.changedTouches[0].clientY-origin.y
     if(Math.abs(dx)<45||Math.abs(dx)<Math.abs(dy)*1.2)return
     if(dx<0&&!showArchive){openArchive();setMenuTarget(null)}
@@ -486,7 +476,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       else await storage.saveList(list)
       setLocalLists(previous => previous ? [...previous, list] : [list])
       setActive(list.id)
-      if (cardSize === 'large') setRevealCard({ id: list.id })
+      setRevealCard({ id: list.id })
       setNewListName('')
       setNewListDialog(false)
       setListError(null)
@@ -697,7 +687,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {settingsOpen && <WorkspaceDialog className="settings-panel" label="Настройки приложения" onDismiss={() => setSettingsOpen(false)}>
       <h2>Настройки</h2>
       <fieldset><legend>Размер карточек списков</legend>
-        <label><input type="radio" name="card-size" checked={draftCardSize === 'standard'} onChange={() => setDraftCardSize('standard')}/> Стандартный (3 в ряд)</label>
+        <label><input type="radio" name="card-size" checked={draftCardSize === 'standard'} onChange={() => setDraftCardSize('standard')}/> Стандартный (горизонтальная лента)</label>
         <label><input type="radio" name="card-size" checked={draftCardSize === 'large'} onChange={() => setDraftCardSize('large')}/> Крупный (горизонтальная лента)</label>
       </fieldset>
       <fieldset><legend>Размер содержимого списка покупок</legend>
@@ -718,12 +708,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     </WorkspaceDialog>}
     {(accountId === null || cloudArchive) && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-label="Основные списки" aria-current={!showArchive ? 'page' : undefined} className={!showArchive ? 'current' : ''} onClick={() => setShowArchive(false)}>●</button><button type="button" aria-label={`Архив, ${accountId === null ? archives.length : (cloudArchiveCount ?? 0)} завершённых списков`} aria-current={showArchive ? 'page' : undefined} className={showArchive ? 'current' : ''} onClick={openArchive}>●</button></div>}
     {!showArchive && accountId !== null && !onCreateCloudList && <p role="status">Для создания, переименования и удаления облачных списков войдите в этот аккаунт. Товары в сохранённых списках доступны.</p>}
-    {!showArchive && <nav ref={cardSize === 'large' ? listRail : undefined} className={`lists-grid ${cardSize}${cardSize === 'large' ? ' list-rail' : ''}`} aria-label="Списки покупок" onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
-      {visibleLists.map((row, index) => <div className={`list-tile${draggingId===row.id?' dragging':''}${overId===row.id&&draggingId!==row.id?' drag-over':''}`} data-list-id={row.id} key={row.id} onPointerDown={event=>{ if (!listLocked(row.id)) startPress(event,row.id) }} onPointerMove={movePress} onPointerUp={finishPress} onPointerCancel={finishPress}>
-        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={event=>{if(suppressClick.current){event.preventDefault();return}setActive(row.id);setName('');setItemNotice('');setMenuTarget(null)}}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
+    {!showArchive && <nav ref={listRail} className={`lists-grid ${cardSize} list-rail`} aria-label="Списки покупок">
+      {visibleLists.map((row, index) => <div className="list-tile" data-list-id={row.id} key={row.id}>
+        <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={() => { setActive(row.id);setName('');setItemNotice('');setMenuTarget(null) }}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
         <div className="list-card-indicators"><ListIndicators kind={row.kind}/></div>
         <div className="menu-anchor">{menuTrigger(row, 'card')}</div>
-        {cardSize === 'large' && active === row.id && canEditList && <div className="list-rail-controls" role="group" aria-label="Порядок выбранного списка">
+        {active === row.id && canEditList && <div className="list-rail-controls" role="group" aria-label="Порядок выбранного списка">
           {([-1, 1] as const).map(direction => {
             const target = visibleLists[index + direction]
             return <button key={direction} type="button" className={direction === -1 ? 'move-left' : 'move-right'}
@@ -741,7 +731,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         {nameConflicts.some(group => group[0].listId === row.id) && <span className="list-conflict-marker" role="img"
           title="Совпадение названий товаров" aria-label="Совпадение названий товаров">!</span>}
       </div>)}
-      {cardSize === 'large' && <div className="list-create-control rail-create">{createListTile}</div>}
+      <div className="list-create-control rail-create">{createListTile}</div>
     </nav>}
     {!showArchive && listOperations.length > 0 && <ul className="list-operation-statuses" aria-label="Операции со списками">
       {listOperations.map(operation => <li key={operation.localListId}>
@@ -755,7 +745,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         {operation.dismiss && <button type="button" onClick={() => void operation.dismiss?.()}>{operation.retry ? 'Отменить операцию' : 'Закрыть'}</button>}
       </li>)}
     </ul>}
-    {!showArchive && cardSize === 'standard' && <div className="list-create-control standard">{createListTile}</div>}
     {!showArchive && menuTarget && menuList && createPortal(<>
       <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
       {menuTarget.source === 'completion' ? <div className="list-menu" role="menu" aria-label="Завершение" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>

@@ -10,7 +10,7 @@ export interface AuthClient {
     data: { subscription: { unsubscribe(): void } }
   }
   signInWithPassword(credentials: { email: string; password: string }): Promise<{ error: { message: string } | null }>
-  signOut(): Promise<{ error: { message: string } | null }>
+  signOut(scope?: 'local'): Promise<{ error: { message: string } | null }>
 }
 
 /**
@@ -97,7 +97,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       const { error } = await client.signInWithPassword({ email, password })
       if (error) throw new Error(error.message)
     },
-    async signOut() {
+    async signOut(scope?: 'local') {
       // Hide account data before the remote sign-out request.
       if (signingOut) return
       signingOut = true
@@ -106,7 +106,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       let timeout: ReturnType<typeof setTimeout> | undefined
       try {
         guard?.markPending()
-        pendingSignOut ??= client.signOut().finally(() => { pendingSignOut = undefined })
+        pendingSignOut ??= (scope ? client.signOut(scope) : client.signOut()).finally(() => { pendingSignOut = undefined })
         const { error } = await Promise.race([
           pendingSignOut,
           new Promise<never>((_, reject) => {
