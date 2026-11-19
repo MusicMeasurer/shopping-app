@@ -51,6 +51,8 @@ textarea,select,.e4-create input,.e4-editor input{width:100%;min-width:0;border:
 .e4-create form,.e4-editor form{display:grid;gap:10px;margin-top:16px}
 .e4-create form>label,.e4-editor form>label{margin:0}
 .e4-small{border:0;background:transparent;min-width:44px;min-height:44px;color:#25634c}
+.archive-search{display:grid;gap:6px;margin:12px 0}
+.archive-search input{width:100%}
 .archive-entry{border-top:1px solid #eef0ea;padding:14px 0}
 .archive-entry li{min-height:38px}
 

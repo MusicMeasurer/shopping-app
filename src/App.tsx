@@ -1,3 +1,4 @@
+import { PurchaseHistory } from './PurchaseHistory'
 import { ListActionNotice, type ListActionMessage } from './ListActionNotice'
 import { duplicatedItems, itemNameKey, type ItemNameDecision } from './domain/item-names'
 import { ItemNameConflictDialog } from './ItemNameConflictDialog'
@@ -251,16 +252,9 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <section aria-label="Архив покупок">
-      <h2>Завершённые списки</h2>
-      {localAccount.archive === null ? <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>
-        : localAccount.archive.length === 0 ? <p>Архив пока пуст.</p>
-        : localAccount.archive.map(snapshot => <article className="archive-entry" key={snapshot.id}>
-          <h3>{snapshot.sourceListName}</h3>
-          <p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p>
-          <ul>{snapshot.items.map(item => <li key={item.ordinal}>{item.name}{item.quantity != null || item.unit ? ` — ${[item.quantity, item.unit].filter(value => value != null).join(' ')}` : ''}</li>)}</ul>
-        </article>)}
-    </section> : cloudArchive} cloudArchiveCount={localAccount ? localAccount.archive?.length : cloudArchiveCount} onOpenCloudArchive={localAccount ? undefined : onOpenCloudArchive} />}
+    } onCompleteCloudList={onCompleteCloudList} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive}>
+      {localAccount.archive === null && <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>}
+    </PurchaseHistory> : cloudArchive} cloudArchiveCount={localAccount ? localAccount.archive?.length : cloudArchiveCount} onOpenCloudArchive={localAccount ? undefined : onOpenCloudArchive} />}
   </>
 }
 
@@ -836,7 +830,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {notice && <ListActionNotice key={notice.at} message={notice} />}
     {completionError && <p role="alert" className="error">{completionError}</p>}
     {listError && !renaming && <p role="alert" className="error">{listError}</p>}
-    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <section aria-label="Архив покупок"><h2>Завершённые списки</h2>{archives.length === 0 ? <p>Архив пока пуст.</p> : archives.map(snapshot => <article key={snapshot.id} className="archive-entry"><h3>{snapshot.name}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p><ul>{snapshot.items.map(item => <li key={item.id}>{item.name}{item.quantity ? ` — ${item.quantity} ${item.unit ?? ''}` : ''}</li>)}</ul></article>)}</section> : visibleLists.length === 0 ? <section aria-labelledby="list-title">
+    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <PurchaseHistory snapshots={archives} /> : visibleLists.length === 0 ? <section aria-labelledby="list-title">
       <h2 id="list-title">Списки покупок</h2>
       <p>Чтобы добавить товары, создайте список.</p>
     </section> : <section aria-labelledby="list-title">

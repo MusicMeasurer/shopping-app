@@ -381,6 +381,15 @@ test('E4 acceptance: deleting active list preserves its completed archive histor
   await page.reload()
   await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(page.getByRole('heading', { name: 'Список для удаления' })).toBeVisible()
+  const search = page.getByRole('searchbox', { name: 'Поиск в истории покупок' })
+  await search.fill(' КОФЕ ')
+  await expect(page.getByRole('heading', { name: 'Список для удаления' })).toBeVisible()
+  await expect(page.getByText('Кофе — 2 уп')).toBeVisible()
+  await search.fill('Сахар')
+  await expect(page.getByText('Покупки не найдены.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Список для удаления' })).toHaveCount(0)
+  await search.clear()
+  await expect(page.getByText('Кофе — 2 уп')).toBeVisible()
 })
 
 test('E4: local deletion warns only when purchases are marked', async ({ page }) => {

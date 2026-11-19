@@ -1,3 +1,4 @@
+import { PurchaseHistory } from './PurchaseHistory'
 import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -59,7 +60,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [cloudMetadata, setCloudMetadata] = useState<CloudListMetadata[] | null>(null)
   const [cloudMetadataError, setCloudMetadataError] = useState('')
   const [cloudMutationBusy, setCloudMutationBusy] = useState(false)
-  const [cloudArchives, setCloudArchives] = useState<CloudArchiveCompletion[] | null>(null)
+  const [loadedArchive, setLoadedArchive] = useState<{ accountId: string; snapshots: CloudArchiveCompletion[] } | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
   const loadingArchiveFor = useRef<string | null>(null)
@@ -92,6 +93,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const currentAccount = localBrowsing ? null : signedInAccount
   const offlineAccount = !localBrowsing && view.status === 'offline-account' ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
+  const cloudArchives = loadedArchive?.accountId === workspaceAccount ? loadedArchive.snapshots : null
   useEffect(() => {
     const update = () => setSyncOnline(navigator.onLine)
     window.addEventListener('online', update)
@@ -895,7 +897,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               text: receipt.mode === 'delete_list' ? 'Список удалён.' : receipt.mode === 'archive_purchased'
                 ? 'Отмеченные покупки перемещены в архив.' : 'Список завершён.',
             })
-            setCloudArchives(null)
+            setLoadedArchive(null)
             setWorkspaceRevision(value => value + 1)
             void loadCloudArchive(true)
             try {
@@ -999,7 +1001,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (recheckError || stillCurrent?.id !== currentAccount) throw new Error('Аккаунт изменился')
       if (activeAccount.current !== currentAccount) return
       await storage.cacheAccountArchive(currentAccount, snapshots)
-      if (activeAccount.current === currentAccount) setCloudArchives(snapshots)
+      if (activeAccount.current === currentAccount) setLoadedArchive({ accountId: currentAccount, snapshots })
     } catch (err) {
       if (activeAccount.current === currentAccount)
         setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
@@ -1015,12 +1017,23 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
   useEffect(() => {
-    setCloudArchives(null)
+    setLoadedArchive(null)
     setCloudArchiveError('')
     setCompletionPreflight('')
     setCompletionError('')
     setCompletionNotice(undefined)
   }, [workspaceAccount])
+
+  useEffect(() => {
+    if (!offlineAccount || offlineAccount !== readyAccount) return
+    let cancelled = false
+    void storage.readAccountArchive(offlineAccount).then(snapshots => {
+      if (!cancelled && snapshots) setLoadedArchive({ accountId: offlineAccount, snapshots })
+    }).catch(() => {
+      if (!cancelled) setCloudArchiveError('Не удалось прочитать сохранённый архив.')
+    })
+    return () => { cancelled = true }
+  }, [offlineAccount, readyAccount, storage])
 
   useEffect(() => {
     if (currentAccount && readyAccount === currentAccount) void loadCloudArchive()
@@ -1146,24 +1159,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       cloudListBusy={cloudMutationBusy || cloudLoading}
       cloudListError={cloudMetadataError}
       cloudArchiveCount={cloudArchives?.length}
-      onOpenCloudArchive={() => void loadCloudArchive()}
-      cloudArchive={currentAccount ? (<section aria-label="Архив покупок">
-        <h2>Завершённые списки</h2>
+      onOpenCloudArchive={currentAccount ? () => void loadCloudArchive() : undefined}
+      cloudArchive={currentAccount ? <PurchaseHistory snapshots={cloudArchives} emptyMessage="В облачном архиве пока нет покупок.">
         <button type="button" aria-label="Показать завершённые покупки" aria-busy={cloudArchiveBusy}
           disabled={cloudArchiveBusy} onClick={() => void loadCloudArchive()}>
           {cloudArchiveBusy ? 'Загружаем…' : 'Показать завершённые покупки'}
         </button>
         {cloudArchiveError && <p role="alert">{cloudArchiveError}</p>}
-        {cloudArchives && <div role="status">
-          {cloudArchives.length === 0 ? <p>В облачном архиве пока нет покупок.</p> :
-            cloudArchives.map(snapshot => <article className="archive-entry" key={snapshot.id}>
-              <h3>{snapshot.sourceListName}</h3><p>{new Date(snapshot.completedAt).toLocaleString('ru-RU')} · {snapshot.items.length} товаров</p>
-              <ul>{snapshot.items.map(item => <li key={item.ordinal}>
-                {item.name}{item.quantity != null || item.unit ? ` — ${[item.quantity, item.unit].filter(value => value != null).join(' ')}` : ''}
-              </li>)}</ul>
-            </article>)}
-        </div>}
-      </section>) : undefined}
+      </PurchaseHistory> : offlineAccount ? <PurchaseHistory snapshots={cloudArchives}>
+        {cloudArchiveError ? <p role="alert">{cloudArchiveError}</p>
+          : cloudArchives === null && <p>Сохранённый архив недоступен. Подключитесь к интернету, чтобы загрузить его.</p>}
+      </PurchaseHistory> : undefined}
       accountCloudLists={currentAccount ? (cloudMetadata ?? []).map(row => ({ ...row, id: Object.keys(cloudBindings).find(localId => cloudBindings[localId] === row.id) ?? row.id })) : offlineLists?.accountId === offlineAccount ? (offlineLists?.lists ?? []) : []} listOperations={activeOperations} completionNotice={completionNotice?.accountId === workspaceAccount ? completionNotice : undefined} completionError={completionError} onCompleteCloudList={currentAccount ? (listId, mode, confirmedMarked, confirmedItemIds) => { void completeCloudList(listId, mode, confirmedMarked, confirmedItemIds) } : undefined}
       accountMenu={client ? {
         open: accountDialogOpen,
