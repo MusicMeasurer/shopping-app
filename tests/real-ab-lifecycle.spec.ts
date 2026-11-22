@@ -12,8 +12,16 @@ async function signIn(page: Page, which: 0 | 1) {
   const email = process.env[emailKey]
   const password = process.env[passwordKey]
   if (!email || !password) throw new Error('Missing existing disposable A/B credentials')
-  await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
-  await page.getByLabel('Email').fill(email)
+  const openAccount = page.getByRole('button', { name: 'Войти в аккаунт' })
+  await openAccount.click()
+  const emailField = page.getByLabel('Email', { exact: true })
+  if (!await emailField.isVisible() && await page.locator('.account-full-email').textContent() !== email) {
+    await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).click()
+    await openAccount.click()
+    await expect(emailField).toBeVisible()
+  }
+  if (await emailField.isVisible()) await emailField.fill(email)
+  else await expect(page.locator('.account-full-email')).toHaveText(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   // Explicitly retain independent guest data in this regression.
@@ -304,20 +312,22 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(skipTransfer).toBeEnabled()
   await expect(skipTransfer).not.toBeChecked()
   await localProfiles.locator('.profile-option > button:first-child').filter({ hasText: emailA }).click()
-  await dialog.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(dialog).toHaveCount(0)
+  expect(sessionWrites).toHaveLength(1)
   await signOut(page)
   await signIn(page, 1)
   await expect(profile).toContainText(emailB)
 
   await profile.click()
   await localProfiles.locator('.profile-option > button:first-child').filter({ hasText: emailA }).click()
-  await expect(page.getByLabel('Email')).toHaveValue(emailA)
+  await expect(page.locator('.account-full-email')).toHaveText(emailA)
+  await expect(page.getByLabel('Email', { exact: true })).toHaveCount(0)
   await page.getByLabel('Пароль').fill(passwordA)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
   await expect(profile).toContainText(emailA)
-  expect(sessionWrites.slice(-2)).toEqual(['/auth/v1/logout?scope=local', '/auth/v1/token?grant_type=password'])
+  expect(sessionWrites.slice(-2)).toEqual(['/auth/v1/token?grant_type=password', '/auth/v1/logout?scope=local'])
   await signOut(page)
 })
 

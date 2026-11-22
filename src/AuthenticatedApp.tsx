@@ -968,6 +968,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (!data.session || !data.user || (target && data.user.id.toLowerCase() !== target))
           throw new Error('Вход выполнен в другой аккаунт. Проверьте адрес выбранного профиля.')
         selectLocalBrowsing(true)
+        if (sessionAccount && sessionAccount !== data.user.id.toLowerCase()) {
+          setSignOutError('')
+          try {
+            await controller.signOut('local')
+          } catch (cause) {
+            setSignOutError('Не удалось завершить прежнюю сессию. Повторите выход после восстановления связи.')
+            throw cause
+          }
+        }
         const result = await client.auth.setSession({
           access_token: data.session.access_token, refresh_token: data.session.refresh_token,
         })

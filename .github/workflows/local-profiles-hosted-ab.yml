@@ -55,6 +55,8 @@ jobs:
           [[ "$E3_LAB_URL" == "https://gmrqeubhotjpmtwokfeq.supabase.co" ]] || { echo "::error::Refusing non-lab target"; exit 1; }
           [[ "$E3_LAB_PUBLISHABLE_KEY" == sb_publishable_* ]] || { echo "::error::Publishable key required"; exit 1; }
       - run: npm ci
+      - name: Real Supabase RPC to IndexedDB receipts and conflict recovery
+        run: npx vitest run src/e3-local-cloud.integration.test.ts
       - name: Build PWA against pinned disposable lab
         env:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
@@ -75,5 +77,3 @@ jobs:
         run: node scripts/e3-real-session-gate.mjs
       - name: Real RPC idempotency, version conflicts and cleanup
         run: node scripts/e3-rpc-write-probe.mjs
-      - name: Real Supabase RPC to IndexedDB receipts and conflict recovery
-        run: npx vitest run src/e3-local-cloud.integration.test.ts
