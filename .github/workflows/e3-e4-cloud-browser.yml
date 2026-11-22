@@ -12,6 +12,7 @@ on:
       - 'tests/e3-e4-cloud-acceptance.spec.ts'
       - 'tests/e3-e4-cloud-modes.spec.ts'
       - 'tests/e3-e4-cloud-oneoff.spec.ts'
+      - 'tests/e3-e4-cloud-conflict.spec.ts'
       - 'tests/e3-e4-cloud-permanent.spec.ts'
       - '.github/workflows/e3-e4-cloud-browser.yml'
 concurrency:
@@ -50,6 +51,10 @@ jobs:
       - run: npm run build
       - name: User-facing cloud archive and account controls
         run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts --project=iphone-webkit --workers=1
+      - name: Cloud add button and conflict across Chromium and WebKit
+        run: |
+          npx playwright test tests/e3-e4-cloud-oneoff.spec.ts tests/e3-e4-cloud-conflict.spec.ts \
+            --project=mobile-chromium --workers=1 --grep 'oneoff list can be created|newer offline amount'
       - run: npm run build
         env:
           VITE_LAB_CONTROLS: 'true'
