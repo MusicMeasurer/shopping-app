@@ -11,6 +11,25 @@ import { planReconciliation } from './reconciliation-plan'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
 import { resolveVersionedMutation } from './versioned-mutation'
 
+const itemFlushes = new WeakMap<object, Map<string, Promise<unknown>>>()
+
+/** Batch upload and list-specific flushes consume the same durable receipts. */
+export async function serializeAccountItemFlush<T>(storage: object, accountId: string, flush: () => Promise<T>): Promise<T> {
+  let accounts = itemFlushes.get(storage)
+  if (!accounts) {
+    accounts = new Map()
+    itemFlushes.set(storage, accounts)
+  }
+  const previous = accounts.get(accountId)
+  const current = previous ? previous.then(flush, flush) : Promise.resolve().then(flush)
+  accounts.set(accountId, current)
+  try {
+    return await current
+  } finally {
+    if (accounts.get(accountId) === current) accounts.delete(accountId)
+  }
+}
+
 /**
  * Bind the headless coordinator to the existing account-scoped IndexedDB
  * stores. No guest data is ever read or uploaded. The remote list mapping
@@ -350,5 +369,9 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, handleRejected, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName }
+  return {
+    ...coordinator,
+    flush: () => serializeAccountItemFlush(storage, accountId, coordinator.flush),
+    handleRejected, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName,
+  }
 }

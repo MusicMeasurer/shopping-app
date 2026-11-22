@@ -3,6 +3,7 @@ import { expect, it, vi } from 'vitest'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { pullAccountFeed } from './account-feed'
 import { flushAccountBatch } from './account-batch'
+import { createAccountSync } from './account-sync'
 import { createStorage } from './storage'
 
 const account = '10000000-0000-4000-8000-000000000001'
@@ -87,6 +88,36 @@ it('retries a lost batch with stable IDs and acknowledges only confirmed operati
   await expect(flushAccountBatch(storage, client, account, active, () => {})).rejects.toThrow('Operation rejected')
   expect(rpc.mock.calls[0]).toEqual(rpc.mock.calls[1])
   expect(await storage.readAccountPending(account)).toHaveLength(1)
+  await storage.close()
+})
+
+it('waits for the batch receipt before flushing the same list for completion', async () => {
+  const storage = createStorage(crypto.randomUUID())
+  await storage.bindAccountList(account, listId, listId)
+  await storage.saveAccountItemsToSync(account, [{ id: itemId, listId, name: 'Milk', purchased: false, createdAt: 0 }])
+  let signalStarted!: () => void
+  let releaseReceipt!: () => void
+  const started = new Promise<void>(resolve => { signalStarted = resolve })
+  const receiptReleased = new Promise<void>(resolve => { releaseReceipt = resolve })
+  const rpc = vi.fn(async (method: string, args: { p_operations: { operation_id: string }[] }) => {
+    expect(method).toBe('push_e4_account_changes')
+    signalStarted()
+    await receiptReleased
+    return { data: [{ receipt: { operation_id: args.p_operations[0].operation_id, list_revision: 1, item_version: 1 } }], error: null }
+  })
+  const client = { rpc } as unknown as SupabaseClient
+  const batch = flushAccountBatch(storage, client, account, active, () => {})
+  await started
+  const readMappings = vi.spyOn(storage, 'readAccountListMappings')
+  const sync = createAccountSync(storage, client, { accountId: account, localListId: listId, remoteListId: listId, isActive: active })
+  const completionFlush = sync.flush()
+  const checkedMappingBeforeReceipt = readMappings.mock.calls.length > 0
+  releaseReceipt()
+  await expect(batch).resolves.toBeUndefined()
+  await expect(completionFlush).resolves.toBe(0)
+  expect(checkedMappingBeforeReceipt).toBe(false)
+  expect(rpc).toHaveBeenCalledTimes(1)
+  expect(await storage.readAccountPending(account)).toEqual([])
   await storage.close()
 })
 
