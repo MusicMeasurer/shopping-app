@@ -100,9 +100,32 @@ export interface LocalListChange {
   targetId?: string
   prepared?: CloudListMetadata
 }
+export interface QueuedListMerge {
+  operationId: string
+  expected: ListMergeSnapshot
+  choices: [string, MergeChoice][]
+  result: Item[]
+  source: { localListId: string; remoteListId: string }
+  target: { localListId: string; remoteListId: string }
+  revisions?: { sourceRevision: number; targetRevision: number }
+}
 interface ScopedListMapping {
   key: string; accountId: string; localListId: string; remoteListId: string
-  symbol?: string; metadata?: ListMetadata; pendingMetadata?: LocalListChange[]
+  symbol?: string; metadata?: ListMetadata; pendingMetadata?: LocalListChange[]; pendingMerge?: QueuedListMerge
+}
+
+function mergeTouches(merge: QueuedListMerge | undefined, id: string) {
+  return merge?.source.localListId === id || merge?.target.localListId === id
+}
+
+function mergeSnapshot(mappings: ScopedListMapping[], items: Item[], sourceId: string, targetId: string): ListMergeSnapshot {
+  const metadata = projectListMetadata(mappings)
+  const source = metadata.get(sourceId)
+  const target = metadata.get(targetId)
+  if (!source || !target || sourceId === targetId) throw new ListMergeConflict()
+  return { source: { id: sourceId, name: source.name, kind: source.kind },
+    target: { id: targetId, name: target.name, kind: target.kind },
+    items: items.filter(item => item.listId === sourceId || item.listId === targetId) }
 }
 
 function orderedListChanges(mappings: ScopedListMapping[]) {
@@ -308,6 +331,12 @@ export function createStorage(name = 'shopping-app') {
       tx.abort()
       await tx.done.catch(() => {})
       throw new Error('Missing verified list mapping')
+    }
+    if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+      .some(row => mergeTouches(row.pendingMerge, operation.localListId))) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      throw new Error('Объединение этих списков ожидает синхронизации.')
     }
     const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
     const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, operation.remoteListId))
@@ -826,7 +855,7 @@ export function createStorage(name = 'shopping-app') {
             tx.objectStore('guestImports').getAll(),
           ])
           if (operations || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported) ||
-              (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)).some(row => row.pendingMetadata?.length))
+              (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)).some(row => row.pendingMetadata?.length || row.pendingMerge))
             throw new Error('Profile has unsynced operations; deletion blocked')
           await tx.objectStore('profileMigrations').put({
             key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
@@ -1482,6 +1511,9 @@ export function createStorage(name = 'shopping-app') {
       const tx = (await database).transaction(['accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems', 'accountDraftLists'], 'readwrite')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, localListId))
+        if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+          .some(row => mergeTouches(row.pendingMerge, localListId)))
+          throw new Error('Объединение этих списков ожидает синхронизации.')
         const draft = local && !mapping && localListId === remoteListId &&
           await tx.objectStore('accountDraftLists').get(accountKey(accountId, localListId))
         if (!draft && mapping?.remoteListId !== remoteListId) throw new Error('Unverified list mapping')
@@ -1523,7 +1555,7 @@ export function createStorage(name = 'shopping-app') {
         tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
       ])
       await tx.done
-      return !!(items || completions || requests || drafts || mappings.some(row => row.pendingMetadata?.length) || imports.some(batch => batch.accountId === accountId && !batch.imported))
+      return !!(items || completions || requests || drafts || mappings.some(row => row.pendingMetadata?.length || row.pendingMerge) || imports.some(batch => batch.accountId === accountId && !batch.imported))
     },
     /** Durable intent is written before RPC; account edits are fenced by the same transaction. */
     async beginAccountCompletion(intent: CloudCompletionIntent, queuedRequest = false): Promise<void> {
@@ -1534,6 +1566,9 @@ export function createStorage(name = 'shopping-app') {
       const db = await database
       const tx = db.transaction(['accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
       try {
+        if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+          .some(row => mergeTouches(row.pendingMerge, localListId)))
+          throw new Error('Объединение этих списков ожидает синхронизации.')
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, localListId))
         if (!mapping || mapping.remoteListId !== remoteListId) throw new Error('Unverified list mapping')
         const request = queuedRequest ? await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, remoteListId)) : undefined
@@ -1741,6 +1776,94 @@ export function createStorage(name = 'shopping-app') {
       accountKey(accountId, 'check')
       return (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
     },
+    async readLocalListMerge(accountId: string, sourceId: string, targetId: string) {
+      const tx = (await database).transaction(['accountListMappings', 'accountItems'])
+      const [mappings, rows] = await Promise.all([
+        tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
+        tx.objectStore('accountItems').index('byAccount').getAll(accountId),
+      ])
+      await tx.done
+      return mergeSnapshot(mappings, rows.map(row => row.item), sourceId, targetId)
+    },
+    async readQueuedListMerges(accountId: string) {
+      const mappings = await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+      return mappings.flatMap(row => row.pendingMerge ? [row.pendingMerge] : [])
+    },
+    async queueLocalListMerge(accountId: string, expected: ListMergeSnapshot, choices: ReadonlyMap<string, MergeChoice>, operationId: string) {
+      const tx = (await database).transaction(['accountListMappings', 'accountItems', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      try {
+        const store = tx.objectStore('accountListMappings')
+        const mappings = await store.index('byAccount').getAll(accountId)
+        const sourceId = expected.source.id, targetId = expected.target.id
+        const touched = (id: string) => id === sourceId || id === targetId
+        const source = mappings.find(row => row.localListId === sourceId)
+        const target = mappings.find(row => row.localListId === targetId)
+        if (!source || !target) throw new ListMergeConflict()
+        const requests = await tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId)
+        const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if (mappings.some(row => mergeTouches(row.pendingMerge, sourceId) || mergeTouches(row.pendingMerge, targetId)) ||
+            [...requests, ...intents.map(row => row.intent)].some(row => touched(row.localListId)))
+          throw new Error('Дождитесь завершения операции с одним из списков.')
+        const rows = await tx.objectStore('accountItems').index('byAccount').getAll(accountId)
+        const current = mergeSnapshot(mappings, rows.map(row => row.item), sourceId, targetId)
+        if (!sameMergeSnapshot(expected, current)) throw new ListMergeConflict()
+        const bind = ({ localListId, remoteListId }: ScopedListMapping) => ({ localListId, remoteListId })
+        await store.put({ ...source, pendingMerge: {
+          operationId, expected: current, result: planListMerge(current, choices),
+          source: bind(source), target: bind(target), choices: [...choices],
+        } })
+        await tx.done
+      } catch (error) {
+        try { tx.abort() } catch { /* closed */ }
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
+    async prepareQueuedListMerge(accountId: string, merge: QueuedListMerge, revisions: NonNullable<QueuedListMerge['revisions']>) {
+      const tx = (await database).transaction('accountListMappings', 'readwrite')
+      const source = await tx.store.get(accountKey(accountId, merge.source.localListId))
+      const pending = source?.pendingMerge
+      if (!source || pending?.operationId !== merge.operationId) { await tx.done; return undefined }
+      const prepared = pending.revisions ? pending : { ...pending, revisions }
+      if (!pending.revisions) await tx.store.put({ ...source, pendingMerge: prepared })
+      await tx.done
+      return prepared
+    },
+    async finishQueuedListMerge(accountId: string, merge: QueuedListMerge, confirmed?: { item: Item; version: number }[]) {
+      const tx = (await database).transaction(['accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry'], 'readwrite')
+      try {
+        const mappings = tx.objectStore('accountListMappings')
+        const source = await mappings.get(accountKey(accountId, merge.source.localListId))
+        if (source?.pendingMerge?.operationId !== merge.operationId) { await tx.done; return }
+        if (!confirmed) {
+          const { pendingMerge: _pending, ...rest } = source
+          await mappings.put(rest)
+        } else {
+          const target = await mappings.get(accountKey(accountId, merge.target.localListId))
+          if (target?.remoteListId !== merge.target.remoteListId) throw new ListMergeConflict()
+          const items = tx.objectStore('accountItems')
+          const versions = tx.objectStore('accountItemVersions')
+          const rows = await items.index('byAccount').getAll(accountId)
+          for (const row of rows) {
+            if (!mergeTouches(merge, row.item.listId)) continue
+            await items.delete(row.key)
+            await versions.delete(row.key)
+          }
+          for (const { item, version } of confirmed) {
+            const key = accountKey(accountId, item.id)
+            await items.put({ key, accountId, item })
+            await versions.put({ key, accountId, itemId: item.id, remoteListId: target.remoteListId, version })
+          }
+          await mappings.delete(source.key)
+          await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
+        }
+        await tx.done
+      } catch (error) {
+        try { tx.abort() } catch { /* closed */ }
+        await tx.done.catch(() => {})
+        throw error
+      }
+    },
     async readLocalListMappings(accountId: string) {
       const mappings = await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
       const projected = projectListMetadata(mappings)
@@ -1754,6 +1877,8 @@ export function createStorage(name = 'shopping-app') {
       try {
         const store = tx.objectStore('accountListMappings')
         const mappings = await store.index('byAccount').getAll(accountId)
+        if (mappings.some(row => mergeTouches(row.pendingMerge, id) || (action === 'reorder' && mergeTouches(row.pendingMerge, value))))
+          throw new Error('Объединение этих списков ожидает синхронизации.')
         const mapping = mappings.find(row => row.localListId === id)
         const projected = projectListMetadata(mappings)
         const before = projected.get(id)
@@ -1865,6 +1990,9 @@ export function createStorage(name = 'shopping-app') {
       const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, listId))
+        if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+          .some(row => mergeTouches(row.pendingMerge, listId)))
+          throw new Error('Объединение этих списков ожидает синхронизации.')
         const draft = !mapping && await tx.objectStore('accountDraftLists').get(accountKey(accountId, listId))
         if (!mapping && !draft) throw new Error('Missing verified list mapping')
         const remoteListId = mapping?.remoteListId ?? listId
@@ -1965,6 +2093,9 @@ export function createStorage(name = 'shopping-app') {
       try {
         const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
         if (inFlight.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion pending; import/review blocked')
+        if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+          .some(row => mergeTouches(row.pendingMerge, entries[0].item.listId)))
+          throw new Error('Объединение этих списков ожидает синхронизации.')
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, entries[0].item.listId))
         const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
         if (!mapping || mapping.remoteListId !== remoteListId ||
@@ -2000,6 +2131,10 @@ export function createStorage(name = 'shopping-app') {
       const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations',
         'accountListMappings', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
       const mappings = tx.objectStore('accountListMappings')
+      if ((await mappings.index('byAccount').getAll(accountId)).some(row => mergeTouches(row.pendingMerge, localListId))) {
+        await tx.done
+        return 0
+      }
       const mapping = await mappings.get(accountKey(accountId, localListId))
       const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
       const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId, remoteListId))

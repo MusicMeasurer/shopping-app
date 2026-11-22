@@ -1,6 +1,7 @@
 import { syncAccountDrafts } from './data/sync-account-drafts'
 import { applyCloudListMerge, previewCloudListMerge } from './data/cloud-list-merge'
-import type { ListMergeActions } from './domain/list-merge'
+import { ListMergeConflict, sameMergeSnapshot, type ListMergeActions } from './domain/list-merge'
+import { fetchRemoteItems } from './data/remote-snapshot'
 import { PurchaseHistory } from './PurchaseHistory'
 import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
@@ -12,7 +13,7 @@ import { LocalProfileLimitError, profileName, type LocalProfile } from './data/l
 import { App } from './App'
 import { syncGuestImports } from './data/guest-import'
 import { SiriSetup } from './SiriSetup'
-import { lists, type ListId } from './domain/shopping'
+import { lists, type Item, type ListId } from './domain/shopping'
 import { fetchOwnedCloudLists, type OwnedCloudList } from './data/owned-cloud-lists'
 import { fetchCloudListMetadata, type CloudListMetadata } from './data/e4-cloud-list-metadata'
 import { watchCloudListChanges } from './data/cloud-list-watch'
@@ -429,13 +430,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       try {
         if (activeAccount.current !== accountId) return
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
-        const [mappings, completions] = await Promise.all([
-          storage.readAccountListMappings(accountId), storage.readAccountCompletions(accountId),
+        const [mappings, completions, merges] = await Promise.all([
+          storage.readAccountListMappings(accountId), storage.readAccountCompletions(accountId), storage.readQueuedListMerges(accountId),
         ])
         const owned = await fetchCloudListMetadata(client, accountId)
         const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
-        const completing = new Set(completions.map(row => row.remoteListId))
+        const completing = new Set([...completions.map(row => row.remoteListId), ...merges.flatMap(row => [row.source.remoteListId, row.target.remoteListId])])
         const activeIds = new Set(owned.map(row => row.id))
         const retired = new Set(mappings.filter(row => row.metadata && !activeIds.has(row.remoteListId) &&
           !completing.has(row.remoteListId)).map(row => row.remoteListId))
@@ -966,6 +967,66 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     return true
   }
 
+  async function syncQueuedListMerges(accountId: string, connection: SupabaseClient, stillActive: () => boolean) {
+    for (const merge of await storage.readQueuedListMerges(accountId)) {
+      if (!stillActive() || await verifiedAccountId(connection) !== accountId || !stillActive()) return false
+      const { source, target, expected, operationId } = merge
+      let prepared = merge
+      try {
+        if (!prepared.revisions) {
+          for (const binding of [source, target]) {
+            await createAccountSync(storage, connection, { accountId, ...binding, isActive: stillActive }).flush()
+          }
+          const pending = await storage.readAccountPending(accountId)
+          if (pending.some(row => !('remoteListId' in row) ||
+              row.remoteListId === source.remoteListId || row.remoteListId === target.remoteListId))
+            throw new ListMergeConflict()
+          const preview = await previewCloudListMerge(connection, source, target)
+          if (!sameMergeSnapshot(expected, preview)) throw new ListMergeConflict()
+          if (!stillActive()) return false
+          const saved = await storage.prepareQueuedListMerge(accountId, merge, {
+            sourceRevision: preview.sourceRevision, targetRevision: preview.targetRevision,
+          })
+          if (!saved) continue
+          prepared = saved
+        }
+        if (!stillActive()) return false
+        await applyCloudListMerge(connection, { ...expected, ...prepared.revisions }, source, target, new Map(merge.choices), operationId)
+      } catch (error) {
+        if (!(error instanceof ListMergeConflict)) throw error
+        if (!stillActive()) return false
+        await storage.finishQueuedListMerge(accountId, prepared)
+        setCompletionError('Не удалось объединить «' + expected.source.name + '» и «' + expected.target.name +
+          '»: списки изменились. Проверьте их и подтвердите объединение заново.')
+        setWorkspaceRevision(value => value + 1)
+        setCloudMappingRevision(value => value + 1)
+        continue
+      }
+      const before = await fetchCloudListMetadata(connection, accountId)
+      const entries: { item: Item; version: number }[] = []
+      for (let offset = 0; ; offset += 500) {
+        const page = await fetchRemoteItems(connection, target.remoteListId, false, { from: offset, to: offset + 499 })
+        entries.push(...page.map(({ id, name, quantity, unit, purchased, createdAt, version }) => ({
+          item: { id, name, quantity, unit, purchased, listId: target.localListId, createdAt: Date.parse(createdAt) }, version,
+        })))
+        if (page.length < 500) break
+      }
+      const metadata = await fetchCloudListMetadata(connection, accountId)
+      const revision = metadata.find(row => row.id === target.remoteListId)?.revision
+      if (revision === undefined || revision !== before.find(row => row.id === target.remoteListId)?.revision)
+        throw new Error('Список-получатель изменился во время обновления. Повторите синхронизацию.')
+      if (!stillActive()) return false
+      await storage.finishQueuedListMerge(accountId, prepared, entries)
+      if (!stillActive()) return false
+      setCloudMetadata(metadata)
+      setCloudLists(metadata.map(row => ({ id: row.id, name: row.name })))
+      setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== source.remoteListId)))
+      setWorkspaceRevision(value => value + 1)
+      setCloudMappingRevision(value => value + 1)
+    }
+    return true
+  }
+
   async function processListOperations(accountId: string) {
     if (!client || activeAccount.current !== accountId || !navigator.onLine) return
     completionRequested.current.add(accountId)
@@ -997,6 +1058,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           }
         }
         if (!await syncLocalListChanges(accountId, client, stillActive)) return
+        if (!await syncQueuedListMerges(accountId, client, stillActive)) return
         const draftIds = new Set((await storage.readAccountDraftLists(accountId)).map(draft => draft.id))
         const [requests, intents] = await Promise.all([
           storage.readAccountCompletionRequests(accountId),

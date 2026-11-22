@@ -69,6 +69,16 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     return () => { cancelled = true }
   }, [storage, localProfileId, localProfileAccount, localSyncRevision])
   const localAccount = savedAccount?.profileId === localProfileId ? savedAccount : null
+  const [queuedMerges, setQueuedMerges] = useState<{ account: string; rows: Awaited<ReturnType<Storage['readQueuedListMerges']>> }>()
+  const mergeAccount = localAccount?.id ?? accountId
+  useEffect(() => {
+    if (!mergeAccount) return
+    let current = true
+    void storage.readQueuedListMerges(mergeAccount).then(rows => {
+      if (current) setQueuedMerges({ account: mergeAccount, rows })
+    }).catch(() => { if (current) setStartupError('Не удалось прочитать очередь объединений.') })
+    return () => { current = false }
+  }, [storage, mergeAccount, localSyncRevision, refreshRevision])
   const [profileActionError, setProfileActionError] = useState('')
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileRename, setProfileRename] = useState<string | null>(null)
@@ -266,7 +276,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } localCompletions={localAccount?.completions.operations} onCompleteCloudList={onCompleteCloudList} cloudMerge={cloudMerge} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={localAccount ? changeSavedAccountList : onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive} actions={snapshot => {
+    } queuedMerges={queuedMerges?.account === mergeAccount ? queuedMerges?.rows : undefined} localCompletions={localAccount?.completions.operations} onCompleteCloudList={onCompleteCloudList} cloudMerge={cloudMerge} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={localAccount ? changeSavedAccountList : onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive} actions={snapshot => {
       const request = snapshot.pending && localAccount.completions.unsent.find(row => row.operationId === snapshot.id)
       return request ? <button type="button" onClick={() => {
         void storage.cancelUnsentAccountCompletion(request).then(localChangesQueued)
@@ -278,7 +288,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge, localCompletions }: { localCompletions?: Awaited<ReturnType<Storage['readLocalCompletionView']>>['operations']; storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge, localCompletions, queuedMerges = [] }: { queuedMerges?: Awaited<ReturnType<Storage['readQueuedListMerges']>>; localCompletions?: Awaited<ReturnType<Storage['readLocalCompletionView']>>['operations']; storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
   const cardSizeKey = workspaceKey + ':card-size'
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
@@ -534,8 +544,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if(dx<0&&!showArchive){openArchive();setMenuTarget(null)}
     if(dx>0&&showArchive)setShowArchive(false)
   }
+  const mergedSources = new Set(queuedMerges.map(row => row.source.localListId))
+  const mergedLists = new Set(queuedMerges.flatMap(row => [row.source.localListId, row.target.localListId]))
   const pendingCompletions = new Map((localCompletions ?? []).map(row => [row.localListId, row]))
   const visibleLists = (accountId === null && localLists !== null ? localLists : (accountId !== null ? [...accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })), ...drafts] : lists.map(row => ({ ...row, kind: 'permanent' as const })))).filter(row => {
+    if (localCopy && mergedSources.has(row.id)) return false
     const queued = pendingCompletions.get(row.id)
     return !queued || (queued.mode !== 'delete_list' && (row.kind !== 'oneoff' || queued.mode === 'archive_purchased'))
   })
@@ -573,7 +586,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const itemStore = useMemo(() => accountId === null ? (guestProfileId ? profileItemStore(storage, guestProfileId) : itemStoreForAccount(storage, null)) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, guestProfileId, onQueued])
   const shopping = useShopping(itemStore, refreshRevision)
   const hiddenCompletionItems = new Set((localCompletions ?? []).flatMap(row => row.hiddenItemIds))
-  const visibleItems = shopping.items.filter(item => !hiddenCompletionItems.has(item.id))
+  const visibleItems = shopping.items.filter(item => !hiddenCompletionItems.has(item.id) && (!localCopy || !mergedLists.has(item.listId)))
+  if (localCopy) for (const merge of queuedMerges) visibleItems.push(...merge.result)
   const [itemConflicts, setItemConflicts] = useState<ItemDeletionConflict[]>([])
   const [conflictId, setConflictId] = useState<string>()
   const [resolvingConflict, setResolvingConflict] = useState(false)
@@ -622,7 +636,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const listActionsBusy = changingList || cloudListBusy
   const listMutationBusy = shopping.loading || shopping.busy || listActionsBusy || creatingList
   function listLocked(id: ListId) {
-    return pendingCompletions.has(id) || operations.some(operation => operation.localListId === id && (operation.phase !== 'error' || !!operation.retry))
+    return mergedLists.has(id) || pendingCompletions.has(id) || operations.some(operation => operation.localListId === id && (operation.phase !== 'error' || !!operation.retry))
   }
   const displayedOperations = operations.filter(operation => !operation.fromLocalCopy || operation.phase === 'error')
   const activeListLocked = listLocked(active)
@@ -686,6 +700,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       const updated = await storage.readProfileLists(guestProfileId)
       setLocalLists(orderLists(updated))
       await shopping.reload()
+    },
+  } : localCopy && accountId ? {
+    read: (source, target) => storage.readLocalListMerge(accountId, source, target),
+    apply: async (snapshot, choices, operationId) => {
+      await storage.queueLocalListMerge(accountId, snapshot, choices, operationId)
+      onQueued?.()
     },
   } : cloudMerge
   const mergeTargets = (from: ListId) => visibleLists.filter(row => row.id !== from && !listLocked(row.id) &&
@@ -986,6 +1006,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {notice && <ListActionNotice key={notice.at} message={notice} />}
     {completionError && <p role="alert" className="error">{completionError}</p>}
     {listError && !renaming && !draftRename && !(newListDialog && localCopy) && <p role="alert" className="error">{listError}</p>}
+    {!showArchive && localCopy && queuedMerges.some(row => row.target.localListId === active) &&
+      <p role="status">Объединение будет отправлено при синхронизации аккаунта.</p>}
     {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <PurchaseHistory snapshots={archives} /> : visibleLists.length === 0 ? <section aria-labelledby="list-title">
       <h2 id="list-title">Списки покупок</h2>
       <p>Чтобы добавить товары, создайте список.</p>

@@ -18,6 +18,7 @@ export async function previewCloudListMerge(client: Pick<SupabaseClient, 'rpc'>,
   const { data, error } = await client.rpc('preview_e4_list_merge', { p_source: source.remoteListId, p_target: target.remoteListId })
   if (error?.code === 'PGRST202') throw new Error('Объединение облачных списков станет доступно после обновления сервера.')
   if (error) throw new Error('Не удалось загрузить предварительный результат.')
+  if (data === null) throw new ListMergeConflict()
   if (!data || !Array.isArray(data.items)) throw new Error('Объединение доступно для личных списков одного профиля.')
   return {
     source: previewList(data.source, source), target: previewList(data.target, target),
