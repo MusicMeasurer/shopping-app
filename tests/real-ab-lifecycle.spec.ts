@@ -230,7 +230,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await expect(page.getByRole('button', { name: 'Действия со списком', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: 'Новый список' })).toBeEnabled()
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
-    await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeDisabled()
+    await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeEnabled()
     await page.getByRole('button', { name: 'Закрыть меню' }).click({ position: { x: 4, y: 4 } })
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
     await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).click()
