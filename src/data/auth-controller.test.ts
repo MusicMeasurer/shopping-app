@@ -253,7 +253,7 @@ it('finishes sign-out automatically when the server confirms it after the UI dea
     })
     const fake = fakeClient(session)
     let finish!: (result: { error: null }) => void
-    fake.client.signOut = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    fake.client.signOut = vi.fn(() => new Promise<{ error: null }>(resolve => { finish = resolve }))
     const views: AuthView[] = []
     const controller = createAuthController(fake.client, view => views.push(view), guard)
     await controller.initialize()
