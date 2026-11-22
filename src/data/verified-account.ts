@@ -7,9 +7,15 @@ import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-sco
  * This function intentionally fails closed when offline or when IDs differ.
  */
 export async function verifiedAccountId(client: Pick<SupabaseClient, 'auth'>): Promise<string | null> {
+  return checkVerifiedAccountId(client).catch(() => null)
+}
+
+/** Preserve transient failures for actions that can retry or explain them. */
+export async function checkVerifiedAccountId(client: Pick<SupabaseClient, 'auth'>): Promise<string | null> {
   const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  if (isAuthRetryableFetchError(sessionError)) throw sessionError
   if (sessionError || !sessionData.session) return null
-  return verifySessionIdentity(client, sessionData.session as SessionCandidate).catch(() => null)
+  return verifySessionIdentity(client, sessionData.session as SessionCandidate)
 }
 
 /** Distinguish a temporary connection failure from a rejected identity. */

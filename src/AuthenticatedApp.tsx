@@ -4,7 +4,7 @@ import type { ListMergeActions } from './domain/list-merge'
 import { PurchaseHistory } from './PurchaseHistory'
 import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
-import type { SupabaseClient } from '@supabase/supabase-js'
+import { isAuthApiError, isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { AccountEmailDialog, type AccountEmailMode } from './AccountEmailDialog'
 import { createAccountEmailClient } from './data/cloud-client'
@@ -29,7 +29,7 @@ import type { ProfileSyncState } from './ProfileMenu'
 import type { ListOperationStatus } from './App'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
-import { verifiedAccountId, verifySessionIdentity } from './data/verified-account'
+import { checkVerifiedAccountId, verifiedAccountId, verifySessionIdentity } from './data/verified-account'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
 
@@ -49,7 +49,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [localBrowsing, setLocalBrowsing] = useState(() => {
     try { return sessionStorage.getItem(localWorkspaceKey) === 'yes' } catch { return false }
   })
-  const [loginTarget, setLoginTarget] = useState<{ id: string; login?: string }>()
+  const [loginTarget, setLoginTarget] = useState<{ id: string }>()
   const offerTransfer = useRef(false)
   function selectLocalBrowsing(value: boolean) {
     setLocalBrowsing(value)
@@ -57,6 +57,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   }
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
+  const [signOutError, setSignOutError] = useState('')
   const [accountEmailMode, setAccountEmailMode] = useState<AccountEmailMode | null>(null)
   const [accountEmailNotice, setAccountEmailNotice] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
@@ -120,14 +121,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => { setSyncError('') }, [currentAccount])
 
   useEffect(() => {
-    if (!signedInAccount || !client) { setVerifiedEmail(''); return }
-    let cancelled = false
-    void client.auth.getUser().then(({ data, error }) => {
-      if (!cancelled && !error && data.user?.id === signedInAccount) setVerifiedEmail(data.user.email ?? '')
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [signedInAccount, client])
-  useEffect(() => {
     if (currentAccount) { setAccountDialogOpen(false); setPassword('') }
   }, [currentAccount])
   const [offlineLists, setOfflineLists] = useState<{
@@ -136,6 +129,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   } | null>(null)
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
+  const [profileAttempt, setProfileAttempt] = useState(0)
   const [transferError, setTransferError] = useState('')
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
   const [rememberDecline, setRememberDecline] = useState(false)
@@ -173,15 +167,21 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     let cancelled = false
     setReadyAccount(null)
     setProfileError('')
+    const verifyAccount = async () => {
+      if (await checkVerifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+    }
     void (async () => {
-      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      await verifyAccount()
+      if (cancelled) return
       if (!await storage.readGuestCutoverOwner()) {
         await storage.migrateLegacyGuestToProfile()
         await storage.markGuestCutoverReady()
       }
-      if (await verifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
+      if (cancelled) return
       const identity = await client.auth.getUser()
-      if (identity.error || identity.data.user?.id !== currentAccount || cancelled) return
+      if (cancelled) return
+      if (identity.error || identity.data.user?.id.toLowerCase() !== currentAccount) throw new Error('Account verification changed')
+      setVerifiedEmail(identity.data.user.email ?? '')
       const registry = await storage.readLocalProfiles()
       const source = registry?.profiles.find(p => p.id === registry.activeProfileId && !p.cloudAccountId)
       const pending = await storage.readGuestImports(currentAccount)
@@ -207,7 +207,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           if (choice === 'separate' || choice === 'merge') collisionMode = choice
         }
       }
-      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      if (cancelled) return
+      await verifyAccount()
+      if (cancelled) return
       await storage.ensureVerifiedAccountProfile(currentAccount, { login: identity.data.user.email,
         ...(source && collisionMode ? { sourceProfileId: source.id, collisionMode } : {}) })
       try {
@@ -219,14 +221,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
       const rows = await fetchCloudListMetadata(client, currentAccount)
-      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      if (cancelled) return
+      await verifyAccount()
+      if (cancelled) return
       const mappings = await storage.readAccountListMappings(currentAccount)
       const restore = await storage.needsAccountCacheRestore(currentAccount)
       const existing = new Set(mappings.filter(row => row.metadata).map(row => row.remoteListId))
       const missing = rows.filter(row => !existing.has(row.id))
       const hydrate = restore ? rows : missing
       for (let offset = 0; offset < hydrate.length; offset += 8) {
-        if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+        if (cancelled) return
+        await verifyAccount()
+        if (cancelled) return
         await Promise.all(hydrate.slice(offset, offset + 8).map(async row => {
           const localListId = mappings.find(mapping => mapping.remoteListId === row.id)?.localListId ?? row.id
           await storage.bindAccountList(currentAccount, localListId, row.id)
@@ -236,7 +242,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           }).importRemoteOnly()
         }))
       }
-      if (cancelled || await verifiedAccountId(client) !== currentAccount) return
+      if (cancelled) return
+      await verifyAccount()
+      if (cancelled) return
       await storage.cacheAccountListMetadata(currentAccount, rows)
       if (restore) await storage.confirmAccountCacheRestore(currentAccount)
       const confirmedMappings = await storage.readAccountListMappings(currentAccount)
@@ -245,7 +253,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setCloudLists(rows.map(row => ({ id: row.id, name: row.name })))
         setCloudBindings(Object.fromEntries(confirmedMappings.map(row => [row.localListId, row.remoteListId])))
       }
-      if (!cancelled && await verifiedAccountId(client) === currentAccount) {
+      if (!cancelled) await verifyAccount()
+      if (!cancelled) {
         offerTransfer.current = false
         setReadyAccount(currentAccount)
       }
@@ -253,7 +262,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
     return () => { cancelled = true; transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
-  }, [client, currentAccount, offlineAccount, workspaceAccount, storage])
+  }, [client, currentAccount, offlineAccount, workspaceAccount, storage, profileAttempt])
   const activeAccount = useRef<string | null>(null)
   // A verified session is not enough: the account workspace must have a
   // durable local profile before any background sync or refresh may run.
@@ -337,7 +346,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
     setView({ status: 'checking' })
     const guard = createSignOutGuard(window.localStorage)
-    if (guard.isPending()) setError('Предыдущий выход не завершён. Повторите выход из аккаунта.')
+    if (guard.isPending()) setSignOutError('Предыдущий выход не завершён. Повторите выход из аккаунта.')
     const next = createAuthController({
       getSession: async () => {
         const result = await client.auth.getSession()
@@ -346,7 +355,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       onAuthStateChange: callback => client.auth.onAuthStateChange((event, session) => callback(event, session as SessionCandidate | null)),
       signInWithPassword: credentials => client.auth.signInWithPassword(credentials),
       signOut: scope => scope ? client.auth.signOut({ scope }) : client.auth.signOut(),
-    }, setView, guard, session => verifySessionIdentity(client, session), async session => {
+    }, nextView => {
+      setView(nextView)
+      if (nextView.status === 'guest') setSignOutError('')
+    }, guard, session => verifySessionIdentity(client, session), async session => {
       if (navigator.onLine || guard.isPending()) return null
       const id = session.user?.id?.toLowerCase()
       const registry = await storage.readLocalProfiles()
@@ -360,17 +372,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }, [client, storage])
 
-  // On reconnect, revalidate the server identity before allowing cloud access.
   useEffect(() => {
-    if (view.status !== 'offline-account' || !controller) return
-    const recheck = () => {
-      if (navigator.onLine) {
-        void controller.initialize()
-      }
-    }
+    if (!controller) return
+    const recheck = () => { if (navigator.onLine) void controller.initialize() }
+    const onVisible = () => { if (document.visibilityState === 'visible') recheck() }
     window.addEventListener('online', recheck)
-    return () => window.removeEventListener('online', recheck)
-  }, [view.status, controller])
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      window.removeEventListener('online', recheck)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
+  }, [controller])
 
   // Clear transient controls on identity change; startup publishes verified
   // metadata and bindings together after the snapshot has been restored.
@@ -520,8 +532,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     const stillActive = () => activeAccount.current === account
     async function bindings(sourceId: string, targetId: string) {
       if (!navigator.onLine) throw new Error('Подключитесь к интернету для объединения облачных списков.')
-      if (!stillActive() || await verifiedAccountId(connection) !== account || !stillActive())
-        throw new Error('Войдите в аккаунт, чтобы продолжить.')
+      if (!stillActive()) throw new Error('Текущий аккаунт изменился.')
+      const verifiedId = await checkVerifiedAccountId(connection).catch(async () => {
+        if (!stillActive()) return null
+        return checkVerifiedAccountId(connection).catch(() => {
+          throw new Error('Не удалось проверить подключение к аккаунту. Повторите попытку.')
+        })
+      })
+      if (verifiedId !== account || !stillActive()) throw new Error('Войдите в аккаунт, чтобы продолжить.')
       const [mappings, pending, requests, intents, conflicts] = await Promise.all([
         storage.readAccountListMappings(account), storage.readAccountPending(account),
         storage.readAccountCompletionRequests(account), storage.readAccountCompletions(account),
@@ -802,11 +820,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     offerTransfer.current = false
     setLoginTarget(undefined)
     setPassword('')
+    setError('')
     selectLocalBrowsing(true)
     setAccountDialogOpen(false)
   }
-  function resumeCloudWorkspace(offerLocalTransfer: boolean) {
-    offerTransfer.current = offerLocalTransfer
+  function resumeCloudWorkspace() {
+    offerTransfer.current = true
     setLoginTarget(undefined)
     setPassword('')
     setAccountDialogOpen(false)
@@ -815,11 +834,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   function openLinkedWorkspace(profile: LocalProfile) {
     if (!profile.cloudAccountId) return
     if (profile.cloudAccountId === sessionAccount) {
-      resumeCloudWorkspace(false)
+      resumeCloudWorkspace()
       return
     }
     enterLocalWorkspace()
-    setLoginTarget({ id: profile.cloudAccountId, login: profile.login })
+    setLoginTarget({ id: profile.cloudAccountId })
     setEmail(profile.login ?? '')
     setError('')
     setAccountDialogOpen(true)
@@ -838,6 +857,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setError('')
     setAccountEmailNotice('')
     let changingSession = false
+    let submittingCredentials = false
     try {
       if (sessionAccount) {
         if (!loginTarget || !navigator.onLine) throw new Error('Подключитесь к интернету для смены аккаунта.')
@@ -846,7 +866,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         changingSession = false
       }
       offerTransfer.current = !loginTarget
+      submittingCredentials = true
       await controller.signIn(email.trim(), password)
+      submittingCredentials = false
       if (loginTarget && await verifiedAccountId(client) !== loginTarget.id) {
         changingSession = true
         await controller.signOut('local')
@@ -858,8 +880,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       selectLocalBrowsing(false)
     } catch (cause) {
       offerTransfer.current = false
-      setError(changingSession ? 'Не удалось завершить прежнюю сессию. Повторите выход после восстановления связи.'
-        : cause instanceof Error ? cause.message : 'Не удалось войти')
+      if (changingSession) {
+        setSignOutError('Не удалось завершить прежнюю сессию. Повторите выход после восстановления связи.')
+      } else if (isAuthApiError(cause) && cause.code === 'invalid_credentials') {
+        setError('Неверный email или пароль.')
+      } else if (!navigator.onLine || isAuthRetryableFetchError(cause)) {
+        setError('Не удалось подключиться. Проверьте интернет и повторите вход.')
+      } else {
+        setError(submittingCredentials ? 'Не удалось войти. Повторите попытку.'
+          : cause instanceof Error ? cause.message : 'Не удалось войти.')
+      }
     } finally {
       setBusy(false)
     }
@@ -1135,14 +1165,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function signOut() {
     if (!controller || busy) return
     setBusy(true)
-    setError('')
+    setSignOutError('')
     try {
       await controller.signOut(loginTarget ? 'local' : undefined)
       setAccountDialogOpen(!!loginTarget)
       if (!loginTarget) selectLocalBrowsing(false)
       setVerifiedEmail('')
     } catch {
-      setError('Не удалось завершить выход на сервере. Проверьте подключение.')
+      setSignOutError('Не удалось завершить выход на сервере. Проверьте подключение.')
     } finally {
       setBusy(false)
     }
@@ -1170,14 +1200,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </WorkspaceDialog>}
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
     {profileError && <>
-      <button type="button" onClick={() => window.location.reload()}>Повторить открытие</button>
+      <button type="button" onClick={() => setProfileAttempt(value => value + 1)}>Повторить открытие</button>
       <button type="button" disabled={busy || !controller} onClick={() => void signOut()}>Вернуться к локальным профилям</button>
-      {error && <p role="alert">{error}</p>}
+      {signOutError && <p role="alert">{signOutError}</p>}
     </>}
   </main>
   if (view.status === 'checking') return <main>
-    <p role="status">{error ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
-    {error && <><p role="alert">{error}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
+    <p role="status">{signOutError ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
+    {signOutError && <><p role="alert">{signOutError}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
   const pendingWork = pendingSync && pendingSync.account === workspaceAccount ? pendingSync.pending : undefined
   const ownPush = pushState?.account === currentAccount ? pushState?.status : undefined
@@ -1267,20 +1297,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
         busy, name: verifiedEmail || undefined, syncState,
-        onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, linkedTarget: loginTarget?.id,
+        onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount,
         content: <>
         {workspaceAccount ? (view.status === 'account' ? <>
           {(syncFailed || listSyncFailed) && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
           <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button>
         </> : <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p>) : <>
-          {sessionAccount && <button type="button" disabled={busy} onClick={() => resumeCloudWorkspace(true)}>
-            Вернуться в облачный профиль{verifiedEmail && ` «${verifiedEmail}»`}
-          </button>}
           {(!sessionAccount || loginTarget) && <form onSubmit={signIn}>
             <label htmlFor="auth-email">Email</label>
             <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
             <label htmlFor="auth-password">Пароль</label>
-            <input id="auth-password" type="password" autoComplete="current-password" required value={password} onChange={event => setPassword(event.target.value)} />
+            <input id="auth-password" type="password" autoComplete="current-password" required value={password}
+              aria-describedby={error ? 'auth-login-error' : undefined} onChange={event => setPassword(event.target.value)} />
+            {error && <p id="auth-login-error" role="alert">{error}</p>}
             <button disabled={busy || !controller}>Войти</button>
             {accountEmailEnabled && !sessionAccount && <>
               {!loginTarget && <button type="button" disabled={busy} onClick={() => openAccountEmail('register')}>Создать аккаунт</button>}
@@ -1290,7 +1319,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <p>Без входа покупки сохраняются только на этом устройстве.</p>
           </form>}
         </>}
-        {error && <p role="alert">{error}</p>}
         </>,
       } : undefined} />
     {currentAccount && transferError && <p role="status">{transferError}</p>}

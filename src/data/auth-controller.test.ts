@@ -241,3 +241,35 @@ it('times out a stalled sign-out and keeps the persistent guard until retry succ
     vi.useRealTimers()
   }
 })
+
+it('finishes sign-out automatically when the server confirms it after the UI deadline', async () => {
+  vi.useFakeTimers()
+  try {
+    const values = new Map<string, string>()
+    const guard = createSignOutGuard({
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => { values.set(key, value) },
+      removeItem: key => { values.delete(key) },
+    })
+    const fake = fakeClient(session)
+    let finish!: (result: { error: null }) => void
+    fake.client.signOut = vi.fn(() => new Promise(resolve => { finish = resolve }))
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), guard)
+    await controller.initialize()
+    const timedOut = expect(controller.signOut()).rejects.toThrow('Sign-out timed out')
+    await vi.advanceTimersByTimeAsync(12000)
+    await timedOut
+    await controller.initialize()
+    expect(guard.isPending()).toBe(true)
+    expect(views.at(-1)).toEqual({ status: 'checking' })
+    finish({ error: null })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(guard.isPending()).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    expect(fake.client.signOut).toHaveBeenCalledOnce()
+    controller.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
+})

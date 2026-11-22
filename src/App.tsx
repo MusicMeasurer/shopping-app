@@ -36,7 +36,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; linkedTarget?: string }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; sessionAccount?: string | null }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -121,16 +121,20 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     } catch (error) { setProfileActionError(error instanceof Error ? error.message : 'Не удалось создать локальный профиль.') }
     finally { setProfileBusy(false) }
   }
-  async function selectGuestProfile(id: string, openLinked?: LocalProfile) {
+  async function selectGuestProfile(row: LocalProfile) {
     if (profileBusy || accountMenu?.busy || !registry) return
+    if (row.cloudAccountId && row.cloudAccountId === accountMenu?.sessionAccount) {
+      accountMenu.onOpenLinked(row)
+      return
+    }
     setProfileBusy(true)
     try {
-      const next = await storage.switchLocalProfile(id)
+      const next = await storage.switchLocalProfile(row.id)
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
       closeMenu()
-      if (openLinked && accountMenu) accountMenu.onOpenLinked(openLinked)
-      else if (accountId !== null) accountMenu?.onSelectLocal()
+      if (row.cloudAccountId && accountMenu) accountMenu.onOpenLinked(row)
+      else accountMenu?.onSelectLocal()
     } catch { setProfileActionError('Не удалось переключить локальный профиль.') }
     finally { setProfileBusy(false) }
   }
@@ -173,7 +177,8 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const name = accountId ? (accountMenu?.name || registry?.profiles.find(p => p.cloudAccountId === accountId)?.login || 'Аккаунт') :
     profile ? profileName(profile, registry!.profiles.indexOf(profile)) : 'Мои покупки'
   const mode = accountId ? (cloudOffline ? 'offline' : 'cloud') : profile?.cloudAccountId ? 'linked' : 'local'
-  const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => (accountId !== null || row.id !== guestProfile) && !reservedSources.includes(row.id))
+  const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => (accountId !== null ? row.cloudAccountId !== accountId
+    : row.id !== guestProfile || (!!row.cloudAccountId && !!accountMenu?.sessionAccount)) && !reservedSources.includes(row.id))
   const actionsBusy = profileBusy || accountMenu?.busy
   function closeMenu() {
     setMenuOpen(false)
@@ -195,8 +200,6 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {accountId === null && profile && pendingProfiles.has(profile.id) && deletable(profile.id) &&
       <p className="profile-delete-hint">Для удаления копии сначала синхронизируйте изменения.</p>}
     {accountMenu?.content}
-    {accountMenu && accountId === null && profile?.cloudAccountId && accountMenu.linkedTarget !== profile.cloudAccountId &&
-      <button type="button" disabled={actionsBusy} onClick={() => accountMenu.onOpenLinked(profile)}>Войти в облачный профиль «{name}»</button>}
     {accountMenu && accountId === null && profile && !profile.cloudAccountId &&
       <label className="profile-transfer-preference"><input type="checkbox" checked={!!profile.skipTransferPrompt} disabled={actionsBusy}
         onChange={event => {
@@ -218,14 +221,11 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
         {(showAllProfiles ? otherProfiles : otherProfiles.slice(0, 2)).map(row => {
           const label = profileName(row, registry.profiles.indexOf(row))
           return <div className="profile-option" key={row.id}>
-            <button type="button" disabled={actionsBusy} onClick={() => { setProfileActionError(''); void selectGuestProfile(row.id) }}>
-              <ProfileBadge mode={row.cloudAccountId ? 'linked' : 'local'} />
+            <button type="button" disabled={actionsBusy} onClick={() => { setProfileActionError(''); void selectGuestProfile(row) }}>
+              <ProfileBadge mode={row.cloudAccountId ? 'linked' : 'local'} compact={!!row.cloudAccountId} />
               <span>{label}</span>
             </button>
             {accountId === null && deleteProfileButton(row.id, label, !!row.cloudAccountId)}
-            {accountMenu && row.cloudAccountId && <button type="button" className="profile-cloud-entry"
-              aria-label={`Войти в облачный профиль «${label}»`} disabled={actionsBusy}
-              onClick={() => { setProfileActionError(''); void selectGuestProfile(row.id, row) }}>В облако</button>}
             {accountId === null && pendingProfiles.has(row.id) && deletable(row.id) && <p>Для удаления копии сначала синхронизируйте изменения.</p>}
           </div>
         })}

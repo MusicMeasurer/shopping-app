@@ -40,7 +40,13 @@ async function mockCloud(page: Page, duplicate = false) {
     } else if (path === '/auth/v1/verify') {
       await (body.token === '123456' ? respond(session) : respond({ code: 'otp_expired', msg: 'Invalid code' }, 403))
     } else if (path === '/auth/v1/token') {
-      await respond(session)
+      if (body.password === 'invalid-password') {
+        await respond({ code: 'invalid_credentials', msg: 'Invalid login credentials' }, 400)
+      } else if (body.password === 'simulate-network-error') {
+        await route.abort('failed')
+      } else {
+        await respond(session)
+      }
     } else if (path === '/auth/v1/user') {
       await respond(user)
     } else if (path === '/auth/v1/recover' || path === '/auth/v1/resend' || path === '/auth/v1/logout') {
@@ -131,4 +137,55 @@ test('duplicate registration stays generic and recovery resets the password with
   expect(calls.find(call => call.path === '/auth/v1/user' && call.method === 'PUT')?.body.password).toBe(password)
   expect(calls.some(call => call.path === '/auth/v1/token' || call.path.startsWith('/rest/v1/'))).toBe(false)
   expect(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('auth-token')))).toBe(false)
+})
+
+test('shows wrong credentials and connectivity errors in the sign-in form and allows retry', async ({ page }) => {
+  await mockCloud(page)
+  await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  const panel = page.getByRole('dialog', { name: 'Вход в аккаунт' })
+  const form = panel.locator('form')
+  await form.getByLabel('Email').fill(email)
+  const submit = form.getByRole('button', { name: 'Войти', exact: true })
+  await form.getByLabel('Пароль').fill('invalid-password')
+  await submit.click()
+  await expect(form.getByRole('alert')).toHaveText('Неверный email или пароль.')
+  await form.getByLabel('Пароль').fill('simulate-network-error')
+  await submit.click()
+  await expect(form.getByRole('alert')).toHaveText('Не удалось подключиться. Проверьте интернет и повторите вход.')
+  await form.getByLabel('Пароль').fill(password)
+  await submit.click()
+  const transfer = page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
+  await transfer.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(page.locator('.profile-menu-trigger')).toHaveAttribute('data-profile-mode', 'cloud')
+})
+
+test('reopens the signed-in account by its profile row with several empty local profiles', async ({ page }) => {
+  const calls = await mockCloud(page)
+  await page.goto('/shopping-app/')
+  const menu = page.locator('.profile-menu-trigger')
+  const row = (name: string) => page.locator('.profile-option > button:first-child').filter({ hasText: name })
+  await menu.click()
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Пароль').fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  const transfer = page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
+  await transfer.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(menu).toHaveAttribute('data-profile-mode', 'cloud')
+  await menu.click()
+  await row('Мои покупки').click()
+  for (let i = 0; i < 2; i++) {
+    await expect(menu).toHaveAttribute('data-profile-mode', 'local')
+    await menu.click()
+    await page.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
+    await expect(menu).toHaveAttribute('aria-expanded', 'false')
+  }
+  await menu.click()
+  await page.getByRole('button', { name: 'Ещё', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'В облако', exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Вернуться в облачный профиль/ })).toHaveCount(0)
+  await row(email).click()
+  await transfer.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(menu).toHaveAttribute('data-profile-mode', 'cloud')
+  expect(calls.filter(call => call.path === '/auth/v1/token' || call.path === '/auth/v1/logout')).toHaveLength(1)
 })

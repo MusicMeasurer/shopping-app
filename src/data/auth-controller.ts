@@ -95,7 +95,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     initialize,
     async signIn(email: string, password: string) {
       const { error } = await client.signInWithPassword({ email, password })
-      if (error) throw new Error(error.message)
+      if (error) throw error
     },
     async signOut(scope?: 'local') {
       // Hide account data before the remote sign-out request.
@@ -106,7 +106,15 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       let timeout: ReturnType<typeof setTimeout> | undefined
       try {
         guard?.markPending()
-        pendingSignOut ??= (scope ? client.signOut(scope) : client.signOut()).finally(() => { pendingSignOut = undefined })
+        pendingSignOut ??= (scope ? client.signOut(scope) : client.signOut()).then(result => {
+          // The request may succeed after the UI deadline. Finish the same
+          // sign-out when the SDK confirms it, even if nobody clicked Retry.
+          if (!result.error && active) {
+            guard?.clear()
+            emit({ status: 'guest' })
+          }
+          return result
+        }).finally(() => { pendingSignOut = undefined })
         const { error } = await Promise.race([
           pendingSignOut,
           new Promise<never>((_, reject) => {
@@ -114,13 +122,6 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
           }),
         ])
         if (error) throw new Error(error.message)
-        guard?.clear()
-        emit({ status: 'guest' })
-      } catch (error) {
-        // Keep the workspace locked: the SDK may still hold a valid session.
-        // Do not claim the user is a guest until sign-out succeeds.
-        emit({ status: 'checking' })
-        throw error
       } finally {
         clearTimeout(timeout)
         signingOut = false
