@@ -20,7 +20,7 @@ permissions:
 
 concurrency:
   group: shoppingapp-migration-lab-account-a
-  cancel-in-progress: false
+  queue: max
 
 jobs:
   hosted-ab:

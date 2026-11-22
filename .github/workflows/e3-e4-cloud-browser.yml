@@ -18,7 +18,7 @@ on:
       - '.github/workflows/e3-e4-cloud-browser.yml'
 concurrency:
   group: shoppingapp-migration-lab-account-a
-  cancel-in-progress: false
+  queue: max
 
 permissions:
   contents: read
