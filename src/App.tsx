@@ -288,9 +288,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     try { return localStorage.getItem('shopping-content-size') === 'standard' ? 'standard' : 'large' } catch { return 'large' }
   })
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [settingsKeyboardFocus, setSettingsKeyboardFocus] = useState(false)
   const [draftCardSize, setDraftCardSize] = useState(cardSize)
   const [draftContentSize, setDraftContentSize] = useState(contentSize)
-  function openSettings() {
+  function openSettings(fromKeyboard: boolean) {
+    setSettingsKeyboardFocus(fromKeyboard)
     setDraftCardSize(cardSize)
     setDraftContentSize(contentSize)
     setSettingsOpen(true)
@@ -792,12 +794,18 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     <header>
       <div className="workspace-topbar">
         <button className="settings-trigger" type="button" aria-label="Настройки"
-          aria-expanded={settingsOpen} onClick={openSettings}>☰</button>
+          aria-expanded={settingsOpen} onClick={event => openSettings(event.detail === 0)}>☰</button>
         {headerActions}
       </div>
       <div className="header-copy"><h1>Надо купить</h1><p>Версия {version}</p></div>
     </header>
-    {settingsOpen && <WorkspaceDialog className="settings-panel" label="Настройки приложения" onDismiss={() => setSettingsOpen(false)}>
+    {settingsOpen && <WorkspaceDialog
+      className={settingsKeyboardFocus ? 'settings-panel keyboard-focus' : 'settings-panel'}
+      label="Настройки приложения" onDismiss={() => setSettingsOpen(false)}
+      onPointerDownCapture={() => setSettingsKeyboardFocus(false)}
+      onKeyDownCapture={event => {
+        if (event.key === 'Tab' || event.key.startsWith('Arrow') || event.key === ' ') setSettingsKeyboardFocus(true)
+      }}>
       <h2>Настройки</h2>
       <fieldset><legend>Размер карточек списков</legend>
         <label><input type="radio" name="card-size" checked={draftCardSize === 'standard'} onChange={() => setDraftCardSize('standard')}/> Стандартный (горизонтальная лента)</label>

@@ -5,6 +5,7 @@ const fixturePath = '/__account-email-fixture'
 test.use({ serviceWorkers: 'block' })
 const email = 'registration@example.test'
 const password = 'Test8765'
+const emailCode = '012345'
 const accountId = '1fc6fe3b-1eab-456c-939f-3e2f0da33528'
 const user = { id: accountId, email, aud: 'authenticated', role: 'authenticated',
   app_metadata: {}, user_metadata: {}, created_at: '2026-11-19T00:00:00Z' }
@@ -38,7 +39,7 @@ async function mockCloud(page: Page, duplicate = false) {
     if (path === '/auth/v1/signup') {
       await (duplicate ? respond({ code: 'user_already_exists', msg: 'User already registered' }, 422) : respond(user))
     } else if (path === '/auth/v1/verify') {
-      await (body.token === '123456' ? respond(session) : respond({ code: 'otp_expired', msg: 'Invalid code' }, 403))
+      await (body.token === emailCode ? respond(session) : respond({ code: 'otp_expired', msg: 'Invalid code' }, 403))
     } else if (path === '/auth/v1/token') {
       if (body.password === 'invalid-password') {
         await respond({ code: 'invalid_credentials', msg: 'Invalid login credentials' }, 400)
@@ -85,13 +86,21 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
   await expect(registration.getByLabel('Код из письма'),
     'Signup should enter the code screen without an Auth error').toBeVisible()
-  await registration.getByLabel('Код из письма').fill('999999')
+  const registrationCode = registration.getByLabel('Код из письма')
+  const confirmRegistration = registration.getByRole('button', { name: 'Подтвердить код' })
+  for (const invalid of ['12345', '01234567', 'a12345']) {
+    await registrationCode.fill(invalid)
+    await confirmRegistration.click()
+    await expect(registration.getByRole('alert')).toHaveText('Введите код из 6 цифр.')
+    expect(calls.some(call => call.path === '/auth/v1/verify')).toBe(false)
+  }
+  await registrationCode.fill('999999')
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   await expect(registration.getByRole('alert')).toContainText('Код неверный')
   await registration.getByRole('button', { name: 'Запросить новый код' }).click()
   await expect(registration.getByLabel('Код из письма')).toHaveValue('')
   expect(calls.find(call => call.path === '/auth/v1/resend')?.body).toMatchObject({ email, type: 'signup' })
-  await registration.getByLabel('Код из письма').fill('123456')
+  await registration.getByLabel('Код из письма').fill(emailCode)
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   const signIn = page.getByRole('dialog', { name: 'Вход в аккаунт' })
   await expect(signIn.getByRole('status')).toContainText('Почта подтверждена')
@@ -127,13 +136,19 @@ test('duplicate registration stays generic and recovery resets the password with
   await recovery.getByLabel('Email').fill(email)
   await recovery.getByRole('button', { name: 'Запросить код', exact: true }).click()
   await expect(recovery.getByLabel('Новый пароль')).toHaveCount(0)
-  await recovery.getByLabel('Код из письма').fill('123456')
-  await recovery.getByRole('button', { name: 'Подтвердить код' }).click()
+  const recoveryCode = recovery.getByLabel('Код из письма')
+  const confirmRecovery = recovery.getByRole('button', { name: 'Подтвердить код' })
+  await recoveryCode.fill('01234567')
+  await confirmRecovery.click()
+  await expect(recovery.getByRole('alert')).toHaveText('Введите код из 6 цифр.')
+  expect(calls.some(call => call.path === '/auth/v1/verify')).toBe(false)
+  await recoveryCode.fill(emailCode)
+  await confirmRecovery.click()
   await recovery.getByLabel('Новый пароль').fill(password)
   await recovery.getByLabel('Повторите пароль').fill(password)
   await recovery.getByRole('button', { name: 'Сохранить пароль' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Пароль обновлён' })).toBeVisible()
-  expect(calls.find(call => call.path === '/auth/v1/verify')?.body.type).toBe('recovery')
+  expect(calls.find(call => call.path === '/auth/v1/verify')?.body).toMatchObject({ type: 'recovery', token: emailCode })
   expect(calls.find(call => call.path === '/auth/v1/user' && call.method === 'PUT')?.body.password).toBe(password)
   expect(calls.some(call => call.path === '/auth/v1/token' || call.path.startsWith('/rest/v1/'))).toBe(false)
   expect(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('auth-token')))).toBe(false)

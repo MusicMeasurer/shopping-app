@@ -1,11 +1,11 @@
-import { useLayoutEffect, useRef, type ReactNode } from 'react'
+import { useLayoutEffect, useRef, type ComponentProps, type ReactNode } from 'react'
 
-export function WorkspaceDialog({ label, className, onDismiss, children }: {
+export function WorkspaceDialog({ label, className, onDismiss, children, ...inputHandlers }: {
   label: string
   className: string
   onDismiss: () => void
   children: ReactNode
-}) {
+} & Pick<ComponentProps<'dialog'>, 'onKeyDownCapture' | 'onPointerDownCapture'>) {
   const ref = useRef<HTMLDialogElement>(null)
 
   useLayoutEffect(() => {
@@ -27,7 +27,7 @@ export function WorkspaceDialog({ label, className, onDismiss, children }: {
     }
   }, [])
 
-  return <dialog ref={ref} className={`workspace-dialog ${className}`} aria-label={label}
+  return <dialog {...inputHandlers} ref={ref} className={`workspace-dialog ${className}`} aria-label={label}
     onCancel={event => { event.preventDefault(); onDismiss() }}
     onClick={event => {
       if (event.target !== event.currentTarget) return

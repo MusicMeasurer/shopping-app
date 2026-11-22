@@ -3,6 +3,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
 
 export type AccountEmailMode = 'register' | 'recover'
+const emailCodeLength = 6
+const emailCodePattern = `[0-9]{${emailCodeLength}}`
+const emailCodeHelp = `Введите код из ${emailCodeLength} цифр.`
 const minPasswordLength = 8
 const passwordHelp = `Не менее ${minPasswordLength} символов.`
 
@@ -65,7 +68,7 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
         setCodeSent(true)
       } else if (!recoveryVerified) {
         const { data, error: issue } = await isolated.auth.verifyOtp({
-          email: address, token: code.trim(), type: registering ? 'email' : 'recovery',
+          email: address, token: code, type: registering ? 'email' : 'recovery',
         })
         if (issue && (issue.status === 0 || (issue.status ?? 0) >= 500)) throw issue
         if (issue || !data.session) {
@@ -134,8 +137,15 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
         {registering && <p>Если аккаунт уже существует, войдите или восстановите доступ.</p>}
         <label>Код из письма
           <input name="code" type="text" inputMode="numeric" autoComplete="one-time-code" required disabled={busy}
-            pattern="[0-9]{6,10}" maxLength={10} value={code} onChange={event => setCode(event.target.value)} />
+            aria-describedby="account-email-code-help" pattern={emailCodePattern} value={code}
+            onInvalid={event => {
+              event.preventDefault()
+              event.currentTarget.focus()
+              setError(emailCodeHelp)
+            }}
+            onChange={event => { setCode(event.target.value.trim()); setError('') }} />
         </label>
+        <p id="account-email-code-help">{emailCodeLength} цифр.</p>
       </>}
       {showPassword && <>
         <label>Новый пароль
