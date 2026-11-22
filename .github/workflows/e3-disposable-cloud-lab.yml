@@ -1,0 +1,56 @@
+name: E3 disposable cloud integration (manual only)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e3-disposable-cloud-lab
+  cancel-in-progress: false
+
+jobs:
+  cloud-integration:
+    name: Real Supabase lab and IndexedDB reconciliation
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: e3-lab
+    env:
+      E3_LAB_URL: ${{ secrets.E3_LAB_URL }}
+      E3_LAB_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+      E3_USER_A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      E3_USER_A_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Check disposable lab configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          check_present() {
+            local name="$1"
+            local value="$2"
+            if [[ -z "$value" ]]; then
+              echo "::error title=Missing test configuration::Environment secret $name is empty or unavailable"
+              exit 1
+            fi
+          }
+          check_present E3_LAB_URL "$E3_LAB_URL"
+          check_present E3_LAB_PUBLISHABLE_KEY "$E3_LAB_PUBLISHABLE_KEY"
+          check_present E3_USER_A_EMAIL "$E3_USER_A_EMAIL"
+          check_present E3_USER_A_PASSWORD "$E3_USER_A_PASSWORD"
+          if [[ "$E3_LAB_URL" != "https://gmrqeubhotjpmtwokfeq.supabase.co" ]]; then
+            echo "::error title=Wrong lab target::E3_LAB_URL does not match the pinned disposable Supabase project"
+            exit 1
+          fi
+          if [[ "$E3_LAB_PUBLISHABLE_KEY" != sb_publishable_* ]]; then
+            echo "::error title=Unsupported key format::E3_LAB_PUBLISHABLE_KEY must be a publishable key (sb_publishable_ prefix), not a legacy anon key"
+            exit 1
+          fi
+      - run: npm ci
+      - name: Run real lab integration tests
+        run: npx vitest run src/e3-local-cloud.integration.test.ts

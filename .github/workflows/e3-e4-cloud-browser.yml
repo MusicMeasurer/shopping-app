@@ -1,0 +1,41 @@
+name: E3 E4 authenticated cloud browser acceptance (isolated lab)
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+jobs:
+  authenticated-cloud-browser:
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    timeout-minutes: 12
+    environment: e3-lab
+    env:
+      E3E4_LAB_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
+      E3E4_LAB_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
+      E3E4_LAB_TEST_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      E3E4_LAB_TEST_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+      E3E4_LAB_TEST_LIST_ID: 6d5b862e-4296-4f03-91ee-89274d6a1772
+      VITE_SUPABASE_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
+      VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Validate disposable lab configuration (fail closed)
+        run: |
+          test -n "$E3E4_LAB_PUBLISHABLE_KEY" || { echo "::error::Missing isolated lab publishable key"; exit 1; }
+          test -n "$E3E4_LAB_TEST_EMAIL" || { echo "::error::Missing disposable test user"; exit 1; }
+          test -n "$E3E4_LAB_TEST_PASSWORD" || { echo "::error::Missing disposable test password"; exit 1; }
+          test -n "$E3E4_LAB_TEST_LIST_ID" || { echo "::error::Missing owned disposable test list"; exit 1; }
+      - run: npm run build
+      - name: Cloud archive, deletion recovery and two-device conflict
+        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts tests/e3-e4-cloud-conflict.spec.ts --project=iphone-webkit --workers=1
+      - run: npm run build
+        env:
+          VITE_LAB_CONTROLS: 'true'
+      - name: Authenticated E3/E4 diagnostic regression
+        run: npx playwright test tests/e3-e4-cloud-permanent.spec.ts --project=iphone-webkit --workers=1

@@ -1,0 +1,22 @@
+name: SQL static guardrails
+on:
+  push:
+    paths:
+      - 'cloud/drafts/**'
+      - 'tests/sql/**'
+      - '.github/workflows/sql-static-guardrails.yml'
+  pull_request:
+    paths:
+      - 'cloud/drafts/**'
+      - 'tests/sql/**'
+      - '.github/workflows/sql-static-guardrails.yml'
+  workflow_dispatch:
+jobs:
+  sql-static:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Python static SQL guardrails (no database or secrets)
+        run: python3 -m unittest discover -s tests/sql -p 'test_*.py' -v

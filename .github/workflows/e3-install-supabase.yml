@@ -1,0 +1,34 @@
+name: E3 Install pinned Supabase SDK
+on:
+  push:
+    branches: [feature/e3-cloud-auth]
+    paths:
+      - '.github/workflows/e3-install-supabase.yml'
+  workflow_dispatch:
+jobs:
+  install-sdk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Install exact resolved Supabase JS v2 release
+        run: npm install --save-exact '@supabase/supabase-js@2'
+      - run: npm test
+      - run: npm run build
+      - name: Commit dependency manifests to feature branch
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "build(e3): pin Supabase JS SDK and lockfile"
+            git push origin HEAD:feature/e3-cloud-auth
+          fi
