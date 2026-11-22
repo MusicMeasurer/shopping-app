@@ -32,6 +32,7 @@ async function editAmount(page: Page, item: string, amount: number) {
 
 test('two WebKit sessions retain a newer offline amount and a later cloud purchase mark', async ({ page: offlinePage, context, browser }) => {
   test.setTimeout(180000)
+  const syncTimeout = 30000
   if (url !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' || !key || !email || !password)
     throw new Error('Refusing to run outside the established isolated E3 lab')
 
@@ -74,9 +75,16 @@ test('two WebKit sessions retain a newer offline amount and a later cloud purcha
       await expect(checkbox(onlinePage, 1)).toBeVisible()
       await expect(checkbox(onlinePage, 1)).not.toBeChecked()
       await context.setOffline(true)
+      await expect.poll(() => offlinePage.evaluate(() => navigator.onLine), {
+        message: 'The first device must be offline while the second device edits the item',
+      }).toBe(false)
 
       await editAmount(onlinePage, item, 3)
-      await expect.poll(liveItem).toMatchObject({ quantity: 3, purchased: false })
+      await expect.poll(liveItem, {
+        timeout: syncTimeout,
+        message: 'The online device must commit the first quantity change',
+      }).toMatchObject({ quantity: 3, purchased: false })
+      await expect(checkbox(offlinePage, 1)).toBeVisible()
       const firstCloudEdit = await liveItem()
       const serverAmountTime = Date.parse(firstCloudEdit!.field_changed_at.amount)
       expect(Number.isFinite(serverAmountTime)).toBe(true)
@@ -86,14 +94,20 @@ test('two WebKit sessions retain a newer offline amount and a later cloud purcha
       await expect(checkbox(offlinePage, 2)).toBeVisible()
       await expect(checkbox(offlinePage, 2)).not.toBeChecked()
       await checkbox(onlinePage, 3).click()
-      await expect.poll(liveItem).toMatchObject({
+      await expect.poll(liveItem, {
+        timeout: syncTimeout,
+        message: 'The online purchase mark must reach the server before reconnect',
+      }).toMatchObject({
         quantity: 3, purchased: true, field_changed_at: { amount: firstCloudEdit!.field_changed_at.amount },
       })
 
       await context.setOffline(false)
-      await expect.poll(liveItem, { timeout: 30000 }).toMatchObject({ quantity: 2, purchased: true })
-      await expect(checkbox(offlinePage, 2)).toBeChecked({ timeout: 30000 })
-      await expect(checkbox(onlinePage, 2)).toBeChecked({ timeout: 30000 })
+      await expect.poll(liveItem, {
+        timeout: syncTimeout,
+        message: 'Reconnect must preserve the offline quantity and the online purchase mark together',
+      }).toMatchObject({ quantity: 2, purchased: true })
+      await expect(checkbox(offlinePage, 2)).toBeChecked({ timeout: syncTimeout })
+      await expect(checkbox(onlinePage, 2)).toBeChecked({ timeout: syncTimeout })
     } finally {
       await otherContext.close()
     }
