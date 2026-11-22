@@ -22,7 +22,7 @@ import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
 import { MAX_LOCAL_PROFILES, profileName, sortProfiles } from './data/local-profiles'
-import { DeleteProfileButton, ProfileBadge, ProfileMenu, type ProfileSyncState } from './ProfileMenu'
+import { DeleteProfileButton, ProfileBadge, ProfileMenu, ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { LocalProfile, LocalProfileRegistry } from './data/local-profiles'
 export interface ListOperationStatus {
   accountId: string
@@ -37,7 +37,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile) => void; sessionAccount?: string | null }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -134,6 +134,8 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       setRegistry(next)
       setGuestProfile(next.activeProfileId)
       closeMenu()
+      const created = next.profiles.find(row => row.id === next.activeProfileId)
+      if (created) setProfileRename(profileName(created, next.profiles.indexOf(created)))
       setStartupError('')
     } catch (error) { setProfileActionError(error instanceof Error ? error.message : 'Не удалось создать локальный профиль.') }
     finally { setProfileBusy(false) }
@@ -141,7 +143,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   async function selectGuestProfile(row: LocalProfile) {
     if (profileBusy || accountMenu?.busy || !registry) return
     if (row.cloudAccountId && row.cloudAccountId === accountMenu?.sessionAccount) {
-      accountMenu.onOpenLinked(row)
+      accountMenu.onOpenLinked(row, guestProfile ?? undefined)
       return
     }
     setProfileBusy(true)
@@ -221,11 +223,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     } : undefined}>
     {accountId === null && profile && pendingProfiles.has(profile.id) && deletable(profile.id) &&
       <p className="profile-delete-hint">Для удаления копии сначала синхронизируйте изменения.</p>}
-    {accountMenu?.content}
+    {accountMenu?.content(profile)}
     {accountMenu && accountId === null && profile && !profile.cloudAccountId &&
-      <label className="profile-transfer-preference"><input type="checkbox" checked={!!profile.skipTransferPrompt} disabled={actionsBusy}
-        onChange={event => {
-          const skipped = event.currentTarget.checked
+      <ProfileTransferPreference checked={!!profile.skipTransferPrompt} disabled={actionsBusy}
+        onChange={skipped => {
           const displayPreference = (value: boolean) => setRegistry(current => current && ({
             ...current,
             profiles: current.profiles.map(row => row.id === profile.id ? { ...row, skipTransferPrompt: value } : row),
@@ -237,7 +238,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
             displayPreference(!!profile.skipTransferPrompt)
             setProfileActionError('Не удалось сохранить настройку синхронизации.')
           }).finally(() => setProfileBusy(false))
-        }} /> Не спрашивать о синхронизации этого профиля</label>}
+        }}>Не спрашивать о синхронизации этого профиля</ProfileTransferPreference>}
     {registry && (guestProfile || accountId !== null) && <div className="profile-switcher" role="group" aria-label="Локальные профили">
       {otherProfiles.length > 0 && <div className="profile-options" tabIndex={showAllProfiles ? 0 : undefined}>
         {(showAllProfiles ? otherProfiles : otherProfiles.slice(0, 2)).map(row => {
@@ -264,11 +265,25 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {profileRename === null && profileActionError && <p role="alert">{profileActionError}</p>}
   </ProfileMenu>
   const renameDialog = <>
-    {profileRename !== null && guestProfile && <WorkspaceDialog label="Имя локального профиля" className="e4-editor profile-name-dialog" onDismiss={() => setProfileRename(null)}>
+    {profileRename !== null && guestProfile && <WorkspaceDialog label="Имя локального профиля" className="e4-editor profile-name-dialog"
+      onDismiss={() => { if (!profileBusy) setProfileRename(null) }}>
       <form onSubmit={event => { event.preventDefault(); setProfileBusy(true); void storage.renameLocalProfile(guestProfile, profileRename).then(next => { setRegistry(next); setProfileRename(null); setProfileActionError('') }).catch(error => setProfileActionError(error instanceof Error ? error.message : 'Не удалось изменить имя.')).finally(() => setProfileBusy(false)) }}>
-        <h2>Имя локального профиля</h2><label>Имя профиля<input maxLength={120} value={profileRename} onChange={event => setProfileRename(event.target.value)} /></label>
+        <h2>Имя локального профиля</h2>
+        <label htmlFor="profile-name">Имя профиля</label>
+        <div className="rename-input">
+          <input id="profile-name" autoFocus maxLength={120} value={profileRename} disabled={profileBusy}
+            onChange={event => setProfileRename(event.target.value)} />
+          <button type="button" aria-label="Очистить имя профиля" disabled={profileBusy || !profileRename}
+            onClick={event => {
+              setProfileRename('')
+              event.currentTarget.form?.querySelector('input')?.focus()
+            }}>🧹</button>
+        </div>
         {profileActionError && <p role="alert">{profileActionError}</p>}
-        <button type="submit" disabled={profileBusy || !profileRename.trim()}>Сохранить имя</button><button type="button" onClick={() => setProfileRename(null)}>Отмена</button>
+        <div className="dialog-buttons">
+          <button type="button" disabled={profileBusy} onClick={() => setProfileRename(null)}>Отмена</button>
+          <button type="submit" disabled={profileBusy || !profileRename.trim()}>Сохранить имя</button>
+        </div>
       </form>
     </WorkspaceDialog>}
   </>

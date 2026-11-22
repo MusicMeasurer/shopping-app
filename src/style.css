@@ -524,3 +524,10 @@ nav .list-conflict-marker{
 
 .merge-targets{list-style:none;padding:0;display:grid;gap:8px}
 .merge-targets button{width:100%;text-align:start;overflow-wrap:anywhere}
+
+.profile-login-actions{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:stretch}
+.profile-login-actions button,.profile-register{border:1px solid #bdcbbf;border-radius:8px;padding:6px 9px;background:#f6f8f5;color:#203b30}
+.profile-login-actions .profile-login-submit{background:#25634c;border-color:#25634c;color:#fff;font-weight:700}
+.profile-login .profile-login-error{margin:0;padding:8px 10px;border-radius:8px;background:#fff0ed;color:#9c2222;font-weight:700;overflow-wrap:anywhere}
+.profile-transfer-preference{-webkit-tap-highlight-color:transparent}
+.profile-transfer-preference[data-pointer-focus] input:focus{outline:none}

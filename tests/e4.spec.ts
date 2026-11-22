@@ -794,6 +794,7 @@ test('E4: the standard rail scrolls and each local profile keeps its own card st
   const profileMenu = page.locator('.profile-menu-trigger')
   await profileMenu.click()
   await page.getByRole('button', { name: 'Добавить профиль' }).click()
+  await page.getByRole('dialog', { name: 'Имя локального профиля' }).getByRole('button', { name: 'Отмена' }).click()
   await expect(profileMenu).toContainText('Локальный профиль 2')
   await expect(rail).toHaveClass(/large.*list-rail/)
   await page.reload()

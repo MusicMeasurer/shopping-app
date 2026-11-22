@@ -28,7 +28,7 @@ import type { CompletionMode } from './data/cloud-completion-rpc'
 import { bindVerifiedOwnedList } from './data/verified-list-binding'
 import { createAccountSync } from './data/account-sync'
 import type { CloudCompletionRequest, Storage } from './data/storage'
-import type { ProfileSyncState } from './ProfileMenu'
+import { ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { ListOperationStatus } from './App'
 import { createAuthController } from './data/auth-controller'
 import { createSignOutGuard } from './data/signout-guard'
@@ -52,7 +52,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [localBrowsing, setLocalBrowsing] = useState(() => {
     try { return sessionStorage.getItem(localWorkspaceKey) === 'yes' } catch { return false }
   })
-  const [loginTarget, setLoginTarget] = useState<{ id: string }>()
+  const localReturnProfile = useRef<string | undefined>(undefined)
   const offerTransfer = useRef(false)
   function selectLocalBrowsing(value: boolean) {
     setLocalBrowsing(value)
@@ -262,6 +262,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!cancelled) {
         offerTransfer.current = false
         setReadyAccount(currentAccount)
+      localReturnProfile.current = undefined
       }
     })().catch((cause: unknown) => {
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
@@ -904,71 +905,83 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
 
   function enterLocalWorkspace() {
     offerTransfer.current = false
-    setLoginTarget(undefined)
     setPassword('')
     setError('')
     selectLocalBrowsing(true)
     setAccountDialogOpen(false)
   }
-  function resumeCloudWorkspace() {
-    offerTransfer.current = true
-    setLoginTarget(undefined)
-    setPassword('')
-    setAccountDialogOpen(false)
-    selectLocalBrowsing(false)
-  }
-  function openLinkedWorkspace(profile: LocalProfile) {
+  function openLinkedWorkspace(profile: LocalProfile, previousProfileId?: string) {
     if (!profile.cloudAccountId) return
-    if (profile.cloudAccountId === sessionAccount) {
-      resumeCloudWorkspace()
-      return
-    }
     enterLocalWorkspace()
-    setLoginTarget({ id: profile.cloudAccountId })
-    setEmail(profile.login ?? '')
-    setError('')
-    setAccountDialogOpen(true)
+    if (profile.cloudAccountId === sessionAccount) {
+      localReturnProfile.current = previousProfileId
+      selectLocalBrowsing(false)
+    } else {
+      setEmail(profile.login ?? '')
+      setAccountDialogOpen(true)
+    }
   }
-  function openAccountEmail(mode: AccountEmailMode) {
+  async function returnToLocalProfiles() {
+    if (busy) return
+    setBusy(true)
+    try {
+      const previous = localReturnProfile.current
+      if (previous) await storage.switchLocalProfile(previous)
+      localReturnProfile.current = undefined
+      enterLocalWorkspace()
+    } catch {
+      setProfileError('Не удалось вернуться к локальному профилю. Повторите попытку.')
+    } finally {
+      setBusy(false)
+    }
+  }
+  function openAccountEmail(mode: AccountEmailMode, address = email) {
+    setEmail(address)
     setError('')
     setPassword('')
     setAccountEmailNotice('')
     setAccountDialogOpen(false)
     setAccountEmailMode(mode)
   }
-  async function signIn(event: FormEvent) {
+  async function signIn(event: FormEvent, profile?: LocalProfile) {
     event.preventDefault()
     if (!controller || !client || busy) return
+    const target = profile?.cloudAccountId
+    const address = (target ? profile.login ?? '' : email).trim()
+    if (!address) { setError('Не удалось определить email этого профиля.'); return }
+    localReturnProfile.current = profile?.id
     setBusy(true)
     setError('')
     setAccountEmailNotice('')
-    let changingSession = false
     let submittingCredentials = false
     try {
-      if (sessionAccount) {
-        if (!loginTarget || !navigator.onLine) throw new Error('Подключитесь к интернету для смены аккаунта.')
-        changingSession = true
-        await controller.signOut('local')
-        changingSession = false
-      }
-      offerTransfer.current = !loginTarget
+      offerTransfer.current = !target
       submittingCredentials = true
-      await controller.signIn(email.trim(), password)
-      submittingCredentials = false
-      if (loginTarget && await verifiedAccountId(client) !== loginTarget.id) {
-        changingSession = true
-        await controller.signOut('local')
-        changingSession = false
-        throw new Error('Вход выполнен в другой аккаунт. Проверьте адрес выбранного профиля.')
+      if (sessionAccount || target) {
+        if (!navigator.onLine) throw new Error('Подключитесь к интернету для смены аккаунта.')
+        const isolated = createAccountEmailClient()
+        if (!isolated) throw new Error('Подключение к аккаунту недоступно.')
+        // Validate credentials before replacing the currently authorized session.
+        const { data, error: credentialsError } = await isolated.auth.signInWithPassword({ email: address, password })
+        if (credentialsError) throw credentialsError
+        submittingCredentials = false
+        if (!data.session || !data.user || (target && data.user.id.toLowerCase() !== target))
+          throw new Error('Вход выполнен в другой аккаунт. Проверьте адрес выбранного профиля.')
+        selectLocalBrowsing(true)
+        const result = await client.auth.setSession({
+          access_token: data.session.access_token, refresh_token: data.session.refresh_token,
+        })
+        if (result.error) throw result.error
+        if (result.data.user?.id !== data.user.id) throw new Error('Не удалось подтвердить сессию. Повторите вход.')
+      } else {
+        await controller.signIn(address, password)
+        submittingCredentials = false
       }
       setPassword('')
-      setLoginTarget(undefined)
       selectLocalBrowsing(false)
     } catch (cause) {
       offerTransfer.current = false
-      if (changingSession) {
-        setSignOutError('Не удалось завершить прежнюю сессию. Повторите выход после восстановления связи.')
-      } else if (isAuthApiError(cause) && cause.code === 'invalid_credentials') {
+      if (isAuthApiError(cause) && cause.code === 'invalid_credentials') {
         setError('Неверный email или пароль.')
       } else if (!navigator.onLine || isAuthRetryableFetchError(cause)) {
         setError('Не удалось подключиться. Проверьте интернет и повторите вход.')
@@ -1354,9 +1367,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setBusy(true)
     setSignOutError('')
     try {
-      await controller.signOut(loginTarget ? 'local' : undefined)
-      setAccountDialogOpen(!!loginTarget)
-      if (!loginTarget) selectLocalBrowsing(false)
+      await controller.signOut()
+      setAccountDialogOpen(false)
+      selectLocalBrowsing(false)
       setVerifiedEmail('')
     } catch {
       setSignOutError('Не удалось завершить выход на сервере. Проверьте подключение.')
@@ -1371,10 +1384,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         <p>Списки, товары и архив будут перенесены в аккаунт. Профиль будет называться логином аккаунта.</p>
         {transferPrompt.existing && <p>На устройстве уже есть профиль этого аккаунта. Данные будут объединены с ним, а исходный локальный профиль удалён после успешного переноса.</p>}
         <p>Если отказаться, локальный профиль останется отдельным.</p>
-        <label className="profile-transfer-preference"><input type="checkbox" checked={rememberDecline}
-          onChange={event => setRememberDecline(event.currentTarget.checked)} /> Больше не спрашивать для этого профиля</label>
+        <ProfileTransferPreference checked={rememberDecline} onChange={setRememberDecline}>
+          Больше не спрашивать для этого профиля
+        </ProfileTransferPreference>
         <button type="button" onClick={() => answerTransfer('yes')}>Синхронизировать профиль</button>
-        <button type="button" onClick={() => answerTransfer(rememberDecline ? 'skip-saved' : 'skip')}>Не синхронизировать</button>
+        <button type="button" autoFocus onClick={() => answerTransfer(rememberDecline ? 'skip-saved' : 'skip')}>Не синхронизировать</button>
       </> : <>
         <h2>Совпадают названия списков</h2>
         <p>Выберите действие для всех совпадений ({transferPrompt.collisions.length}).</p>
@@ -1388,7 +1402,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
     {profileError && <>
       <button type="button" onClick={() => setProfileAttempt(value => value + 1)}>Повторить открытие</button>
-      <button type="button" disabled={busy || !controller} onClick={() => void signOut()}>Вернуться к локальным профилям</button>
+      <button type="button" disabled={busy || !controller} onClick={() => void returnToLocalProfiles()}>Вернуться к локальным профилям</button>
       {signOutError && <p role="alert">{signOutError}</p>}
     </>}
   </main>
@@ -1415,7 +1429,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudMappingRevision(value => value + 1)
   }
   return <>
-    {client && !sessionAccount && accountEmailMode && <AccountEmailDialog
+    {client && !workspaceAccount && accountEmailMode && <AccountEmailDialog
       mode={accountEmailMode} initialEmail={email} createClient={createAccountEmailClient}
       onDismiss={() => { setAccountEmailMode(null); setAccountDialogOpen(true) }}
       onCompleted={(address, message) => {
@@ -1485,25 +1499,33 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
         busy, name: verifiedEmail || undefined, syncState,
         onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount,
-        content: <>
+        content: profile => <>
         {workspaceAccount ? (view.status === 'account' ? <>
           {(syncFailed || listSyncFailed) && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
           <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button>
         </> : <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p>) : <>
-          {(!sessionAccount || loginTarget) && <form onSubmit={signIn}>
-            <label htmlFor="auth-email">Email</label>
-            <input id="auth-email" type="email" autoComplete="username" required value={email} onChange={event => setEmail(event.target.value)} />
+          {(!profile?.cloudAccountId || profile.cloudAccountId !== sessionAccount) &&
+          <form className="profile-login" onSubmit={event => void signIn(event, profile)}>
+            {profile?.cloudAccountId ?
+              <input type="hidden" name="username" autoComplete="username" value={profile.login ?? ''} /> : <>
+              <label htmlFor="auth-email">Email</label>
+              <input id="auth-email" name="username" type="email" autoComplete="username" required value={email}
+                onChange={event => setEmail(event.target.value)} />
+            </>}
             <label htmlFor="auth-password">Пароль</label>
             <input id="auth-password" type="password" autoComplete="current-password" required value={password}
               aria-describedby={error ? 'auth-login-error' : undefined} onChange={event => setPassword(event.target.value)} />
-            {error && <p id="auth-login-error" role="alert">{error}</p>}
-            <button disabled={busy || !controller}>Войти</button>
-            {accountEmailEnabled && !sessionAccount && <>
-              {!loginTarget && <button type="button" disabled={busy} onClick={() => openAccountEmail('register')}>Создать аккаунт</button>}
-              <button type="button" disabled={busy} onClick={() => openAccountEmail('recover')}>Забыли пароль?</button>
-            </>}
+            {error && <p className="profile-login-error" id="auth-login-error" role="alert">{error}</p>}
+            <div className="profile-login-actions">
+              <button className="profile-login-submit" disabled={busy || !controller}>Войти</button>
+              {accountEmailEnabled && <button type="button" disabled={busy}
+                onClick={() => openAccountEmail('recover', profile?.cloudAccountId ? profile.login ?? '' : email)}>
+                Забыли пароль?
+              </button>}
+            </div>
+            {accountEmailEnabled && !profile?.cloudAccountId && <button className="profile-register" type="button"
+              disabled={busy} onClick={() => openAccountEmail('register')}>Зарегистрироваться</button>}
             {accountEmailNotice && <p role="status">{accountEmailNotice}</p>}
-            <p>Без входа покупки сохраняются только на этом устройстве.</p>
           </form>}
         </>}
         </>,

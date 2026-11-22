@@ -29,6 +29,19 @@ export function DeleteProfileButton({ name, disabled, onDelete }: { name: string
   </button>
 }
 
+export function ProfileTransferPreference({ checked, disabled, onChange, children }: {
+  checked: boolean; disabled?: boolean; onChange: (checked: boolean) => void; children: ReactNode
+}) {
+  const [pointerFocus, setPointerFocus] = useState(false)
+  return <label className="profile-transfer-preference" data-pointer-focus={pointerFocus || undefined}
+    onPointerDownCapture={() => setPointerFocus(true)}>
+    <input type="checkbox" checked={checked} disabled={disabled}
+      onBlur={() => setPointerFocus(false)} onKeyDown={() => setPointerFocus(false)}
+      onChange={event => onChange(event.currentTarget.checked)} />
+    {children}
+  </label>
+}
+
 export function ProfileBadge({ mode, compact = false }: { mode: ProfileMode; compact?: boolean }) {
   return <span className="profile-badge" data-mode={mode} title={statusLabels[mode]}>
     <svg aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7">

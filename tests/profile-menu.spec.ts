@@ -14,7 +14,7 @@ test('opens one profile menu from settings and sorts two recent profiles before 
 
   await panel.getByRole('button', { name: 'Изменить имя профиля' }).click()
   const rename = page.getByRole('dialog', { name: 'Имя локального профиля', exact: true })
-  const input = rename.getByLabel('Имя профиля')
+  const input = rename.getByLabel('Имя профиля', { exact: true })
   await expect.poll(async () => (await input.boundingBox())?.width ?? 0).toBeGreaterThan(120)
   await input.fill('Домашние покупки')
   await rename.getByRole('button', { name: 'Сохранить имя' }).click()
@@ -23,6 +23,9 @@ test('opens one profile menu from settings and sorts two recent profiles before 
   for (let number = 2; number <= 10; number++) {
     if (!(await panel.isVisible())) await trigger.click()
     await panel.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
+    const nameDialog = page.getByRole('dialog', { name: 'Имя локального профиля' })
+    await expect(nameDialog.getByLabel('Имя профиля', { exact: true })).toHaveValue('Локальный профиль ' + number)
+    await nameDialog.getByRole('button', { name: 'Отмена' }).click()
     await expect(trigger).toContainText('Локальный профиль ' + number)
     await expect(panel).toBeHidden()
   }
@@ -55,6 +58,9 @@ test('deletes an inactive profile from its row without switching the current pro
   for (let number = 2; number <= 3; number++) {
     await trigger.click()
     await page.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
+    const nameDialog = page.getByRole('dialog', { name: 'Имя локального профиля' })
+    await expect(nameDialog.getByLabel('Имя профиля', { exact: true })).toHaveValue('Локальный профиль ' + number)
+    await nameDialog.getByRole('button', { name: 'Отмена' }).click()
     await expect(trigger).toContainText('Локальный профиль ' + number)
   }
   await trigger.click()
