@@ -3,6 +3,8 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 /** Immutable purchased-item snapshots; never infer a purchase from an active checkbox. */
 export interface CloudArchiveCompletion {
   id: string
+  operationId?: string
+  pending?: boolean
   sourceListId: string
   sourceListName: string
   completedAt: string
@@ -16,7 +18,7 @@ export interface CloudArchiveCompletion {
 export async function fetchCloudArchive(client: SupabaseClient, paginate = true): Promise<CloudArchiveCompletion[]> {
   const readCompletions = () => client
     .from('e4_archive_completions')
-    .select('id,source_list_id,source_list_name,completed_at')
+    .select('id,source_list_id,source_list_name,completed_at,operation_id')
     .order('completed_at', { ascending: false })
   let { data: completions, error: completionError } = await (paginate ? readCompletions().order('id').range(0, 499) : readCompletions())
   if (paginate && !completionError && completions?.length === 500) {
@@ -59,6 +61,7 @@ export async function fetchCloudArchive(client: SupabaseClient, paginate = true)
   }
   return completions.map(row => ({
     id: row.id as string,
+    operationId: row.operation_id as string,
     sourceListId: row.source_list_id as string,
     sourceListName: row.source_list_name as string,
     completedAt: row.completed_at as string,

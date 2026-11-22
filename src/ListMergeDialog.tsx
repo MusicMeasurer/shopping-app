@@ -17,7 +17,6 @@ export function ListMergeDialog({ source, targets, actions, onDismiss, onMerged 
   onDismiss(): void
   onMerged(targetId: string): void
 }) {
-  const [targetId, setTargetId] = useState('')
   const [snapshot, setSnapshot] = useState<ListMergeSnapshot>()
   const [choices, setChoices] = useState(new Map<string, MergeChoice>())
   const [phase, setPhase] = useState<Phase>('pick')
@@ -36,7 +35,7 @@ export function ListMergeDialog({ source, targets, actions, onDismiss, onMerged 
   function choose(key: string, change: (previous: MergeChoice) => MergeChoice) {
     setChoices(previous => new Map(previous).set(key, change(previous.get(key) ?? { keepId: '', renamed: {} })))
   }
-  async function load() {
+  async function load(targetId: string) {
     const current = await actions.read(source.id, targetId)
     setSnapshot(current)
     setChoices(new Map())
@@ -61,7 +60,7 @@ export function ListMergeDialog({ source, targets, actions, onDismiss, onMerged 
       if (cause instanceof ListMergeConflict) {
         setPhase('pick')
         setSnapshot(undefined)
-        await load()
+        await load(snapshot.target.id)
       } else {
         setPhase('retry')
       }
@@ -74,13 +73,11 @@ export function ListMergeDialog({ source, targets, actions, onDismiss, onMerged 
     <h2>Объединить списки</h2>
     {phase === 'pick' ? <>
       <p>Исходный список — «{source.name}».</p>
-      <label>Список-получатель
-        <select value={targetId} onChange={event => setTargetId(event.target.value)} disabled={busy}>
-          <option value="">Выбрать список</option>
-          {targets.map(target => <option key={target.id} value={target.id}>{target.name}</option>)}
-        </select>
-      </label>
-      <button type="button" disabled={busy || !targetId} onClick={() => void run(load)}>Посмотреть результат</button>
+      <p id="merge-target-label">Список-получатель</p>
+      <ul className="merge-targets" aria-labelledby="merge-target-label">
+        {targets.map(target => <li key={target.id}><button type="button" disabled={busy}
+          onClick={() => void run(() => load(target.id))}>{target.name}</button></li>)}
+      </ul>
     </> : snapshot && <>
       <p>«{snapshot.source.name}» исчезнет из активных списков. Останется «{snapshot.target.name}» ({listKindLabels[snapshot.target.kind].toLowerCase()}).</p>
       {phase === 'preview' && [...groups].filter(([, group]) => group.length > 1).map(([key, group], index) => {

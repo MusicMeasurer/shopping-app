@@ -50,7 +50,7 @@ it('keeps a draft and its queued completion across restart and promotes exactly 
   expect(rpc.mock.calls[0]).toEqual(rpc.mock.calls[1])
   expect(await restarted.readAccountDraftLists(accountA)).toEqual([])
   expect(await restarted.readAccountPending(accountA)).toMatchObject([{ itemId: item.id, remoteListId: remoteId }])
-  expect(await restarted.readAccountCompletionRequests(accountA)).toEqual([{ ...request, remoteListId: remoteId, fromLocalCopy: true }])
+  expect(await restarted.readAccountCompletionRequests(accountA)).toEqual([{ ...request, remoteListId: remoteId, fromLocalCopy: true, localKind: 'oneoff' }])
   expect((await syncAccountDrafts(restarted, client(rpc), accountA, () => true)).promoted).toEqual([])
   await restarted.close()
 })

@@ -28,6 +28,7 @@ export interface ListOperationStatus {
   accountId: string
   localListId: string
   name: string
+  fromLocalCopy?: boolean
   mode: CompletionMode
   phase: 'queued' | 'running' | 'error'
   message?: string
@@ -43,25 +44,31 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const [startupError, setStartupError] = useState('')
   const [upgradeBlocked, setUpgradeBlocked] = useState(false)
   const [registry, setRegistry] = useState<LocalProfileRegistry | null>(null)
+  const [localSyncRevision, setLocalSyncRevision] = useState(0)
   const [savedAccount, setSavedAccount] = useState<{
     profileId: string; id: string; bindings: Record<string, string>; archive: CloudArchiveCompletion[] | null;
+    completions: Awaited<ReturnType<Storage['readLocalCompletionView']>>
     lists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[]
   } | null>(null)
+  const localProfile = accountId === null ? registry?.profiles.find(row => row.id === guestProfile)
+    : cloudOffline ? registry?.profiles.find(row => row.cloudAccountId === accountId) : undefined
+  const localProfileId = localProfile?.id
+  const localProfileAccount = localProfile?.cloudAccountId
   useEffect(() => {
-    const profile = accountId === null ? registry?.profiles.find(row => row.id === guestProfile) : undefined
-    const id = profile?.cloudAccountId
-    if (!id || !profile) { setSavedAccount(null); return }
+    const profileId = localProfileId
+    const id = localProfileAccount
+    if (!id || !profileId) { setSavedAccount(null); return }
     let cancelled = false
-    void Promise.all([storage.readAccountListMappings(id), storage.readAccountArchive(id)]).then(([mappings, archive]) => {
+    void Promise.all([storage.readLocalListMappings(id), storage.readLocalCompletionView(id)]).then(([mappings, completion]) => {
       if (cancelled) return
       const bindings = Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId]))
       const lists = mappings.filter(row => row.metadata).sort((a, b) => a.metadata!.position - b.metadata!.position)
         .map(row => ({ id: row.localListId, name: row.metadata!.name, kind: row.metadata!.kind }))
-      setSavedAccount({ profileId: profile.id, id, bindings, lists, archive })
+      setSavedAccount({ profileId, id, bindings, lists, archive: completion.snapshots, completions: completion })
     }).catch(() => { if (!cancelled) setStartupError('Не удалось открыть локальный профиль аккаунта.') })
     return () => { cancelled = true }
-  }, [storage, accountId, registry, guestProfile])
-  const localAccount = savedAccount?.profileId === guestProfile ? savedAccount : null
+  }, [storage, localProfileId, localProfileAccount, localSyncRevision])
+  const localAccount = savedAccount?.profileId === localProfileId ? savedAccount : null
   const [profileActionError, setProfileActionError] = useState('')
   const [profileBusy, setProfileBusy] = useState(false)
   const [profileRename, setProfileRename] = useState<string | null>(null)
@@ -155,8 +162,13 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     }
     finally { setProfileBusy(false) }
   }
-  const [localSyncRevision, setLocalSyncRevision] = useState(0)
   const localChangesQueued = useCallback(() => setLocalSyncRevision(revision => revision + 1), [])
+  async function changeSavedAccountList(id: string, action: 'rename' | 'kind' | 'reorder', value: string) {
+    if (!localAccount) return false
+    await storage.queueLocalListChange(localAccount.id, id, action, value)
+    localChangesQueued()
+    return true
+  }
   const [pendingProfiles, setPendingProfiles] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
     if (!registry || accountId !== null) return
@@ -254,13 +266,19 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     {renameDialog}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={
       accountId !== null ? (cloudOffline ? 'paused' : 'connected') : localAccount ? 'signed-out' : undefined
-    } onCompleteCloudList={onCompleteCloudList} cloudMerge={cloudMerge} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive}>
+    } localCompletions={localAccount?.completions.operations} onCompleteCloudList={onCompleteCloudList} cloudMerge={cloudMerge} cloudBoundLists={localAccount?.bindings ?? cloudBoundLists} listOperations={listOperations} completionNotice={completionNotice} completionError={completionError} accountCloudLists={localAccount?.lists ?? accountCloudLists} onCreateCloudList={onCreateCloudList} onResolveItemDeletion={onResolveItemDeletion} onResolveItemName={onResolveItemName} onChangeCloudList={localAccount ? changeSavedAccountList : onChangeCloudList} cloudListBusy={cloudListBusy} cloudListError={cloudListError} guestProfileId={accountId === null ? (guestProfile ?? null) : null} onQueued={localAccount ? localChangesQueued : onQueued} refreshRevision={refreshRevision} headerActions={<>{headerActions}{profileMenu}</>} onOpenProfileMenu={() => setMenuOpen(true)} cloudArchive={localAccount ? <PurchaseHistory snapshots={localAccount.archive} actions={snapshot => {
+      const request = snapshot.pending && localAccount.completions.unsent.find(row => row.operationId === snapshot.id)
+      return request ? <button type="button" onClick={() => {
+        void storage.cancelUnsentAccountCompletion(request).then(localChangesQueued)
+          .catch(() => setProfileActionError('Не удалось отменить операцию со списком.'))
+      }}>Отменить операцию</button> : null
+    }}>
       {localAccount.archive === null && <p>Архив ещё не сохранён на этом устройстве. Войдите в аккаунт, чтобы загрузить его.</p>}
     </PurchaseHistory> : cloudArchive} cloudArchiveCount={localAccount ? localAccount.archive?.length : cloudArchiveCount} onOpenCloudArchive={localAccount ? undefined : onOpenCloudArchive} />}
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge, localCompletions }: { localCompletions?: Awaited<ReturnType<Storage['readLocalCompletionView']>>['operations']; storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
   const cardSizeKey = workspaceKey + ':card-size'
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
@@ -388,10 +406,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
 
   const [drafts, setDrafts] = useState<AccountDraftList[]>([])
   const [draftRevision, setDraftRevision] = useState(0)
-  const [localOperations, setLocalOperations] = useState<ListOperationStatus[]>([])
   const [draftRename, setDraftRename] = useState<AccountDraftList>()
   const [draftName, setDraftName] = useState('')
-  const localCopy = cloudStatus === 'signed-out'
+  const localCopy = !!localCompletions
   function refreshDrafts() {
     setDraftRevision(value => value + 1)
     onQueued?.()
@@ -402,27 +419,17 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     void storage.readAccountDraftLists(accountId).then(rows => {
       if (!cancelled) setDrafts(rows)
     }).catch(() => { if (!cancelled) setListError('Не удалось прочитать локальные списки аккаунта.') })
-    if (localCopy) void Promise.all([storage.readAccountCompletionRequests(accountId), storage.readAccountCompletions(accountId)])
-      .then(([requests, intents]) => {
-        if (cancelled) return
-        setLocalOperations(requests.map(request => ({ ...request, phase: 'queued', dismiss:
-          intents.some(intent => intent.operationId === request.operationId) ? undefined : async () => {
-            await storage.cancelUnsentAccountCompletion(request)
-            refreshDrafts()
-          },
-        })))
-      }).catch(() => { if (!cancelled) setListError('Не удалось прочитать операции со списками.') })
     return () => { cancelled = true }
   }, [storage, accountId, localCopy, draftRevision, refreshRevision, onQueued])
 
-  async function queueLocalCompletion(id: ListId, mode: Exclude<CompletionMode, 'delete_list'>, confirmedItemIds?: readonly string[]) {
+  async function queueLocalCompletion(id: ListId, mode: CompletionMode, confirmedItemIds?: readonly string[], confirmedMarked?: boolean) {
     const row = visibleLists.find(list => list.id === id)
     if (!accountId || !row || creatingList) return
     setCreatingList(true)
     try {
       await storage.queueAccountCompletion({
         accountId, localListId: id, remoteListId: cloudBoundLists[id] ?? id, name: row.name,
-        operationId: crypto.randomUUID(), createdAt: Date.now(), mode, confirmedItemIds,
+        operationId: crypto.randomUUID(), createdAt: Date.now(), mode, confirmedItemIds, confirmedMarked,
       }, true)
       setListError(null)
       refreshDrafts()
@@ -525,7 +532,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if(dx<0&&!showArchive){openArchive();setMenuTarget(null)}
     if(dx>0&&showArchive)setShowArchive(false)
   }
-  const visibleLists = accountId === null && localLists !== null ? localLists : (accountId !== null ? [...accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })), ...drafts] : lists.map(row => ({ ...row, kind: 'permanent' as const })))
+  const pendingCompletions = new Map((localCompletions ?? []).map(row => [row.localListId, row]))
+  const visibleLists = (accountId === null && localLists !== null ? localLists : (accountId !== null ? [...accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })), ...drafts] : lists.map(row => ({ ...row, kind: 'permanent' as const })))).filter(row => {
+    const queued = pendingCompletions.get(row.id)
+    return !queued || (queued.mode !== 'delete_list' && (row.kind !== 'oneoff' || queued.mode === 'archive_purchased'))
+  })
   useEffect(() => {
     if (accountId === null && localLists === null) return
     if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
@@ -559,6 +570,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   // Guest remains the default until a verified auth session is available.
   const itemStore = useMemo(() => accountId === null ? (guestProfileId ? profileItemStore(storage, guestProfileId) : itemStoreForAccount(storage, null)) : cloudAwareItemStore(storage, accountId, onQueued), [storage, accountId, guestProfileId, onQueued])
   const shopping = useShopping(itemStore, refreshRevision)
+  const hiddenCompletionItems = new Set((localCompletions ?? []).flatMap(row => row.hiddenItemIds))
+  const visibleItems = shopping.items.filter(item => !hiddenCompletionItems.has(item.id))
   const [itemConflicts, setItemConflicts] = useState<ItemDeletionConflict[]>([])
   const [conflictId, setConflictId] = useState<string>()
   const [resolvingConflict, setResolvingConflict] = useState(false)
@@ -588,7 +601,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const [itemSort, setItemSort] = useState<Record<ListId, ItemSort>>({})
   const sort = itemSort[active] ?? 'recent'
   const [nameConflict, setNameConflict] = useState<{ listId: ListId; key: string }>()
-  const nameConflicts = duplicatedItems(shopping.items.filter(item =>
+  const nameConflicts = duplicatedItems(visibleItems.filter(item =>
     !itemConflicts.some(conflict => conflict.item.id === item.id)))
   const activeNameConflicts = nameConflicts.filter(group => group[0].listId === active)
   const selectedNameConflict = nameConflict?.listId === active
@@ -596,26 +609,27 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     : undefined
   const hiddenIds = new Set([...listConflicts.map(conflict => conflict.item.id),
     ...activeNameConflicts.flatMap(group => group.map(item => item.id))])
-  const rows = sortShoppingItems(shopping.items.filter(item => item.listId === active && !hiddenIds.has(item.id)), sort)
+  const rows = sortShoppingItems(visibleItems.filter(item => item.listId === active && !hiddenIds.has(item.id)), sort)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [completionListId, setCompletionListId] = useState<ListId | null>(null)
   const [purchaseArchive, setPurchaseArchive] = useState<{ listId: ListId; itemIds: string[] } | null>(null)
   const canEditList = accountId === null || !!onChangeCloudList
-  const operations = localCopy ? localOperations : listOperations
+  const operations = localCopy ? [] : listOperations
   const isDraft = (id: ListId) => drafts.some(draft => draft.id === id)
   const canWriteItems = (id: ListId) => accountId === null || !!cloudBoundLists[id] || isDraft(id)
   const listActionsBusy = changingList || cloudListBusy
   const listMutationBusy = shopping.loading || shopping.busy || listActionsBusy || creatingList
   function listLocked(id: ListId) {
-    return operations.some(operation => operation.localListId === id && (operation.phase !== 'error' || !!operation.retry))
+    return pendingCompletions.has(id) || operations.some(operation => operation.localListId === id && (operation.phase !== 'error' || !!operation.retry))
   }
+  const displayedOperations = operations.filter(operation => !operation.fromLocalCopy || operation.phase === 'error')
   const activeListLocked = listLocked(active)
   function canComplete(id: ListId) {
     return !listLocked(id) && (accountId === null || isDraft(id) ||
       (!!cloudBoundLists[id] && (localCopy || !!onCompleteCloudList)))
   }
   function canDelete(id: ListId) {
-    return canComplete(id) && (accountId === null || (!!cloudBoundLists[id] && !!onCompleteCloudList))
+    return canComplete(id) && (accountId === null || localCopy || (!!cloudBoundLists[id] && !!onCompleteCloudList))
   }
   async function moveCard(id: ListId, direction: -1 | 1, previousLeft: number) {
     const index = visibleLists.findIndex(row => row.id === id)
@@ -626,7 +640,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       const moved = accountId === null
         ? await placeLocalList(id, target.id)
         : await onChangeCloudList?.(id, 'reorder', target.id)
-      if (moved) setRevealCard({ id, previousLeft })
+      if (moved) {
+        setListError(null)
+        setRevealCard({ id, previousLeft })
+      }
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Не удалось изменить порядок списков.')
     } finally {
       movingCard.current = false
     }
@@ -634,7 +653,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const completionDisabled = listMutationBusy || !canComplete(active)
   function requestCompletion(id: ListId) {
     if (listMutationBusy || !canComplete(id)) return
-    if (!itemsForList(shopping.items, id).length) {
+    if (!itemsForList(visibleItems, id).length) {
       window.alert('Список пуст. Его нельзя поместить в архив.')
       return
     }
@@ -650,7 +669,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   function requestDeletion(id: ListId) {
     if (listMutationBusy || !canDelete(id)) return
-    if (accountId === null && !itemsForList(shopping.items, id).some(item => item.purchased)) {
+    if (accountId === null && !itemsForList(visibleItems, id).some(item => item.purchased)) {
       void deleteLocalList(false, id)
       return
     }
@@ -670,9 +689,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const mergeTargets = (from: ListId) => visibleLists.filter(row => row.id !== from && !listLocked(row.id) &&
     (accountId === null || !!cloudBoundLists[row.id]))
   const editingItem = rows.find(item => item.id === editingId)
-  const deletionItems = deleteListId ? itemsForList(shopping.items, deleteListId) : []
+  const deletionItems = deleteListId ? itemsForList(visibleItems, deleteListId) : []
   const hasMarkedItems = deletionItems.some(item => item.purchased)
-  const remaining = shopping.items.filter(item => item.listId === active && !item.purchased &&
+  const remaining = visibleItems.filter(item => item.listId === active && !item.purchased &&
     !listConflicts.some(conflict => conflict.item.id === item.id)).length
   const list = visibleLists.find(list => list.id === active)
   const menuList = menuTarget && visibleLists.find(row => row.id === menuTarget.id)
@@ -681,7 +700,12 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     if (typeSaving || !canEditList || listActionsBusy || listLocked(id)) return
     setTypeSaving(true)
     try {
-      if (await changeList('kind', id, kind)) setMenuTarget(current => current?.id === id ? null : current)
+      if (await changeList('kind', id, kind)) {
+        setListError(null)
+        setMenuTarget(current => current?.id === id ? null : current)
+      }
+    } catch (error) {
+      setListError(error instanceof Error ? error.message : 'Не удалось изменить тип списка.')
     } finally {
       setTypeSaving(false)
     }
@@ -796,7 +820,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       </div>
     </WorkspaceDialog>}
     {(accountId === null || cloudArchive) && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-label="Основные списки" aria-current={!showArchive ? 'page' : undefined} className={!showArchive ? 'current' : ''} onClick={() => setShowArchive(false)}>●</button><button type="button" aria-label={`Архив, ${accountId === null ? archives.length : (cloudArchiveCount ?? 0)} завершённых списков`} aria-current={showArchive ? 'page' : undefined} className={showArchive ? 'current' : ''} onClick={openArchive}>●</button></div>}
-    {!showArchive && localCopy && <p>Новые списки и завершения синхронизируются после входа в этот аккаунт.</p>}
     {!showArchive && <nav ref={listRail} className={`lists-grid ${cardSize} list-rail`} aria-label="Списки покупок">
       {visibleLists.map((row, index) => <div className="list-tile" data-list-id={row.id} key={row.id}>
         <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={() => { setActive(row.id);setName('');setItemNotice('');setMenuTarget(null) }}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
@@ -807,7 +830,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             const target = visibleLists[index + direction]
             return <button key={direction} type="button" className={direction === -1 ? 'move-left' : 'move-right'}
               aria-label={direction === -1 ? 'Переместить список влево' : 'Переместить список вправо'}
-              disabled={!target || listActionsBusy || listLocked(row.id) || listLocked(target.id)}
+              disabled={!target || listActionsBusy || isDraft(row.id) || isDraft(target.id) || listLocked(row.id) || listLocked(target.id)}
               onClick={event => {
                 const tile = event.currentTarget.closest('.list-tile')
                 if (tile) void moveCard(row.id, direction, tile.getBoundingClientRect().left)
@@ -822,8 +845,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       </div>)}
       <div className="list-create-control rail-create">{createListTile}</div>
     </nav>}
-    {!showArchive && operations.length > 0 && <ul className="list-operation-statuses" aria-label="Операции со списками">
-      {operations.map(operation => <li key={operation.localListId}>
+    {!showArchive && displayedOperations.length > 0 && <ul className="list-operation-statuses" aria-label="Операции со списками">
+      {displayedOperations.map(operation => <li key={operation.localListId}>
         <p role={operation.phase === 'error' ? 'alert' : 'status'}>
           {operation.phase === 'running' && <span className="list-operation-spinner" aria-hidden="true" />}
           {operation.phase === 'error' ? `«${operation.name}». ${operation.message}` :
@@ -838,8 +861,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
       {menuTarget.source === 'completion' ? <div className="list-menu" role="menu" aria-label="Завершение" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>
         <button type="button" role="menuitem" disabled={listMutationBusy || !canComplete(menuList.id) ||
-          !itemsForList(shopping.items, menuList.id).some(item => item.purchased)} onClick={() => {
-          const itemIds = itemsForList(shopping.items, menuList.id).filter(item => item.purchased).map(item => item.id)
+          !itemsForList(visibleItems, menuList.id).some(item => item.purchased)} onClick={() => {
+          const itemIds = itemsForList(visibleItems, menuList.id).filter(item => item.purchased).map(item => item.id)
           setMenuTarget(null)
           setPurchaseArchive({ listId: menuList.id, itemIds })
         }}>
@@ -1016,6 +1039,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
               <button type="button" className="danger" disabled={shopping.loading || shopping.busy} onClick={() => {
                 setDeleteListId(null)
                 if (accountId === null) void deleteLocalList(true, deleteListId)
+                else if (localCopy) void queueLocalCompletion(deleteListId, 'delete_list', undefined, hasMarkedItems)
                 else onCompleteCloudList?.(deleteListId, 'delete_list', hasMarkedItems)
               }}>Удалить</button>
             </div>
@@ -1046,7 +1070,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     </section>}
     {!showArchive && selectedNameConflict && <ItemNameConflictDialog
       key={JSON.stringify(selectedNameConflict.map(item => item.id))}
-      group={selectedNameConflict} items={shopping.items}
+      group={selectedNameConflict} items={visibleItems}
       available={accountId === null || !!onResolveItemName}
       onDismiss={() => { setNameConflict(undefined); shopping.clearError() }}
       onResolve={async decision => {

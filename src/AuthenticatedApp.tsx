@@ -926,6 +926,46 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setListOperations(rows => rows.filter(row => row.accountId !== accountId || row.localListId !== localListId))
   }
 
+  async function syncLocalListChanges(accountId: string, client: SupabaseClient, stillActive: () => boolean) {
+    const queue = await storage.readLocalListChanges(accountId)
+    if (!queue.length) return true
+    if (await verifiedAccountId(client) !== accountId || !stillActive()) return false
+    let metadata = await fetchCloudListMetadata(client, accountId)
+    for (const operation of queue) {
+      if (!stillActive() || !navigator.onLine) return false
+      const current = metadata.find(row => row.id === operation.remoteListId)
+      const { change, before, prepared, targetId } = operation
+      const unchanged = current && (change.action === 'rename' ? current.name === before.name
+        : change.action === 'kind' ? current.kind === before.kind
+          : current.position === before.position && metadata.some(row => row.id === targetId && row.position === change.position))
+      let conflict = !prepared && !unchanged
+      if (!conflict) {
+        const base = prepared ?? await storage.prepareLocalListChange(accountId, operation, current!)
+        if (!stillActive()) return false
+        try {
+          await sendCloudListChange(client, base, operation.operationId, change)
+        } catch (error) {
+          const failure = error as { code?: string; message?: string }
+          conflict = failure.code === '23505' || (failure.code === 'P0001' &&
+            ['List revision conflict', 'List unavailable'].includes(failure.message ?? ''))
+          if (!conflict) throw error
+        }
+      }
+      if (!stillActive()) return false
+      metadata = await fetchCloudListMetadata(client, accountId)
+      if (!stillActive()) return false
+      await storage.cacheAccountListMetadata(accountId, metadata)
+      await storage.finishLocalListChange(accountId, operation)
+      if (!conflict) await storage.markAccountListsChanged(accountId)
+      if (!stillActive()) return false
+      setCloudMetadata(metadata)
+      setCloudLists(metadata.map(row => ({ id: row.id, name: row.name })))
+      setWorkspaceRevision(value => value + 1)
+      if (conflict) setCompletionError('Список изменился на другом устройстве или название занято. Проверьте список и повторите изменение.')
+    }
+    return true
+  }
+
   async function processListOperations(accountId: string) {
     if (!client || activeAccount.current !== accountId || !navigator.onLine) return
     completionRequested.current.add(accountId)
@@ -956,6 +996,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             setCloudLists(rows => rows.some(row => row.id === remote.id) ? rows : [...rows, { id: remote.id, name: remote.name }])
           }
         }
+        if (!await syncLocalListChanges(accountId, client, stillActive)) return
         const draftIds = new Set((await storage.readAccountDraftLists(accountId)).map(draft => draft.id))
         const [requests, intents] = await Promise.all([
           storage.readAccountCompletionRequests(accountId),
@@ -971,7 +1012,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           if (attempted.has(request.operationId)) continue
           attempted.add(request.operationId)
           const { localListId, remoteListId, mode, operationId } = request
-          const status = { accountId, localListId, name: request.name, mode }
+          const status = { accountId, localListId, name: request.name, mode, fromLocalCopy: 'fromLocalCopy' in request && request.fromLocalCopy }
           setListOperation({ ...status, phase: 'running' })
           try {
             if (await verifiedAccountId(client) !== accountId || !stillActive()) throw new Error('Account changed')
@@ -984,7 +1025,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               await createAccountSync(storage, client, { accountId, localListId, remoteListId, isActive: stillActive }).flush()
             }
             const receipt = intent ? await coordinator.resume(intent) :
-              await coordinator.begin(localListId, remoteListId, mode, 'confirmedMarked' in request ? request.confirmedMarked : undefined, operationId)
+              await coordinator.begin(localListId, remoteListId, mode, 'confirmedMarked' in request ? request.confirmedMarked : undefined, operationId, ('localKind' in request && request.localKind) ? { kind: request.localKind, name: request.name } : undefined)
             if (!stillActive()) return
             if (receipt.mode === 'delete_list' || (receipt.kind === 'oneoff' && receipt.mode !== 'archive_purchased')) {
               setCloudMetadata(rows => rows?.filter(row => row.id !== remoteListId) ?? null)
@@ -1019,11 +1060,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             if (!stillActive()) return
             const uncertain = prepared.some(row => row.operationId === operationId)
             let unsent = saved.find(row => row.operationId === operationId)
-            const stale = cause instanceof Error && (
-              cause.message.startsWith('Список изменился.') ||
-              ['Локальный и облачный списки расходятся', 'Пустой облачный список',
-                'Облачный список изменился во время проверки'].includes(cause.message)
-            )
+            const stale = !!cause && typeof cause === 'object' && 'message' in cause &&
+              typeof cause.message === 'string' && (cause.message.startsWith('Список изменился.') ||
+                ['Локальный и облачный списки расходятся', 'Пустой облачный список',
+                  'Облачный список изменился во время проверки', 'List revision conflict', 'List unavailable'].includes(cause.message))
             if (unsent?.fromLocalCopy && stale && !uncertain && await storage.cancelUnsentAccountCompletion(unsent)) {
               unsent = undefined
               try {
@@ -1049,7 +1089,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
       } while (completionRequested.current.has(accountId) && stillActive())
     } catch {
-      if (stillActive()) setCompletionError('Не удалось прочитать очередь операций со списками.')
+      if (stillActive()) setCompletionError('Не удалось синхронизировать операции со списками. Повторите синхронизацию.')
     } finally {
       completionWorkers.current.delete(accountId)
       completionRequested.current.delete(accountId)

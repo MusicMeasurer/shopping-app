@@ -5,7 +5,7 @@ const account = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
 const remoteId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'
 const itemId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc'
 const localListId = 'groceries' as const
-function fixture(options: { pending?: unknown[]; local?: unknown[]; remote?: unknown[]; revision?: number; active?: boolean; mappings?: unknown[] } = {}) {
+function fixture(options: { pending?: unknown[]; local?: unknown[]; remote?: unknown[]; revision?: number; kind?: 'permanent' | 'oneoff'; active?: boolean; mappings?: unknown[] } = {}) {
   const mappings = options.mappings ?? [{ localListId, remoteListId: remoteId }]
   const pending = options.pending ?? []
   const local = options.local ?? [{ id: itemId, listId: localListId, name: 'Молоко', purchased: true }]
@@ -22,7 +22,7 @@ function fixture(options: { pending?: unknown[]; local?: unknown[]; remote?: unk
     }
     return {
       select: () => ({ eq: () => ({ eq: () => ({ is: async () => ({
-        data: [{ id: remoteId, owner_id: account, revision, deleted_at: null }], error: null,
+        data: [{ id: remoteId, owner_id: account, revision, deleted_at: null, name: 'Продукты', kind: options.kind ?? 'permanent' }], error: null,
       }) }) }) }),
     }
   })
@@ -58,6 +58,13 @@ describe('E4 completion preflight', () => {
   it('refuses to archive unverified local quantity and units', async () => {
     const f = fixture({ local: [{ id: itemId, listId: localListId, name: 'Молоко', purchased: true, quantity: 2, unit: 'л' }] })
     expect((await check(f)).ready).toBe(false)
+  })
+  it('requires a fresh confirmation when the list type changed on another device', async () => {
+    const f = fixture({ kind: 'oneoff' })
+    expect(await inspectCloudCompletion(f.storage as never, f.client as never,
+      account, localListId, remoteId, f.isActive, false, { kind: 'permanent', name: 'Продукты' },
+    )).toMatchObject({ ready: false, reason: expect.stringMatching(/^Список изменился/) })
+    expect(f.from).toHaveBeenCalledTimes(1)
   })
   it('blocks an empty server list and account change', async () => {
     expect((await check(fixture({ remote: [] }))).ready).toBe(false)

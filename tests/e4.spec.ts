@@ -817,8 +817,7 @@ test('merges local lists and saves a transferred duplicate under an available na
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Объединить со списком' }).click()
     const dialog = page.getByRole('dialog', { name: 'Объединить списки' })
-    await dialog.getByLabel('Список-получатель').selectOption({ label: 'Продукты' })
-    await dialog.getByRole('button', { name: 'Посмотреть результат' }).click()
+    await dialog.getByRole('button', { name: 'Продукты', exact: true }).click()
     return dialog
   }
   const cancelled = await open()
@@ -854,7 +853,7 @@ test('creates a list and queues and cancels completion in a signed-out account c
     })
     try {
       await new Promise<void>((resolve, reject) => {
-        const tx = db.transaction('localProfileRegistry', 'readwrite')
+        const tx = db.transaction(['localProfileRegistry', 'accountListMappings', 'accountItems'], 'readwrite')
         tx.oncomplete = () => resolve()
         tx.onabort = () => reject(tx.error)
         const profiles = tx.objectStore('localProfileRegistry')
@@ -862,7 +861,17 @@ test('creates a list and queues and cancels completion in a signed-out account c
         request.onsuccess = () => {
           const record = request.result
           const id = crypto.randomUUID()
-          record.registry.profiles.push({ id, cloudAccountId: crypto.randomUUID(), login: 'offline@example.test', createdAt: Date.now() })
+          const accountId = crypto.randomUUID()
+          record.registry.profiles.push({ id, cloudAccountId: accountId, login: 'offline@example.test', createdAt: Date.now() })
+          const localListId = crypto.randomUUID()
+          tx.objectStore('accountListMappings').put({
+            key: JSON.stringify([accountId, localListId]), accountId, localListId, remoteListId: crypto.randomUUID(),
+            metadata: { name: 'Существующий список', kind: 'permanent', position: 0 },
+          })
+          for (const [name, purchased] of [['Сыр', true], ['Молоко', false]] as const) {
+            const item = { id: crypto.randomUUID(), listId: localListId, name, purchased, createdAt: Date.now() }
+            tx.objectStore('accountItems').put({ key: JSON.stringify([accountId, item.id]), accountId, item })
+          }
           record.registry.activeProfileId = id
           profiles.put(record)
         }
@@ -882,14 +891,48 @@ test('creates a list and queues and cancels completion in a signed-out account c
   await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
   await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  const queue = page.getByRole('list', { name: 'Операции со списками' })
-  await expect(queue).toContainText('«На выходные» ожидает синхронизации')
-  await page.reload()
-  await expect(queue).toBeVisible()
-  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeDisabled()
-  await queue.getByRole('button', { name: 'Отменить операцию' }).click()
-  await expect(queue).toHaveCount(0)
-  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeEnabled()
+  const card = page.getByRole('button', { name: 'На выходные', exact: true })
+  const archive = page.getByRole('region', { name: 'Архив покупок' })
+  await expect(card).toHaveCount(0)
+  await expect(page.getByText(/ожидает синхронизации/i)).toHaveCount(0)
   await page.getByRole('button', { name: /^Архив,/ }).click()
-  await expect(page.getByText('Архив ещё не сохранён на этом устройстве.', { exact: false })).toBeVisible()
+  await expect(archive.getByText('Чай', { exact: true })).toBeVisible()
+  await expect(archive.getByText('Ожидает синхронизации', { exact: true })).toBeVisible()
+  await page.reload()
+  await expect(archive.getByText('Чай', { exact: true })).toBeVisible()
+  await expect(archive.getByText('Ожидает синхронизации', { exact: true })).toBeVisible()
+  await archive.getByRole('button', { name: 'Отменить операцию' }).click()
+  await expect(archive.getByText('Чай', { exact: true })).toHaveCount(0)
+  await expect(archive.getByText('Архив ещё не сохранён на этом устройстве.', { exact: false })).toBeVisible()
+  await card.click()
+  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeEnabled()
+
+  await page.getByRole('button', { name: 'Существующий список', exact: true }).click()
+  await page.getByRole('button', { name: 'Переименовать список', exact: true }).click()
+  const rename = page.getByRole('dialog', { name: 'Переименовать список' })
+  await rename.getByLabel('Название списка').fill('Список из облака')
+  await rename.getByRole('button', { name: 'Сохранить' }).click()
+  await expect(page.getByRole('heading', { name: 'Список из облака', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Завершить покупки' }).click()
+  await page.getByRole('button', { name: 'Завершить отмеченные', exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: 'Сыр' })).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()
+  await expect(page.getByText(/ожидает синхронизации/i)).toHaveCount(0)
+  await page.reload()
+  await expect(page.getByRole('heading', { name: 'Список из облака', exact: true })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Сыр' })).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()
+  await page.getByRole('button', { name: /^Архив,/ }).click()
+  await expect(archive.getByText('Сыр', { exact: true })).toBeVisible()
+  await expect(archive.getByText('Молоко', { exact: true })).toHaveCount(0)
+  await expect(archive.getByText('Ожидает синхронизации', { exact: true })).toBeVisible()
+  await archive.getByRole('button', { name: 'Отменить операцию' }).click()
+  await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
+  await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+  await page.getByRole('menuitem', { name: /Удалить список/ }).click()
+  await page.getByRole('dialog', { name: 'Удалить список?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Список из облака', exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: /^Архив,/ }).click()
+  await expect(archive.getByText('Ожидает синхронизации', { exact: true })).toHaveCount(0)
 })

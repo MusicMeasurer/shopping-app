@@ -6,6 +6,8 @@ import { ItemSaveError } from './item-save-error'
 import { lists as defaultLists, type Item } from '../domain/shopping'
 import { ListMergeConflict, planListMerge, sameMergeSnapshot, type ListMergeSnapshot, type MergeChoice } from '../domain/list-merge'
 import type { CloudArchiveCompletion } from './cloud-archive'
+import type { CloudListChange } from './e4-cloud-list-operations'
+import type { CloudListMetadata } from './e4-cloud-list-metadata'
 import type { CompletionMode } from './cloud-completion-rpc'
 import type { PendingItemOperation, CloudPendingOperation } from './pending-operations'
 
@@ -55,11 +57,26 @@ export interface CloudCompletionRequest {
   name: string
   mode: CompletionMode
   confirmedMarked?: boolean
+  localKind?: ShoppingListRecord['kind']
   fromLocalCopy?: boolean
   confirmedItemIds?: readonly string[]
   createdAt: number
 }
 interface ScopedCompletionRequest extends CloudCompletionRequest { key: string; items: string }
+
+type CompletionItems = [string, string, boolean, number | null, string | null][]
+
+function completionArchive(request: ScopedCompletionRequest, id: string): CloudArchiveCompletion | undefined {
+  if (request.mode === 'delete_list' || request.mode === 'none_purchased') return
+  const items = (JSON.parse(request.items) as CompletionItems)
+    .filter(([, , purchased]) => request.mode === 'all_purchased' || purchased)
+    .map(([, name, , quantity, unit], ordinal) => ({ name, quantity, unit, ordinal }))
+  if (items.length) return {
+    id, operationId: request.operationId, sourceListId: request.remoteListId, sourceListName: request.name,
+    completedAt: new Date(request.createdAt).toISOString(), items,
+  }
+}
+
 
 function completionItemSnapshot(items: Item[]): string {
   return JSON.stringify(items.map(item => [item.id, item.name, item.purchased, item.quantity, item.unit])
@@ -72,7 +89,44 @@ export interface AccountDraftList extends ShoppingListRecord {
   nameConflict?: boolean
 }
 interface ScopedDraftList extends AccountDraftList { key: string }
-interface ScopedListMapping { key: string; accountId: string; localListId: string; remoteListId: string; symbol?: string; metadata?: { name: string; kind: 'permanent' | 'oneoff'; position: number } }
+type ListMetadata = Pick<CloudListMetadata, 'name' | 'kind' | 'position'>
+export interface LocalListChange {
+  operationId: string
+  sequence: number
+  localListId: string
+  remoteListId: string
+  change: CloudListChange
+  before: ListMetadata
+  targetId?: string
+  prepared?: CloudListMetadata
+}
+interface ScopedListMapping {
+  key: string; accountId: string; localListId: string; remoteListId: string
+  symbol?: string; metadata?: ListMetadata; pendingMetadata?: LocalListChange[]
+}
+
+function orderedListChanges(mappings: ScopedListMapping[]) {
+  return mappings.flatMap(row => row.pendingMetadata ?? []).sort((a, b) => a.sequence - b.sequence)
+}
+
+function projectListMetadata(mappings: ScopedListMapping[]) {
+  const lists = new Map<string, ListMetadata>(mappings.flatMap(row => row.metadata ? [[row.localListId, { ...row.metadata }] as const] : []))
+  for (const { localListId, change } of orderedListChanges(mappings)) {
+    const list = lists.get(localListId)
+    if (!list) continue
+    if (change.action === 'rename') list.name = change.name
+    else if (change.action === 'kind') list.kind = change.kind
+    else {
+      for (const other of lists.values()) {
+        if (other === list) continue
+        if (other.position >= change.position && other.position < list.position) other.position++
+        else if (other.position <= change.position && other.position > list.position) other.position--
+      }
+      list.position = change.position
+    }
+  }
+  return lists
+}
 interface ScopedOperation {
   key: string
   accountId: string
@@ -127,7 +181,7 @@ interface ShoppingDB extends DBSchema {
   pendingOperations: { key: string; value: PendingItemOperation }
   accountOperations: { key: string; value: ScopedOperation; indexes: { byAccount: string } }
   accountDraftLists: { key: string; value: ScopedDraftList; indexes: { byAccount: string } }
-  accountArchiveCache: { key: string; value: { accountId: string; snapshots: CloudArchiveCompletion[] } }
+  accountArchiveCache: { key: string; value: { accountId: string; snapshots: CloudArchiveCompletion[]; awaitingRefresh?: string[] } }
   accountCompletionRequests: { key: string; value: ScopedCompletionRequest; indexes: { byAccount: string } }
   accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
@@ -771,7 +825,8 @@ export function createStorage(name = 'shopping-app') {
             tx.objectStore('accountDraftLists').index('byAccount').count(accountId),
             tx.objectStore('guestImports').getAll(),
           ])
-          if (operations || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported))
+          if (operations || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported) ||
+              (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)).some(row => row.pendingMetadata?.length))
             throw new Error('Profile has unsynced operations; deletion blocked')
           await tx.objectStore('profileMigrations').put({
             key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
@@ -1223,7 +1278,13 @@ export function createStorage(name = 'shopping-app') {
       const tx = (await database).transaction(['localProfileRegistry', 'accountArchiveCache'], 'readwrite')
       const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
       if (registry?.profiles.some(profile => profile.cloudAccountId === accountId)) {
-        await tx.objectStore('accountArchiveCache').put({ accountId, snapshots })
+        const store = tx.objectStore('accountArchiveCache')
+        const existing = await store.get(accountId)
+        const incoming = new Set(snapshots.map(row => row.id))
+        const awaitingRefresh = existing?.awaitingRefresh?.filter(id => !incoming.has(id)) ?? []
+        const retained = new Set(awaitingRefresh)
+        await store.put({ accountId, awaitingRefresh,
+          snapshots: [...snapshots, ...(existing?.snapshots.filter(row => retained.has(row.id)) ?? [])] })
       }
       await tx.done
     },
@@ -1390,6 +1451,32 @@ export function createStorage(name = 'shopping-app') {
       return rows.map(({ key: _key, items: _items, ...request }) => request)
         .sort((left, right) => left.createdAt - right.createdAt)
     },
+    async readLocalCompletionView(accountId: string) {
+      const tx = (await database).transaction(['accountCompletionRequests', 'accountArchiveCache', 'accountCompletions'])
+      const [requests, archive, intents] = await Promise.all([
+        tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId),
+        tx.objectStore('accountArchiveCache').get(accountId),
+        tx.objectStore('accountCompletions').index('byAccount').getAll(accountId),
+      ])
+      await tx.done
+      const confirmed = archive?.snapshots ?? []
+      const operations = requests.filter(request => request.fromLocalCopy).map(request => ({
+        localListId: request.localListId, mode: request.mode,
+        hiddenItemIds: (JSON.parse(request.items) as CompletionItems)
+          .filter(([, , purchased]) => request.mode !== 'archive_purchased' || purchased).map(([id]) => id),
+      }))
+      const confirmedOperations = new Set(confirmed.map(row => row.operationId))
+      const pending = requests.filter(request => request.fromLocalCopy && !confirmedOperations.has(request.operationId))
+        .flatMap(request => {
+          const snapshot = completionArchive(request, request.operationId)
+          return snapshot ? [{ ...snapshot, pending: true }] : []
+        })
+      const snapshots = [...pending, ...confirmed]
+        .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
+      const unsent = requests.filter(request => request.fromLocalCopy &&
+        !intents.some(row => row.intent.operationId === request.operationId))
+      return { operations, unsent, snapshots: archive || pending.length ? snapshots : null }
+    },
     async queueAccountCompletion(request: CloudCompletionRequest, local = false): Promise<void> {
       const { accountId, localListId, remoteListId } = request
       const tx = (await database).transaction(['accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems', 'accountDraftLists'], 'readwrite')
@@ -1403,9 +1490,13 @@ export function createStorage(name = 'shopping-app') {
         if (intents.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion already pending')
         const items = (await tx.objectStore('accountItems').index('byAccount').getAll(accountId))
           .map(row => row.item).filter(item => item.listId === localListId)
-        if (local && (!items.length || request.mode === 'delete_list')) throw new Error('Список недоступен для завершения.')
+        if (local && !items.length && request.mode !== 'delete_list') throw new Error('Список недоступен для завершения.')
+        if (local && request.mode === 'delete_list' && items.some(item => item.purchased) !== request.confirmedMarked)
+          throw new Error('Список изменился. Проверьте его и подтвердите удаление заново.')
         if (request.mode === 'archive_purchased') checkConfirmedPurchases(items, request.confirmedItemIds)
-        await requests.add({ ...request, ...(local ? { fromLocalCopy: true } : {}), key: accountKey(accountId, remoteListId), items: completionItemSnapshot(items) })
+        const projected = local && mapping ? projectListMetadata(
+          await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)).get(localListId) : undefined
+        await requests.add({ ...request, ...(local ? { fromLocalCopy: true, localKind: projected?.kind ?? (draft || undefined)?.kind } : {}), key: accountKey(accountId, remoteListId), items: completionItemSnapshot(items) })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
     },
@@ -1422,16 +1513,17 @@ export function createStorage(name = 'shopping-app') {
     },
     async hasAccountSyncWork(accountId: string): Promise<boolean> {
       const db = await database
-      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountCompletionRequests', 'guestImports', 'accountDraftLists'])
-      const [items, completions, requests, drafts, imports] = await Promise.all([
+      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountCompletionRequests', 'guestImports', 'accountDraftLists', 'accountListMappings'])
+      const [items, completions, requests, drafts, imports, mappings] = await Promise.all([
         tx.objectStore('accountOperations').index('byAccount').count(accountId),
         tx.objectStore('accountCompletions').index('byAccount').count(accountId),
         tx.objectStore('accountCompletionRequests').index('byAccount').count(accountId),
         tx.objectStore('accountDraftLists').index('byAccount').count(accountId),
         tx.objectStore('guestImports').getAll(),
+        tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
       ])
       await tx.done
-      return !!(items || completions || requests || drafts || imports.some(batch => batch.accountId === accountId && !batch.imported))
+      return !!(items || completions || requests || drafts || mappings.some(row => row.pendingMetadata?.length) || imports.some(batch => batch.accountId === accountId && !batch.imported))
     },
     /** Durable intent is written before RPC; account edits are fenced by the same transaction. */
     async beginAccountCompletion(intent: CloudCompletionIntent, queuedRequest = false): Promise<void> {
@@ -1483,13 +1575,13 @@ export function createStorage(name = 'shopping-app') {
       await tx.done
     },
     /** Atomically commit a confirmed receipt and remove exactly the intended local items. */
-    async commitAccountCompletion(intent: CloudCompletionIntent, revision: number, tombstones: { id: string; version: number }[]): Promise<void> {
+    async commitAccountCompletion(intent: CloudCompletionIntent, revision: number, tombstones: { id: string; version: number }[], result?: { archiveId: string | null; kind: ShoppingListRecord['kind'] }): Promise<void> {
       if (!Number.isSafeInteger(revision) || revision <= intent.expectedRevision ||
           tombstones.length !== intent.itemIds.length || new Set(tombstones.map(row => row.id)).size !== tombstones.length ||
           tombstones.some(row => !intent.itemIds.includes(row.id) || !Number.isSafeInteger(row.version) || row.version < 1))
         throw new Error('Invalid confirmed completion tombstones')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountArchiveCache'], 'readwrite')
       try {
         const key = accountKey(intent.accountId, intent.operationId)
         const stored = await tx.objectStore('accountCompletions').get(key)
@@ -1521,11 +1613,26 @@ export function createStorage(name = 'shopping-app') {
         }
         if (intent.mode === 'delete_list') {
           await tx.objectStore('accountListMappings').delete(accountKey(intent.accountId, intent.localListId))
+        } else if (result?.kind === 'oneoff' && intent.mode !== 'archive_purchased') {
+          const { metadata: _metadata, ...mappingWithoutMetadata } = mapping
+          await tx.objectStore('accountListMappings').put(mappingWithoutMetadata)
         }
         await tx.objectStore('accountCompletions').delete(key)
         const requests = tx.objectStore('accountCompletionRequests')
         const requestKey = accountKey(intent.accountId, intent.remoteListId)
-        if ((await requests.get(requestKey))?.operationId === intent.operationId) await requests.delete(requestKey)
+        const request = await requests.get(requestKey)
+        if (request?.operationId === intent.operationId) {
+          if (request.fromLocalCopy && result?.archiveId) {
+            const archive = tx.objectStore('accountArchiveCache')
+            const cache = await archive.get(intent.accountId)
+            const snapshot = completionArchive(request, result.archiveId)
+            const snapshots = cache?.snapshots ?? []
+            if (snapshot && !snapshots.some(row => row.id === snapshot.id))
+              await archive.put({ accountId: intent.accountId, snapshots: [snapshot, ...snapshots],
+                awaitingRefresh: [...(cache?.awaitingRefresh ?? []), snapshot.id] })
+          }
+          await requests.delete(requestKey)
+        }
         await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId: intent.accountId })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
@@ -1633,6 +1740,73 @@ export function createStorage(name = 'shopping-app') {
     async readAccountListMappings(accountId: string): Promise<ScopedListMapping[]> {
       accountKey(accountId, 'check')
       return (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+    },
+    async readLocalListMappings(accountId: string) {
+      const mappings = await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+      const projected = projectListMetadata(mappings)
+      return mappings.map(row => ({ ...row, metadata: projected.get(row.localListId) }))
+    },
+    async readLocalListChanges(accountId: string) {
+      return orderedListChanges(await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId))
+    },
+    async queueLocalListChange(accountId: string, id: string, action: 'rename' | 'kind' | 'reorder', value: string) {
+      const tx = (await database).transaction(['accountListMappings', 'accountCompletionRequests', 'accountCompletions'], 'readwrite')
+      try {
+        const store = tx.objectStore('accountListMappings')
+        const mappings = await store.index('byAccount').getAll(accountId)
+        const mapping = mappings.find(row => row.localListId === id)
+        const projected = projectListMetadata(mappings)
+        const before = projected.get(id)
+        if (!mapping || !before) throw new Error('Локальная копия списка недоступна.')
+        const requests = await tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId)
+        const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        if ([...requests, ...intents.map(row => row.intent)].some(row => row.localListId === id || (action === 'reorder' && row.localListId === value)))
+          throw new Error('Сначала дождитесь завершения операции со списком.')
+        let change: CloudListChange
+        let targetId: string | undefined
+        if (action === 'rename') {
+          const name = value.trim()
+          if (!name || name.length > 120) throw new Error('Введите название списка от 1 до 120 символов.')
+          assertFreeListName([...projected].map(([listId, row]) => ({ id: listId, name: row.name })), id, name)
+          change = { action, name }
+        } else if (action === 'kind') {
+          if (value !== 'oneoff' && value !== 'permanent') throw new Error('Неизвестный тип списка.')
+          change = { action, kind: value }
+        } else {
+          const target = projected.get(value)
+          if (!target || before.position === target.position) throw new Error('Порядок списков изменился. Попробуйте ещё раз.')
+          targetId = mappings.find(row => row.localListId === value)?.remoteListId
+          change = { action, position: target.position }
+        }
+        const sequence = (orderedListChanges(mappings).at(-1)?.sequence ?? 0) + 1
+        const operation = { localListId: id, remoteListId: mapping.remoteListId, operationId: crypto.randomUUID(),
+          before, change, sequence, targetId }
+        await store.put({ ...mapping, pendingMetadata: [...(mapping.pendingMetadata ?? []), operation] })
+        await tx.done
+      } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
+    },
+    async prepareLocalListChange(accountId: string, change: LocalListChange, before: CloudListMetadata) {
+      const tx = (await database).transaction('accountListMappings', 'readwrite')
+      const mapping = await tx.store.get(accountKey(accountId, change.localListId))
+      const saved = mapping?.pendingMetadata?.find(row => row.operationId === change.operationId)
+      if (!mapping || !saved || before.ownerId !== accountId || before.id !== change.remoteListId) {
+        await tx.done
+        throw new Error('Локальная операция со списком недоступна.')
+      }
+      if (!saved.prepared) {
+        await tx.store.put({ ...mapping, pendingMetadata: mapping.pendingMetadata!.map(row =>
+          row.operationId === saved.operationId ? { ...row, prepared: before } : row) })
+      }
+      await tx.done
+      return saved.prepared ?? before
+    },
+    async finishLocalListChange(accountId: string, change: LocalListChange) {
+      const tx = (await database).transaction('accountListMappings', 'readwrite')
+      const mapping = await tx.store.get(accountKey(accountId, change.localListId))
+      if (mapping?.pendingMetadata) {
+        await tx.store.put({ ...mapping, pendingMetadata: mapping.pendingMetadata.filter(row => row.operationId !== change.operationId) })
+      }
+      await tx.done
     },
     async cacheAccountListMetadata(accountId: string, rows: readonly {
       id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number

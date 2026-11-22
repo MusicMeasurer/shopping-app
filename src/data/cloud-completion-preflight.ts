@@ -16,6 +16,7 @@ export async function inspectCloudCompletion(
   remoteListId: string,
   isActive: () => boolean,
   deleting = false,
+  expected?: { kind: string; name: string },
 ): Promise<{ ready: boolean; reason: string; revision: number | null }> {
   const blocked = (reason: string) => ({ ready: false, reason, revision: null })
   if (!isActive()) return blocked('Аккаунт изменился')
@@ -33,15 +34,18 @@ export async function inspectCloudCompletion(
     ((p.kind === 'cloud-add' || p.kind === 'cloud-update' || p.kind === 'cloud-delete') && p.remoteListId === remoteListId)))
     return blocked('Есть неотправленные изменения')
   const { data, error } = await client.from('shopping_lists')
-    .select('id,owner_id,revision,deleted_at')
+    .select('id,owner_id,revision,deleted_at,kind,name')
     .eq('id', remoteListId)
     .eq('owner_id', accountId)
     .is('deleted_at', null)
-  if (error || !Array.isArray(data) || data.length !== 1) return blocked('Облачный список недоступен')
+  if (error || !Array.isArray(data) || data.length > 1) return blocked('Облачный список недоступен')
+  if (!data.length) return blocked(expected ? 'Список изменился. Он больше недоступен в аккаунте.' : 'Облачный список недоступен')
   const row = data[0] as Record<string, unknown>
   if (row.id !== remoteListId || row.owner_id !== accountId ||
       !Number.isSafeInteger(row.revision) || (row.revision as number) < 0)
     return blocked('Неверная ревизия облачного списка')
+  if (expected && (row.kind !== expected.kind || row.name !== expected.name))
+    return blocked('Список изменился. Проверьте название и тип списка, затем подтвердите операцию заново.')
   const remote = await fetchRemoteItems(client, remoteListId)
   if (!isActive()) return blocked('Аккаунт изменился')
   const localItems = local.filter(item => item.listId === localListId)

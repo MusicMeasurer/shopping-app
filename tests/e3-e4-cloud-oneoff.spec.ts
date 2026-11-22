@@ -156,7 +156,6 @@ test.describe('queued cloud list operations', () => {
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
     await page.getByRole('menuitem', { name: 'Объединить со списком', exact: true }).click()
     const merge = page.getByRole('dialog', { name: 'Объединить списки' })
-    await merge.getByLabel('Список-получатель').selectOption({ label: second })
     const authCheck = '**/auth/v1/user'
     let checks = 0
     await page.route(authCheck, async route => {
@@ -165,7 +164,7 @@ test.describe('queued cloud list operations', () => {
     })
     try {
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-      await merge.getByRole('button', { name: 'Посмотреть результат' }).click()
+      await merge.getByRole('button', { name: second, exact: true }).click()
       await expect(merge.getByText(/исчезнет из активных списков/)).toBeVisible({ timeout: 15000 })
       expect(checks).toBeGreaterThan(1)
       await merge.getByRole('button', { name: 'Отмена', exact: true }).click()

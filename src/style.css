@@ -518,6 +518,9 @@ nav .list-conflict-marker{
 .profile-transfer-preference{display:flex;align-items:center;gap:8px;min-height:44px}
 .profile-transfer-preference input{flex:none;width:20px;height:20px;accent-color:#25634c}
 .list-merge fieldset{border:1px solid #d8dfd6;border-radius:12px;margin:12px 0;padding:12px;min-width:0}
-.list-merge select,.list-merge input:not([type=radio]):not([type=checkbox]){max-width:100%;width:100%}
+.list-merge input:not([type=radio]):not([type=checkbox]){max-width:100%;width:100%}
 .list-merge label{display:block;margin:8px 0}
 .list-merge input:is([type=radio],[type=checkbox]){margin-inline-end:6px}
+
+.merge-targets{list-style:none;padding:0;display:grid;gap:8px}
+.merge-targets button{width:100%;text-align:start;overflow-wrap:anywhere}

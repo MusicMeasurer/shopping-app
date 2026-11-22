@@ -119,3 +119,90 @@ it('recovers a partial archive intent after restart and preserves unmarked accou
   expect(await reopened.readAccountListMappings(accountId)).toHaveLength(1)
   await reopened.close()
 })
+
+it('projects pending purchases across restart, then replaces the provisional entry with one confirmed archive entry', async () => {
+  const name = 'local-archive-' + crypto.randomUUID()
+  const db = createStorage(name)
+  const marked = { ...createItem('groceries', 'Сыр'), purchased: true, quantity: 2, unit: 'кг' }
+  const unmarked = createItem('groceries', 'Молоко')
+  const request = { ...intent(marked.id), mode: 'archive_purchased' as const, name: 'Продукты', confirmedItemIds: [marked.id] }
+  await db.bindAccountList(accountId, 'groceries', remoteListId)
+  await db.saveAccountItem(accountId, marked)
+  await db.saveAccountItem(accountId, unmarked)
+  await db.queueAccountCompletion(request, true)
+  await db.close()
+
+  const reopened = createStorage(name)
+  expect((await reopened.readLocalCompletionView(accountId)).operations).toEqual([
+    { localListId: 'groceries', mode: 'archive_purchased', hiddenItemIds: [marked.id] },
+  ])
+  const provisional = (await reopened.readLocalCompletionView(accountId)).snapshots!
+  expect(provisional).toHaveLength(1)
+  expect(provisional[0]).toMatchObject({ pending: true, items: [{ name: 'Сыр', quantity: 2, unit: 'кг' }] })
+  expect((await reopened.readLocalCompletionView('other-account')).snapshots).toBeNull()
+  expect(await reopened.readAccountItems(accountId)).toEqual(expect.arrayContaining([marked, unmarked]))
+  const saved = { ...intent(marked.id), mode: request.mode }
+  await reopened.beginAccountCompletion(saved, true)
+  const archiveId = crypto.randomUUID()
+  await reopened.commitAccountCompletion(saved, 2, [{ id: marked.id, version: 2 }], { archiveId, kind: 'oneoff' })
+  expect(await reopened.readAccountItems(accountId)).toEqual([unmarked])
+  const confirmed = await reopened.readLocalCompletionView(accountId)
+  expect(confirmed.operations).toEqual([])
+  expect(confirmed.snapshots).toHaveLength(1)
+  expect(confirmed.snapshots![0]).toMatchObject({ id: archiveId, operationId })
+  expect(confirmed.snapshots![0].pending).toBeUndefined()
+  await expect(reopened.commitAccountCompletion(saved, 2, [{ id: marked.id, version: 2 }], { archiveId, kind: 'oneoff' })).rejects.toThrow()
+  expect((await reopened.readLocalCompletionView(accountId)).snapshots).toHaveLength(1)
+  await reopened.close()
+})
+
+it('does not create an archive placeholder for deletion and restores the list projection on a rejected request', async () => {
+  const db = createStorage('local-removal-' + crypto.randomUUID())
+  const item = createItem('groceries', 'Хлеб')
+  await db.bindAccountList(accountId, 'groceries', remoteListId)
+  await db.saveAccountItem(accountId, item)
+  const { expectedRevision: _revision, itemIds: _items, ...base } = intent(item.id)
+  const request = { ...base, mode: 'delete_list' as const, name: 'Продукты', confirmedMarked: false }
+  await db.queueAccountCompletion(request, true)
+  const pending = await db.readLocalCompletionView(accountId)
+  expect(pending.snapshots).toBeNull()
+  expect(pending.operations).toEqual([{ localListId: 'groceries', mode: 'delete_list', hiddenItemIds: [item.id] }])
+
+  const saved = { ...intent(item.id), mode: request.mode }
+  await db.beginAccountCompletion(saved, true)
+  await db.discardRejectedCompletion(saved)
+  expect((await db.readLocalCompletionView(accountId)).operations).toEqual([])
+  expect(await db.readAccountItems(accountId)).toEqual([item])
+  await db.close()
+})
+
+it('persists local metadata edits in order and keeps the replay revision when the server response is lost', async () => {
+  const name = 'local-list-changes-' + crypto.randomUUID()
+  const first = createStorage(name)
+  const secondId = crypto.randomUUID()
+  const firstList = { id: remoteListId, ownerId: accountId, name: 'Продукты', kind: 'permanent' as const, position: 0, revision: 1 }
+  const secondList = { ...firstList, id: secondId, position: 1, name: 'Дом' }
+  await first.bindAccountList(accountId, 'groceries', remoteListId)
+  await first.bindAccountList(accountId, 'other', secondId)
+  await first.cacheAccountListMetadata(accountId, [firstList, secondList])
+  await first.queueLocalListChange(accountId, 'groceries', 'rename', 'Поездка')
+  await first.queueLocalListChange(accountId, 'groceries', 'kind', 'oneoff')
+  await first.queueLocalListChange(accountId, 'groceries', 'reorder', 'other')
+  const firstChange = (await first.readLocalListChanges(accountId))[0]
+  await first.prepareLocalListChange(accountId, firstChange, firstList)
+  await first.close()
+
+  const reopened = createStorage(name)
+  expect(await reopened.hasAccountSyncWork(accountId)).toBe(true)
+  expect(await reopened.hasAccountSyncWork('other-account')).toBe(false)
+  expect(await reopened.readLocalListMappings(accountId)).toMatchObject([
+    { localListId: 'groceries', metadata: { name: 'Поездка', kind: 'oneoff', position: 1 } },
+    { localListId: 'other', metadata: { name: 'Дом', position: 0 } },
+  ])
+  const recovered = await reopened.readLocalListChanges(accountId)
+  expect(recovered.map(row => row.change.action)).toEqual(['rename', 'kind', 'reorder'])
+  expect(await reopened.prepareLocalListChange(accountId, recovered[0], { ...firstList, revision: 2 })).toEqual(firstList)
+  await reopened.finishLocalListChange(accountId, recovered[0])
+  expect((await reopened.readLocalListChanges(accountId)).map(row => row.change.action)).toEqual(['kind', 'reorder'])
+  await reopened.close()
+})
