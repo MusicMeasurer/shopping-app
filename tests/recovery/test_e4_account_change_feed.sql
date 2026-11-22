@@ -19,11 +19,11 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '38000000-0000-4000-8000-000000000001', true);
 DO $$
 BEGIN
-  IF (SELECT array_agg(position ORDER BY position) FROM public.pull_e4_account_changes(0, 2))
+  IF (SELECT array_agg(event_position ORDER BY event_position) FROM public.pull_e4_account_changes(0, 2))
       IS DISTINCT FROM ARRAY['1', '2']
   THEN RAISE EXCEPTION 'Unexpected first account page'; END IF;
   IF (SELECT count(*) FROM public.pull_e4_account_changes(2, 2)
-      WHERE position = '3' AND entity = 'item' AND deleted AND snapshot IS NULL) <> 1
+      WHERE event_position = '3' AND entity = 'item' AND deleted AND snapshot IS NULL) <> 1
   THEN RAISE EXCEPTION 'Missing tombstone or incorrect rollback handling'; END IF;
   IF EXISTS (SELECT 1 FROM public.pull_e4_account_changes(0, 20)
       WHERE list_id <> '38000000-0000-4000-8000-000000000101')
