@@ -120,4 +120,86 @@ $$;
 REVOKE ALL ON FUNCTION public.pull_e4_account_changes(bigint, integer) FROM PUBLIC, anon;
 GRANT EXECUTE ON FUNCTION public.pull_e4_account_changes(bigint, integer) TO authenticated;
 
+-- Use the existing mutation receipts and version checks. Each operation has
+-- its own outcome so a rejected edit cannot roll back an unrelated edit.
+CREATE FUNCTION public.push_e4_account_changes(p_operations jsonb)
+RETURNS jsonb
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
+AS $$
+DECLARE
+  actor uuid := auth.uid();
+  operation jsonb;
+  operation_key uuid;
+  list_key uuid;
+  item_key uuid;
+  kind text;
+  receipt jsonb;
+  results jsonb := '[]'::jsonb;
+BEGIN
+  IF actor IS NULL THEN
+    RAISE EXCEPTION 'Account session required' USING ERRCODE = '42501';
+  END IF;
+  IF jsonb_typeof(p_operations) IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'Expected an array of operations' USING ERRCODE = '22023';
+  END IF;
+  IF jsonb_array_length(p_operations) NOT BETWEEN 1 AND 50 THEN
+    RAISE EXCEPTION 'Invalid batch size' USING ERRCODE = '22023';
+  END IF;
+
+  -- Take the same list locks as the item RPCs, in deterministic order.
+  PERFORM 1 FROM public.shopping_lists AS lists
+  WHERE lists.owner_id = actor AND lists.deleted_at IS NULL
+    AND lists.id::text IN (
+      SELECT entry->>'list_id' FROM jsonb_array_elements(p_operations) AS elements(entry)
+    )
+  ORDER BY lists.id FOR UPDATE;
+
+  FOR operation IN SELECT entry FROM jsonb_array_elements(p_operations) AS elements(entry)
+  LOOP
+    BEGIN
+      operation_key := (operation->>'operation_id')::uuid;
+      list_key := (operation->>'list_id')::uuid;
+      item_key := (operation->>'item_id')::uuid;
+      kind := operation->>'kind';
+      IF NOT EXISTS (
+        SELECT 1 FROM public.shopping_lists
+        WHERE id = list_key AND owner_id = actor AND deleted_at IS NULL
+      ) THEN
+        RAISE EXCEPTION 'List unavailable' USING ERRCODE = '42501';
+      END IF;
+      IF kind = 'add' AND operation->>'created_at' IS NOT NULL THEN
+        receipt := public.add_e4_ordered_item(
+          operation_key, list_key, item_key, operation->>'name',
+          (operation->>'purchased')::boolean, (operation->>'quantity')::numeric,
+          operation->>'unit', (operation->>'created_at')::timestamptz
+        );
+      ELSIF operation ? 'quantity' OR operation ? 'unit' THEN
+        receipt := public.apply_e4_item_change(
+          operation_key, list_key, kind, item_key, operation->>'name',
+          (operation->>'purchased')::boolean, (operation->>'expected_version')::bigint,
+          (operation->>'quantity')::numeric, operation->>'unit'
+        );
+      ELSE
+        receipt := public.apply_item_change(
+          operation_key, list_key, kind, item_key, operation->>'name',
+          (operation->>'purchased')::boolean, (operation->>'expected_version')::bigint
+        );
+      END IF;
+      results := results || jsonb_build_array(jsonb_build_object('receipt', receipt));
+    EXCEPTION
+      WHEN serialization_failure OR deadlock_detected THEN RAISE;
+      WHEN data_exception OR integrity_constraint_violation OR insufficient_privilege OR raise_exception THEN
+        results := results || jsonb_build_array(jsonb_build_object(
+          'operation_id', operation->>'operation_id', 'code', SQLSTATE,
+          'message', CASE WHEN SQLSTATE = 'P0001' THEN SQLERRM ELSE 'Operation rejected' END
+        ));
+    END;
+  END LOOP;
+  RETURN results;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.push_e4_account_changes(jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.push_e4_account_changes(jsonb) TO authenticated;
+
 COMMIT;
