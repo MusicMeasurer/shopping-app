@@ -89,3 +89,31 @@ it('retries a lost batch with stable IDs and acknowledges only confirmed operati
   expect(await storage.readAccountPending(account)).toHaveLength(1)
   await storage.close()
 })
+
+it('rolls back items and position if the account becomes inactive before commit', async () => {
+  const storage = createStorage(crypto.randomUUID())
+  const rpc = vi.fn().mockResolvedValueOnce({ data: { position: '1', lists: [list], items: [item] }, error: null })
+    .mockResolvedValueOnce({ data: [{ event_position: '2', entity: 'item', list_id: listId,
+      entity_id: itemId, deleted: false, snapshot: { ...item, purchased: true, version: 2 } }], error: null })
+  const client = { rpc } as unknown as SupabaseClient
+  await pullAccountFeed(client, storage, account, active)
+  let checks = 0
+  await expect(pullAccountFeed(client, storage, account, () => ++checks < 4))
+    .rejects.toThrow('Account changed')
+  expect(await storage.readAccountFeedPosition(account)).toBe('1')
+  expect(await storage.readAccountItems(account)).toMatchObject([{ id: itemId, purchased: false }])
+  await storage.close()
+})
+
+it('removes cached purchases when their cloud list is retired', async () => {
+  const storage = createStorage(crypto.randomUUID())
+  const rpc = vi.fn().mockResolvedValueOnce({ data: { position: '1', lists: [list], items: [item] }, error: null })
+    .mockResolvedValueOnce({ data: [{ event_position: '2', entity: 'list', list_id: listId,
+      entity_id: listId, deleted: true, snapshot: null }], error: null })
+  const client = { rpc } as unknown as SupabaseClient
+  await pullAccountFeed(client, storage, account, active)
+  await pullAccountFeed(client, storage, account, active)
+  expect(await storage.readAccountFeedLists(account)).toEqual([])
+  expect(await storage.readAccountItems(account)).toEqual([])
+  await storage.close()
+})

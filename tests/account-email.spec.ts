@@ -249,8 +249,9 @@ test('ignores ten quick returns and catches up once on reconnect without reopeni
   await page.clock.runFor(300)
   expect(pulls).toBe(before)
   expect(calls.filter(call => call.path === '/auth/v1/user')).toHaveLength(authBefore)
+  await page.context().setOffline(true)
   changed = true
-  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await page.context().setOffline(false)
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
   expect(pulls).toBe(before + 1)
   expect(calls.some(call => call.path === '/rest/v1/shopping_items')).toBe(false)

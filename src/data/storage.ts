@@ -1740,6 +1740,7 @@ export function createStorage(name = 'shopping-app') {
           }
         }
         const deferred: AccountFeedChange[] = []
+        const retiredLists = new Set<string>()
         for (const change of latest.values()) {
           if (change.entity !== 'list') continue
           const current = byRemote.get(change.listId)
@@ -1756,10 +1757,18 @@ export function createStorage(name = 'shopping-app') {
             if (!current) await mappings.add(mapping)
             else await mappings.put(mapping)
             byRemote.set(change.listId, mapping)
-          } else if (current?.metadata) {
-            const { metadata: _metadata, ...mapping } = current
-            await mappings.put(mapping)
-            byRemote.set(change.listId, mapping)
+          } else if (current) {
+            retiredLists.add(change.listId)
+            if (current.metadata) {
+              const { metadata: _metadata, ...mapping } = current
+              await mappings.put(mapping)
+              byRemote.set(change.listId, mapping)
+            }
+          }
+        }
+        if (retiredLists.size) {
+          for (const known of await versions.index('byAccount').getAll(accountId)) {
+            if (retiredLists.has(known.remoteListId) && !pendingItems.has(known.itemId)) await items.delete(known.key)
           }
         }
         for (const change of latest.values()) {

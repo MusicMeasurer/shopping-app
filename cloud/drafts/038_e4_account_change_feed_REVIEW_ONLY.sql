@@ -27,6 +27,33 @@ CREATE TABLE shoppingapp_internal.account_feed_events (
 REVOKE ALL ON shoppingapp_internal.account_feed_positions, shoppingapp_internal.account_feed_events
 FROM PUBLIC, anon, authenticated;
 
+CREATE FUNCTION shoppingapp_internal.append_account_feed_event(
+  account uuid, kind text, list_key uuid, entity_key uuid, removed boolean, row_data jsonb)
+RETURNS void LANGUAGE plpgsql SET search_path = ''
+AS $$
+DECLARE
+  next_position bigint;
+BEGIN
+  IF account IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users WHERE id = account) THEN
+    RETURN;
+  END IF;
+  -- This row lock orders successful commits per account. A sequence alone
+  -- would let a later commit outrun an open transaction and lose its events.
+  INSERT INTO shoppingapp_internal.account_feed_positions AS counter (account_id, event_position)
+  VALUES (account, 1)
+  ON CONFLICT (account_id) DO UPDATE SET event_position = counter.event_position + 1
+  RETURNING event_position INTO next_position;
+
+  INSERT INTO shoppingapp_internal.account_feed_events
+    (account_id, event_position, entity, list_id, entity_id, deleted, snapshot)
+  VALUES (account, next_position, kind, list_key, entity_key, removed,
+    CASE WHEN removed THEN NULL ELSE row_data END);
+END;
+$$;
+
+REVOKE ALL ON FUNCTION shoppingapp_internal.append_account_feed_event(uuid, text, uuid, uuid, boolean, jsonb)
+FROM PUBLIC, anon, authenticated;
+
 CREATE FUNCTION shoppingapp_internal.record_account_feed_event()
 RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
 AS $$
@@ -37,7 +64,8 @@ DECLARE
   entity_key uuid;
   kind text;
   removed boolean;
-  next_position bigint;
+  former_owner uuid;
+  transferred_item public.shopping_items;
 BEGIN
   IF TG_OP = 'DELETE' THEN
     row_data := to_jsonb(OLD);
@@ -53,30 +81,29 @@ BEGIN
     kind := 'list';
     list_key := entity_key;
     account := (row_data->>'owner_id')::uuid;
+    IF TG_OP = 'UPDATE' AND NEW.owner_id IS DISTINCT FROM OLD.owner_id THEN
+      former_owner := OLD.owner_id;
+    END IF;
   ELSE
     kind := 'item';
     list_key := (row_data->>'list_id')::uuid;
     SELECT owner_id INTO account FROM public.shopping_lists WHERE id = list_key;
   END IF;
 
-  -- Account cascades are removed with the account. A hard-deleted list has
-  -- its own tombstone, including when its items are deleted by cascade.
-  IF account IS NULL OR NOT EXISTS (SELECT 1 FROM auth.users WHERE id = account) THEN
-    RETURN NULL;
-  END IF;
-
   removed := TG_OP = 'DELETE' OR row_data->>'deleted_at' IS NOT NULL;
-  -- This row lock orders successful commits per account. A sequence alone
-  -- would let a later commit outrun an open transaction and lose its events.
-  INSERT INTO shoppingapp_internal.account_feed_positions AS counter (account_id, event_position)
-  VALUES (account, 1)
-  ON CONFLICT (account_id) DO UPDATE SET event_position = counter.event_position + 1
-  RETURNING event_position INTO next_position;
-
-  INSERT INTO shoppingapp_internal.account_feed_events
-    (account_id, event_position, entity, list_id, entity_id, deleted, snapshot)
-  VALUES (account, next_position, kind, list_key, entity_key, removed,
-    CASE WHEN removed THEN NULL ELSE row_data END);
+  -- Preserve the old owner's removal and send the new owner the existing
+  -- purchases as well as the list. Ordinary updates still emit one row.
+  IF former_owner IS NOT NULL THEN
+    PERFORM shoppingapp_internal.append_account_feed_event(former_owner, 'list', list_key, list_key, true, NULL);
+  END IF;
+  PERFORM shoppingapp_internal.append_account_feed_event(account, kind, list_key, entity_key, removed, row_data);
+  IF former_owner IS NOT NULL AND NOT removed THEN
+    FOR transferred_item IN SELECT * FROM public.shopping_items WHERE list_id = list_key AND deleted_at IS NULL
+    LOOP
+      PERFORM shoppingapp_internal.append_account_feed_event(account, 'item', list_key, transferred_item.id,
+        false, to_jsonb(transferred_item));
+    END LOOP;
+  END IF;
   RETURN NULL;
 END;
 $$;

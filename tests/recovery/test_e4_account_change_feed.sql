@@ -82,4 +82,25 @@ BEGIN
   END;
 END
 $$;
+RESET ROLE;
+INSERT INTO public.list_members (list_id, user_id) VALUES
+  ('38000000-0000-4000-8000-000000000101', '38000000-0000-4000-8000-000000000002');
+SET LOCAL ROLE authenticated;
+SELECT public.transfer_list_ownership('38000000-0000-4000-8000-000000000101', '38000000-0000-4000-8000-000000000002');
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 2, 50)
+    WHERE entity = 'list' AND deleted) THEN RAISE EXCEPTION 'Former owner did not receive list removal'; END IF;
+  IF EXISTS (SELECT 1 FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 2, 50)
+    WHERE snapshot IS NOT NULL) THEN RAISE EXCEPTION 'Former owner has access to transferred snapshots'; END IF;
+END
+$$;
+SELECT set_config('request.jwt.claim.sub', '38000000-0000-4000-8000-000000000002', true);
+DO $$
+BEGIN
+  IF (SELECT count(*) FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000002', 1, 50)
+    WHERE NOT deleted AND list_id = '38000000-0000-4000-8000-000000000101') <> 3
+  THEN RAISE EXCEPTION 'New owner did not receive transferred list and active items'; END IF;
+END
+$$;
 ROLLBACK;
