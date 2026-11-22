@@ -152,6 +152,27 @@ test.describe('queued cloud list operations', () => {
       await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
     }
 
+    await page.getByRole('button', { name: first, exact: true }).click()
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Объединить со списком', exact: true }).click()
+    const merge = page.getByRole('dialog', { name: 'Объединить списки' })
+    await merge.getByLabel('Список-получатель').selectOption({ label: second })
+    const authCheck = '**/auth/v1/user'
+    let checks = 0
+    await page.route(authCheck, async route => {
+      if (++checks === 1) return route.fulfill({ status: 503, json: { message: 'Temporarily unavailable' } })
+      return route.continue()
+    })
+    try {
+      await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+      await merge.getByRole('button', { name: 'Посмотреть результат' }).click()
+      await expect(merge.getByText(/исчезнет из активных списков/)).toBeVisible({ timeout: 15000 })
+      expect(checks).toBeGreaterThan(1)
+      await merge.getByRole('button', { name: 'Отмена', exact: true }).click()
+    } finally {
+      await page.unroute(authCheck)
+    }
+
     let releaseResponse!: () => void
     const holdResponse = new Promise<void>(resolve => { releaseResponse = resolve })
     let lostResponse = false
