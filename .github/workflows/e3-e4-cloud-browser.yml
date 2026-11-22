@@ -7,6 +7,7 @@ on:
       - 'src/App.tsx'
       - 'src/style.css'
       - 'src/AuthenticatedApp.tsx'
+      - 'src/data/account-sync.ts'
       - 'src/data/e4-cloud-list-operations.ts'
       - 'src/data/e4-cloud-list-operations.test.ts'
       - 'tests/e3-e4-cloud-acceptance.spec.ts'

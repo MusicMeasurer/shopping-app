@@ -157,10 +157,10 @@ export function createAccountSync(
         const version = source?.version ?? (candidates.has(before.id) ? deleted.get(before.id) : undefined)
         if (version === undefined || expectedVersion === undefined || version <= expectedVersion) continue
         const after = source && asLocal(source)
-        // A newer confirmed checkmark (or an unchanged item with a newer
-        // version) is safe if no other fields have changed locally.
-        if (!nameEvidence.has(before.id) &&
-            (!after || !sameItemSnapshot({ ...before, purchased: after.purchased }, after))) continue
+        // A newer confirmed amount and purchase state can replace the cache
+        // when no local write is queued. Renames and deletions still require
+        // the existing name-conflict evidence.
+        if (!nameEvidence.has(before.id) && (!after || before.name !== after.name)) continue
         remoteChanges.push({ before, expectedVersion, version, after })
       }
     }

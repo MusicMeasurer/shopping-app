@@ -347,7 +347,7 @@ describe('duplicate-name reconciliation', () => {
   })
 })
 
-describe('receiving checkmarks from another device', () => {
+describe('receiving purchase state and amount from another device', () => {
   it.each([true, false])('applies or acknowledges the newer server checkmark %s', async purchased => {
     const test = setup()
     const remote = { id: itemId, list_id: listId, name: 'Молоко', purchased,
@@ -361,13 +361,28 @@ describe('receiving checkmarks from another device', () => {
     ])
   })
 
+  it('receives the newer cloud amount together with its purchase state for the same item', async () => {
+    const test = setup()
+    const [base] = await test.readAccountItems()
+    const before = { ...base, purchased: true, quantity: 3, unit: 'л' }
+    test.readAccountItems.mockResolvedValue([before])
+    test.readAccountItemVersions.mockResolvedValue([{ key: 'version', accountId, itemId, remoteListId: listId, version: 4 }])
+    test.order.mockResolvedValue({ data: [{ id: itemId, list_id: listId, name: before.name,
+      purchased: true, quantity: 2, unit: 'л', created_at: new Date(1).toISOString(), version: 5 }], error: null })
+
+    await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(1)
+    expect(test.applyVersionedItemChanges).toHaveBeenCalledWith(accountId, 'groceries', listId, [
+      { before, expectedVersion: 4, version: 5, after: { ...before, quantity: 2 } },
+    ])
+  })
+
   it('leaves a local pending edit in the existing conflict path', async () => {
     const test = setup([{ kind: 'cloud-update', operationId, itemId, localListId: 'groceries',
       remoteListId: listId, expectedVersion: 1,
       item: { id: itemId, listId: 'groceries', name: 'Молоко', purchased: false, createdAt: 1 },
     }])
     test.order.mockResolvedValue({ data: [{ id: itemId, list_id: listId, name: 'Молоко',
-      purchased: true, created_at: new Date(1).toISOString(), version: 2 }], error: null })
+      purchased: true, quantity: 3, unit: 'л', created_at: new Date(1).toISOString(), version: 2 }], error: null })
     test.readAccountItemVersions.mockResolvedValue([{ key: 'version', accountId, itemId, remoteListId: listId, version: 1 }])
 
     await expect(test.sync.importRemoteOnly({ reconcileNames: true })).resolves.toBe(0)
