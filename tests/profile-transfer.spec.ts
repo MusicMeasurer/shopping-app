@@ -24,14 +24,20 @@ async function logout(page: Page) {
 }
 async function createList(page: Page, name: string) {
   await page.getByRole('button', { name: 'Новый список', exact: true }).click()
-  await page.getByLabel('Название списка', { exact: true }).fill(name)
-  await page.getByRole('button', { name: 'Создать', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Создать список' })
+  await dialog.getByLabel('Название списка', { exact: true }).fill(name)
+  await dialog.getByRole('button', { name: 'Создать', exact: true }).click()
+  await expect(dialog).toBeHidden({ timeout: 30000 })
   await page.getByRole('button', { name, exact: true }).click()
+  await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
 }
 async function add(page: Page, name: string) {
-  await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
-  await page.getByLabel('Что нужно купить?', { exact: false }).blur()
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  const input = page.getByLabel('Что нужно купить?', { exact: false })
+  await input.fill(name)
+  await expect(input).toHaveValue(name)
+  const addButton = page.getByRole('button', { name: 'Добавить товар' })
+  await expect(addButton).toBeEnabled({ timeout: 15000 })
+  await addButton.click()
   await expect(page.getByRole('checkbox', { name, exact: true })).toBeVisible()
 }
 for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode}: consent, collision, interrupted receipt, archive and source removal`, async ({ page }) => {
