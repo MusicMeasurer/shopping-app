@@ -71,9 +71,13 @@ export async function applyRemoteMutation(
   }
   const { data, error } = result
   if (error) throw error
+  return parseRemoteMutationReceipt(data, mutation.operationId)
+}
+
+export function parseRemoteMutationReceipt(data: unknown, operationId: string): RemoteMutationReceipt {
   if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid mutation receipt')
   const receipt = data as Record<string, unknown>
-  if (receipt.operation_id !== mutation.operationId ||
+  if (receipt.operation_id !== operationId ||
       !Number.isSafeInteger(receipt.list_revision) || (receipt.list_revision as number) < 0 ||
       !Number.isSafeInteger(receipt.item_version) || (receipt.item_version as number) < 0) {
     throw new Error('Invalid mutation receipt')

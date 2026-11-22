@@ -19,6 +19,7 @@ CREATE TABLE shoppingapp_internal.account_feed_events (
   entity_id uuid NOT NULL,
   deleted boolean NOT NULL,
   snapshot jsonb,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (account_id, event_position),
   CHECK ((snapshot IS NULL) = deleted)
 );
@@ -90,18 +91,26 @@ CREATE TRIGGER shopping_item_account_feed
 AFTER INSERT OR UPDATE OR DELETE ON public.shopping_items
 FOR EACH ROW EXECUTE FUNCTION shoppingapp_internal.record_account_feed_event();
 
-CREATE FUNCTION public.pull_e4_account_changes(p_after bigint, p_limit integer DEFAULT 200)
+CREATE FUNCTION public.pull_e4_account_changes(p_account uuid, p_after bigint, p_limit integer DEFAULT 200)
 RETURNS TABLE(event_position text, entity text, list_id uuid, entity_id uuid, deleted boolean, snapshot jsonb)
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = ''
 AS $$
 DECLARE
   actor uuid := auth.uid();
 BEGIN
-  IF actor IS NULL THEN
-    RAISE EXCEPTION 'Account session required' USING ERRCODE = '42501';
+  IF p_account IS NULL OR actor IS DISTINCT FROM p_account THEN
+    RAISE EXCEPTION 'Account session mismatch' USING ERRCODE = '42501';
   END IF;
   IF p_after IS NULL OR p_after < 0 OR p_limit IS NULL OR p_limit NOT BETWEEN 1 AND 500 THEN
     RAISE EXCEPTION 'Invalid cursor or page size' USING ERRCODE = '22023';
+  END IF;
+
+  IF p_after > COALESCE((SELECT c.event_position
+      FROM shoppingapp_internal.account_feed_positions c WHERE c.account_id = actor), 0)
+    OR (p_after < COALESCE((SELECT min(first.event_position)
+      FROM shoppingapp_internal.account_feed_events first WHERE first.account_id = actor),
+      (SELECT c.event_position + 1 FROM shoppingapp_internal.account_feed_positions c WHERE c.account_id = actor), 1) - 1) THEN
+    RAISE EXCEPTION 'Account feed cursor expired' USING ERRCODE = 'P0002';
   END IF;
 
   RETURN QUERY SELECT e.event_position::text, e.entity, e.list_id, e.entity_id,
@@ -117,12 +126,31 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.pull_e4_account_changes(bigint, integer) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.pull_e4_account_changes(bigint, integer) TO authenticated;
+REVOKE ALL ON FUNCTION public.pull_e4_account_changes(uuid, bigint, integer) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pull_e4_account_changes(uuid, bigint, integer) TO authenticated;
+
+-- A single statement sees the snapshot and its watermark under the same MVCC view.
+CREATE FUNCTION public.snapshot_e4_account_changes(p_account uuid)
+RETURNS jsonb LANGUAGE sql STABLE SECURITY DEFINER SET search_path = ''
+AS $$
+  WITH lists AS MATERIALIZED (
+    SELECT * FROM public.shopping_lists WHERE owner_id = auth.uid() AND deleted_at IS NULL
+  )
+  SELECT jsonb_build_object(
+    'position', COALESCE((SELECT c.event_position::text
+      FROM shoppingapp_internal.account_feed_positions c WHERE c.account_id = auth.uid()), '0'),
+    'lists', COALESCE((SELECT jsonb_agg(to_jsonb(l)) FROM lists l), '[]'::jsonb),
+    'items', COALESCE((SELECT jsonb_agg(to_jsonb(i))
+      FROM public.shopping_items i JOIN lists l ON l.id = i.list_id WHERE i.deleted_at IS NULL), '[]'::jsonb)
+  ) WHERE p_account = auth.uid();
+$$;
+
+REVOKE ALL ON FUNCTION public.snapshot_e4_account_changes(uuid) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.snapshot_e4_account_changes(uuid) TO authenticated;
 
 -- Use the existing mutation receipts and version checks. Each operation has
 -- its own outcome so a rejected edit cannot roll back an unrelated edit.
-CREATE FUNCTION public.push_e4_account_changes(p_operations jsonb)
+CREATE FUNCTION public.push_e4_account_changes(p_account uuid, p_operations jsonb)
 RETURNS jsonb
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = ''
 AS $$
@@ -136,8 +164,8 @@ DECLARE
   receipt jsonb;
   results jsonb := '[]'::jsonb;
 BEGIN
-  IF actor IS NULL THEN
-    RAISE EXCEPTION 'Account session required' USING ERRCODE = '42501';
+  IF p_account IS NULL OR actor IS DISTINCT FROM p_account THEN
+    RAISE EXCEPTION 'Account session mismatch' USING ERRCODE = '42501';
   END IF;
   IF jsonb_typeof(p_operations) IS DISTINCT FROM 'array' THEN
     RAISE EXCEPTION 'Expected an array of operations' USING ERRCODE = '22023';
@@ -150,7 +178,7 @@ BEGIN
   PERFORM 1 FROM public.shopping_lists AS lists
   WHERE lists.owner_id = actor AND lists.deleted_at IS NULL
     AND lists.id::text IN (
-      SELECT entry->>'list_id' FROM jsonb_array_elements(p_operations) AS elements(entry)
+      SELECT lower(entry->>'list_id') FROM jsonb_array_elements(p_operations) AS elements(entry)
     )
   ORDER BY lists.id FOR UPDATE;
 
@@ -199,7 +227,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.push_e4_account_changes(jsonb) FROM PUBLIC, anon;
-GRANT EXECUTE ON FUNCTION public.push_e4_account_changes(jsonb) TO authenticated;
+REVOKE ALL ON FUNCTION public.push_e4_account_changes(uuid, jsonb) FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.push_e4_account_changes(uuid, jsonb) TO authenticated;
 
 COMMIT;

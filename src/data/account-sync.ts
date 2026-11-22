@@ -350,5 +350,5 @@ export function createAccountSync(
     if (list !== remoteListId) throw new Error('Remote item belongs to another list')
     return localListId
   })
-  return { ...coordinator, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName }
+  return { ...coordinator, handleRejected, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName }
 }

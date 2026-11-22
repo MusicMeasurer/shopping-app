@@ -31,6 +31,10 @@ export async function fetchRemoteItems(client: Pick<SupabaseClient, 'from'>, lis
   if (page) query = query.order('id', { ascending: true }).range(page.from, page.to)
   const { data, error } = await query
   if (error) throw error
+  return parseRemoteItems(data, listId, includeFieldClocks)
+}
+
+export function parseRemoteItems(data: unknown, listId: string, includeFieldClocks = false): RemoteItem[] {
   if (!Array.isArray(data)) throw new Error('Invalid remote snapshot')
   return data.map((row: unknown): RemoteItem => {
     if (!row || typeof row !== 'object') throw new Error('Invalid remote item')

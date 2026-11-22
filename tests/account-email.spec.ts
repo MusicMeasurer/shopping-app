@@ -52,6 +52,8 @@ async function mockCloud(page: Page, duplicate = false) {
       await respond(user)
     } else if (path === '/auth/v1/recover' || path === '/auth/v1/resend' || path === '/auth/v1/logout') {
       await respond({})
+    } else if (path === '/rest/v1/rpc/snapshot_e4_account_changes') {
+      await respond({ code: 'PGRST202', message: 'Function not found' }, 404)
     } else if (path.startsWith('/rest/v1/')) {
       await respond([])
     } else {
@@ -203,4 +205,53 @@ test('reopens the signed-in account by its profile row with several empty local 
   await transfer.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await expect(menu).toHaveAttribute('data-profile-mode', 'cloud')
   expect(calls.filter(call => call.path === '/auth/v1/token' || call.path === '/auth/v1/logout')).toHaveLength(1)
+})
+
+test('ignores ten quick returns and catches up once on reconnect without reopening every list', async ({ page }) => {
+  const calls = await mockCloud(page)
+  const listId = '40000000-0000-4000-8000-000000000001'
+  const itemId = '50000000-0000-4000-8000-000000000001'
+  const row = { id: itemId, list_id: listId, name: 'Молоко', purchased: false, version: 1, created_at: '2026-11-22T00:00:00Z' }
+  const snapshot = { position: '1', lists: [{ id: listId, owner_id: accountId, name: 'Продукты', kind: 'permanent', position: 0, revision: 1 }], items: [row] }
+  let pulls = 0
+  let changed = false
+  await page.route(`**${fixturePath}/rest/v1/rpc/*account_changes`, async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path.endsWith('/snapshot_e4_account_changes')) return route.fulfill({ json: snapshot })
+    if (!path.endsWith('/pull_e4_account_changes')) return route.fallback()
+    pulls++
+    const cursor = route.request().postDataJSON().p_after
+    await route.fulfill({ json: changed && cursor === '1' ? [
+      { event_position: '2', entity: 'item', list_id: listId, entity_id: itemId, deleted: false,
+        snapshot: { ...row, purchased: true, version: 2 } },
+    ] : [] })
+  })
+  await page.clock.install()
+  await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  const dialog = page.getByRole('dialog', { name: 'Вход в аккаунт' })
+  await dialog.getByLabel('Email').fill(email)
+  await dialog.getByLabel('Пароль').fill(password)
+  await dialog.getByRole('button', { name: 'Войти', exact: true }).click()
+  const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+  const accountButton = page.getByRole('button', { name: 'Открыть аккаунт' })
+  await expect(decline.or(accountButton)).toBeVisible()
+  if (await decline.isVisible()) await decline.click()
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()
+  await expect.poll(() => pulls).toBeGreaterThan(0)
+  await page.clock.runFor(400)
+  const before = pulls
+  const authBefore = calls.filter(call => call.path === '/auth/v1/user').length
+  for (let index = 0; index < 10; index++) {
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await page.clock.runFor(25)
+  }
+  await page.clock.runFor(300)
+  expect(pulls).toBe(before)
+  expect(calls.filter(call => call.path === '/auth/v1/user')).toHaveLength(authBefore)
+  changed = true
+  await page.evaluate(() => window.dispatchEvent(new Event('online')))
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
+  expect(pulls).toBe(before + 1)
+  expect(calls.some(call => call.path === '/rest/v1/shopping_items')).toBe(false)
 })

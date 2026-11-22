@@ -19,16 +19,16 @@ SET LOCAL ROLE authenticated;
 SELECT set_config('request.jwt.claim.sub', '38000000-0000-4000-8000-000000000001', true);
 DO $$
 BEGIN
-  IF (SELECT array_agg(event_position ORDER BY event_position) FROM public.pull_e4_account_changes(0, 2))
+  IF (SELECT array_agg(event_position ORDER BY event_position) FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 0, 2))
       IS DISTINCT FROM ARRAY['1', '2']
   THEN RAISE EXCEPTION 'Unexpected first account page'; END IF;
-  IF (SELECT count(*) FROM public.pull_e4_account_changes(2, 2)
+  IF (SELECT count(*) FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 2, 2)
       WHERE event_position = '3' AND entity = 'item' AND deleted AND snapshot IS NULL) <> 1
   THEN RAISE EXCEPTION 'Missing tombstone or incorrect rollback handling'; END IF;
-  IF EXISTS (SELECT 1 FROM public.pull_e4_account_changes(0, 20)
+  IF EXISTS (SELECT 1 FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 0, 20)
       WHERE list_id <> '38000000-0000-4000-8000-000000000101')
   THEN RAISE EXCEPTION 'Feed crossed account boundary'; END IF;
-  IF has_function_privilege('anon', 'public.pull_e4_account_changes(bigint,integer)', 'EXECUTE')
+  IF has_function_privilege('anon', 'public.pull_e4_account_changes(uuid,bigint,integer)', 'EXECUTE')
   THEN RAISE EXCEPTION 'Anonymous feed access'; END IF;
 END
 $$;
@@ -41,14 +41,45 @@ DECLARE
   ]'::jsonb;
   receipt jsonb;
 BEGIN
-  receipt := public.push_e4_account_changes(payload);
+  receipt := public.push_e4_account_changes('38000000-0000-4000-8000-000000000001', payload);
   IF receipt->0->'receipt' IS NULL OR receipt->1->>'code' IS DISTINCT FROM '42501'
     OR receipt->2->'receipt' IS NULL
   THEN RAISE EXCEPTION 'Mixed operation batch outcomes are incorrect'; END IF;
-  IF public.push_e4_account_changes(payload) IS DISTINCT FROM receipt
+  IF public.push_e4_account_changes('38000000-0000-4000-8000-000000000001', payload) IS DISTINCT FROM receipt
   THEN RAISE EXCEPTION 'Batch replay changed operation receipts'; END IF;
-  IF has_function_privilege('anon', 'public.push_e4_account_changes(jsonb)', 'EXECUTE')
+  IF has_function_privilege('anon', 'public.push_e4_account_changes(uuid,jsonb)', 'EXECUTE')
   THEN RAISE EXCEPTION 'Anonymous batch write access'; END IF;
+END
+$$;
+DO $$
+DECLARE
+  state jsonb;
+BEGIN
+  state := public.snapshot_e4_account_changes('38000000-0000-4000-8000-000000000001');
+  IF jsonb_array_length(state->'lists') <> 1 OR jsonb_array_length(state->'items') <> 2
+    OR state->>'position' IS DISTINCT FROM (SELECT max(event_position::bigint)::text
+      FROM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 0, 50))
+  THEN RAISE EXCEPTION 'Snapshot and journal watermark disagree'; END IF;
+  IF public.snapshot_e4_account_changes('38000000-0000-4000-8000-000000000002') IS NOT NULL
+  THEN RAISE EXCEPTION 'Foreign snapshot visible'; END IF;
+  BEGIN
+    PERFORM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000002', 0, 50);
+    RAISE EXCEPTION 'Mismatched account accepted';
+  EXCEPTION WHEN insufficient_privilege THEN NULL;
+  END;
+END
+$$;
+RESET ROLE;
+DELETE FROM shoppingapp_internal.account_feed_events
+WHERE account_id = '38000000-0000-4000-8000-000000000001' AND event_position < 3;
+SET LOCAL ROLE authenticated;
+DO $$
+BEGIN
+  BEGIN
+    PERFORM public.pull_e4_account_changes('38000000-0000-4000-8000-000000000001', 1, 50);
+    RAISE EXCEPTION 'Expired cursor accepted';
+  EXCEPTION WHEN no_data_found THEN NULL;
+  END;
 END
 $$;
 ROLLBACK;

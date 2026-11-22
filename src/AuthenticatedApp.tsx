@@ -1,3 +1,5 @@
+import { pullAccountFeed } from './data/account-feed'
+import { flushAccountBatch } from './data/account-batch'
 import { syncAccountDrafts } from './data/sync-account-drafts'
 import { applyCloudListMerge, previewCloudListMerge } from './data/cloud-list-merge'
 import { ListMergeConflict, sameMergeSnapshot, type ListMergeActions } from './domain/list-merge'
@@ -83,6 +85,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
   const requestCloudRefresh = useRef<(() => void) | undefined>(undefined)
+  const lastCloudCheck = useRef<{ accountId: string; at: number } | undefined>(undefined)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const [syncError, setSyncError] = useState('')
   const [listOperations, setListOperations] = useState<ListOperationStatus[]>([])
@@ -222,32 +225,32 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           ? 'Перенос остановлен: в аккаунте уже есть список с таким названием. Локальные данные сохранены.'
           : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
-      const rows = await fetchCloudListMetadata(client, currentAccount)
-      if (cancelled) return
-      await verifyAccount()
-      if (cancelled) return
-      const mappings = await storage.readAccountListMappings(currentAccount)
       const restore = await storage.needsAccountCacheRestore(currentAccount)
-      const existing = new Set(mappings.filter(row => row.metadata).map(row => row.remoteListId))
-      const missing = rows.filter(row => !existing.has(row.id))
-      const hydrate = restore ? rows : missing
-      for (let offset = 0; offset < hydrate.length; offset += 8) {
+      const feed = await pullAccountFeed(client, storage, currentAccount, () => !cancelled)
+      if (cancelled) return
+      const rows = feed ? await storage.readAccountFeedLists(currentAccount)
+        : await fetchCloudListMetadata(client, currentAccount)
+      if (!feed) {
+        const mappings = await storage.readAccountListMappings(currentAccount)
+        const byRemote = new Map(mappings.map(row => [row.remoteListId, row]))
+        const hydrate = restore ? rows : rows.filter(row => !byRemote.get(row.id)?.metadata)
+        for (let offset = 0; offset < hydrate.length; offset += 8) {
+          if (cancelled) return
+          await verifyAccount()
+          await Promise.all(hydrate.slice(offset, offset + 8).map(async row => {
+            const localListId = byRemote.get(row.id)?.localListId ?? row.id
+            await storage.bindAccountList(currentAccount, localListId, row.id)
+            await createAccountSync(storage, client, {
+              accountId: currentAccount, localListId, remoteListId: row.id,
+              isActive: () => !cancelled,
+            }).importRemoteOnly()
+          }))
+        }
         if (cancelled) return
         await verifyAccount()
-        if (cancelled) return
-        await Promise.all(hydrate.slice(offset, offset + 8).map(async row => {
-          const localListId = mappings.find(mapping => mapping.remoteListId === row.id)?.localListId ?? row.id
-          await storage.bindAccountList(currentAccount, localListId, row.id)
-          await createAccountSync(storage, client, {
-            accountId: currentAccount, localListId, remoteListId: row.id,
-            isActive: () => !cancelled,
-          }).importRemoteOnly()
-        }))
+        await storage.cacheAccountListMetadata(currentAccount, rows)
       }
       if (cancelled) return
-      await verifyAccount()
-      if (cancelled) return
-      await storage.cacheAccountListMetadata(currentAccount, rows)
       if (restore) await storage.confirmAccountCacheRestore(currentAccount)
       const confirmedMappings = await storage.readAccountListMappings(currentAccount)
       if (!cancelled) {
@@ -292,6 +295,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
         do {
           flushRequested.current.delete(accountId)
+          if (await storage.readAccountFeedPosition(accountId) !== undefined) {
+            await flushAccountBatch(storage, client, accountId, () => activeAccount.current === accountId,
+              () => setWorkspaceRevision(value => value + 1))
+            continue
+          }
           const [mappings, owned] = await Promise.all([
             storage.readAccountListMappings(accountId),
             fetchOwnedCloudLists(client, accountId),
@@ -381,14 +389,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     if (!controller) return
     const recheck = () => { if (navigator.onLine) void controller.initialize() }
-    const onVisible = () => { if (document.visibilityState === 'visible') recheck() }
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return
+      const last = lastCloudCheck.current
+      if (last && last.accountId === signedInAccount && performance.now() - last.at < 30_000) return
+      recheck()
+    }
     window.addEventListener('online', recheck)
     document.addEventListener('visibilitychange', onVisible)
     return () => {
       window.removeEventListener('online', recheck)
       document.removeEventListener('visibilitychange', onVisible)
     }
-  }, [controller])
+  }, [controller, signedInAccount])
 
   // Clear transient controls on identity change; startup publishes verified
   // metadata and bindings together after the snapshot has been restored.
@@ -406,7 +419,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     if (!currentAccount || readyAccount !== currentAccount || !cloudMetadata ||
         cloudMetadata.some(row => row.ownerId !== currentAccount)) return
-    void storage.cacheAccountListMetadata(currentAccount, cloudMetadata).catch(() => {
+    void storage.readAccountFeedPosition(currentAccount).then(position => {
+      if (position === undefined && activeAccount.current === currentAccount)
+        return storage.cacheAccountListMetadata(currentAccount, cloudMetadata)
+    }).catch(() => {
       if (activeAccount.current === currentAccount)
         setCloudRefreshStatus('Не удалось сохранить списки для офлайн-доступа.')
     })
@@ -424,8 +440,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     const resumeIntervalMs = 30_000
     let lastSuccess: number | undefined
     let pullFailed = false
+    let refreshOnReturn = false
     async function refresh(mode: 'all' | 'changed' = 'all') {
-      if (!client || disposed || document.visibilityState === 'hidden' || !navigator.onLine) return
+      if (!client || disposed || !navigator.onLine) return
+      if (document.visibilityState === 'hidden') {
+        refreshOnReturn = true
+        return
+      }
+      refreshOnReturn = false
       if (running) {
         if (mode === 'all' || !queued) queued = mode
         return
@@ -437,15 +459,33 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       let pulling = false
       const started = performance.now()
       let stage = 'session'
+      let requests = 0
       const reportFailure = (cause: unknown) => {
         const code = (cause as { code?: unknown } | null)?.code
         console.warn('Cloud list refresh failed', {
-          stage, elapsedMs: Math.round(performance.now() - started),
+          stage, requests, elapsedMs: Math.round(performance.now() - started),
           code: typeof code === 'string' && /^[A-Z0-9]{5,10}$/.test(code) ? code : undefined,
         })
       }
       try {
         if (activeAccount.current !== accountId) return
+        const stillActive = () => !disposed && activeAccount.current === accountId
+        stage = 'account-feed'
+        if (await storage.readAccountFeedPosition(accountId) !== undefined) {
+          await pullAccountFeed(client, storage, accountId, stillActive, () => requests++)
+          if (!stillActive()) return
+          const [rows, mappings] = await Promise.all([
+            storage.readAccountFeedLists(accountId), storage.readAccountListMappings(accountId),
+          ])
+          if (!stillActive()) return
+          setCloudMetadata(rows)
+          setCloudLists(rows.map(({ id, name }) => ({ id, name })))
+          setCloudBindings(Object.fromEntries(mappings.map(row => [row.localListId, row.remoteListId])))
+          setWorkspaceRevision(value => value + 1)
+          pulling = true
+          return
+        }
+        stage = 'session'
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
         stage = 'local-index'
         const [mappings, completions, merges] = await Promise.all([
@@ -453,7 +493,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         ])
         stage = 'list-index'
         const owned = await fetchCloudListMetadata(client, accountId)
-        const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
         const completing = new Set([...completions.map(row => row.remoteListId), ...merges.flatMap(row => [row.source.remoteListId, row.target.remoteListId])])
         const activeIds = new Set(owned.map(row => row.id))
@@ -506,7 +545,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (!disposed && activeAccount.current === accountId) reportFailure(cause)
         failed = true
       } finally {
-        if (!disposed && activeAccount.current === accountId && !failed) lastSuccess = performance.now()
+        if (!disposed && activeAccount.current === accountId) {
+          if (failed) lastCloudCheck.current = undefined
+          else {
+            lastSuccess = performance.now()
+            lastCloudCheck.current = { accountId, at: lastSuccess }
+          }
+        }
         if (!disposed && activeAccount.current === accountId && (pulling || failed || pullFailed || mode === 'all')) {
           pullFailed = failed
           setPullState({ account: accountId, status: failed ? 'error' : 'done' })
@@ -522,7 +567,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
     const onVisible = () => {
       if (!running && document.visibilityState === 'visible' &&
-          (pullFailed || lastSuccess === undefined || performance.now() - lastSuccess >= resumeIntervalMs)) void refresh('changed')
+          (refreshOnReturn || pullFailed || lastSuccess === undefined || performance.now() - lastSuccess >= resumeIntervalMs)) void refresh('changed')
     }
     const onOnline = () => void refresh('changed')
     requestCloudRefresh.current = onOnline
@@ -642,6 +687,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         }
       }
       if (activeAccount.current !== accountId) return
+      await storage.cacheAccountListMetadata(accountId, refreshed, { partial: true })
+      if (activeAccount.current !== accountId) return
       setCloudBindings(previous => ({ ...previous, [created.id]: created.id }))
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
@@ -668,6 +715,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const refreshed = await fetchCloudListMetadata(client, accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
+      await storage.cacheAccountListMetadata(accountId, refreshed, { partial: true })
+      if (activeAccount.current !== accountId) return
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(value => ({ id: value.id, name: value.name })))
       return true

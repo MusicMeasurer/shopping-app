@@ -1,3 +1,4 @@
+import type { AccountFeedChange } from './account-feed'
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema, type IDBPObjectStore } from 'idb'
 import { MAX_LOCAL_PROFILES, profileName, addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
@@ -111,7 +112,7 @@ export interface QueuedListMerge {
 }
 interface ScopedListMapping {
   key: string; accountId: string; localListId: string; remoteListId: string
-  symbol?: string; metadata?: ListMetadata; pendingMetadata?: LocalListChange[]; pendingMerge?: QueuedListMerge
+  symbol?: string; metadata?: ListMetadata; cloudRevision?: number; pendingMetadata?: LocalListChange[]; pendingMerge?: QueuedListMerge
 }
 
 function mergeTouches(merge: QueuedListMerge | undefined, id: string) {
@@ -208,6 +209,7 @@ interface ShoppingDB extends DBSchema {
   accountCompletionRequests: { key: string; value: ScopedCompletionRequest; indexes: { byAccount: string } }
   accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
+  accountFeed: { key: string; value: { accountId: string; position: string; deferred: AccountFeedChange[] } }
   accountItemVersions: { key: string; value: ScopedVersion; indexes: { byAccount: string } }
 }
 function accountKey(accountId: string, operationId: string): string {
@@ -217,8 +219,9 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 16, {
+  const database = openDB<ShoppingDB>(name, 17, {
     upgrade(db, oldVersion, _newVersion, tx) {
+      if (!db.objectStoreNames.contains('accountFeed')) db.createObjectStore('accountFeed', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -834,7 +837,7 @@ export function createStorage(name = 'shopping-app') {
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
         'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
-        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists',
+        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists', 'accountFeed',
       ], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
@@ -861,6 +864,7 @@ export function createStorage(name = 'shopping-app') {
             key: 'restore-account:' + accountId, profileId, completedAt: Date.now(),
           })
           await tx.objectStore('accountArchiveCache').delete(accountId)
+          await tx.objectStore('accountFeed').delete(accountId)
           for (const storeName of ['accountItems', 'accountListMappings', 'accountItemVersions'] as const) {
             const store = tx.objectStore(storeName)
             for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
@@ -1672,6 +1676,127 @@ export function createStorage(name = 'shopping-app') {
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
     },
+    async readAccountFeedPosition(accountId: string): Promise<string | undefined> {
+      return (await (await database).get('accountFeed', accountId))?.position
+    },
+    async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
+      changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean): Promise<boolean> {
+      const tx = (await database).transaction(['accountFeed', 'accountListMappings', 'accountItems',
+        'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const feeds = tx.objectStore('accountFeed')
+        const previous = await feeds.get(accountId)
+        if (!isActive()) throw new Error('Account changed during feed synchronization')
+        if (previous?.position !== expected) {
+          await done
+          return false
+        }
+        if (!snapshot && !changes.length && !previous?.deferred.length) {
+          await done
+          return true
+        }
+        const mappings = tx.objectStore('accountListMappings')
+        const items = tx.objectStore('accountItems')
+        const versions = tx.objectStore('accountItemVersions')
+        const [accountMappings, operations, completions, requests] = await Promise.all([
+          mappings.index('byAccount').getAll(accountId),
+          tx.objectStore('accountOperations').index('byAccount').getAll(accountId),
+          tx.objectStore('accountCompletions').index('byAccount').getAll(accountId),
+          tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId),
+        ])
+        const byRemote = new Map(accountMappings.map(mapping => [mapping.remoteListId, mapping]))
+        const busyLists = new Set([
+          ...completions.map(({ intent }) => intent.remoteListId),
+          ...requests.map(({ remoteListId }) => remoteListId),
+          ...accountMappings.flatMap(({ pendingMerge }) => pendingMerge
+            ? [pendingMerge.source.remoteListId, pendingMerge.target.remoteListId] : []),
+        ])
+        const pendingItems = new Set<string>()
+        const editedLists = new Set(accountMappings.filter(row => row.pendingMetadata?.length).map(row => row.remoteListId))
+        const remoteByLocal = new Map(accountMappings.map(row => [row.localListId, row.remoteListId]))
+        for (const { operation } of operations) {
+          const itemId = operation.kind === 'upsert' ? operation.item.id : operation.itemId
+          pendingItems.add(itemId)
+          const remoteId = operation.kind === 'upsert' ? remoteByLocal.get(operation.item.listId)
+            : operation.kind === 'delete' ? (await versions.get(accountKey(accountId, itemId)))?.remoteListId
+            : operation.remoteListId
+          if (remoteId) editedLists.add(remoteId)
+        }
+        const latest = new Map<string, AccountFeedChange>()
+        const add = (change: AccountFeedChange) => latest.set(change.entity === 'list'
+          ? 'list:' + change.listId : 'item:' + change.itemId, change)
+        for (const change of snapshot ? [] : previous?.deferred ?? []) add(change)
+        for (const change of changes) add(change)
+        if (snapshot) {
+          for (const mapping of accountMappings) {
+            if (mapping.metadata && !latest.has('list:' + mapping.remoteListId))
+              add({ entity: 'list', listId: mapping.remoteListId, metadata: null })
+          }
+          for (const version of await versions.index('byAccount').getAll(accountId)) {
+            if (!latest.has('item:' + version.itemId))
+              add({ entity: 'item', listId: version.remoteListId, itemId: version.itemId, item: null })
+          }
+        }
+        const deferred: AccountFeedChange[] = []
+        for (const change of latest.values()) {
+          if (change.entity !== 'list') continue
+          const current = byRemote.get(change.listId)
+          if (busyLists.has(change.listId) || (!change.metadata && editedLists.has(change.listId))) {
+            deferred.push(change)
+            continue
+          }
+          if (change.metadata) {
+            const { name, kind, position, revision } = change.metadata
+            if (change.metadata.ownerId !== accountId) throw new Error('Foreign feed list')
+            if (!snapshot && current?.cloudRevision !== undefined && current.cloudRevision > revision) continue
+            const mapping = { ...(current ?? { key: accountKey(accountId, change.listId), accountId,
+              localListId: change.listId, remoteListId: change.listId }), metadata: { name, kind, position }, cloudRevision: revision }
+            if (!current) await mappings.add(mapping)
+            else await mappings.put(mapping)
+            byRemote.set(change.listId, mapping)
+          } else if (current?.metadata) {
+            const { metadata: _metadata, ...mapping } = current
+            await mappings.put(mapping)
+            byRemote.set(change.listId, mapping)
+          }
+        }
+        for (const change of latest.values()) {
+          if (change.entity !== 'item') continue
+          if (busyLists.has(change.listId) || pendingItems.has(change.itemId)) {
+            deferred.push(change)
+            continue
+          }
+          const mapping = byRemote.get(change.listId)
+          const key = accountKey(accountId, change.itemId)
+          const known = await versions.get(key)
+          if (known && known.remoteListId !== change.listId) throw new Error('Account feed item mapping mismatch')
+          if (!change.item) {
+            if (known) await items.delete(key)
+            continue
+          }
+          if (!mapping?.metadata || (known && known.version > change.item.version)) continue
+          const { id, name, purchased, quantity, unit, createdAt, version } = change.item
+          await items.put({ key, accountId, item: { id, listId: mapping.localListId, name, purchased, quantity, unit,
+            createdAt: Date.parse(createdAt) } })
+          await versions.put({ key, accountId, itemId: id, remoteListId: change.listId, version })
+        }
+        if (!isActive()) throw new Error('Account changed during feed synchronization')
+        await feeds.put({ accountId, position, deferred })
+        await done
+        return true
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async readAccountFeedLists(accountId: string): Promise<CloudListMetadata[]> {
+      const rows = await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId)
+      return rows.flatMap(row => row.metadata ? [{ ...row.metadata, id: row.remoteListId, ownerId: accountId,
+        revision: row.cloudRevision ?? 0 }] : []).sort((a, b) => a.position - b.position || a.id.localeCompare(b.id))
+    },
     async readAccountPending(accountId: string): Promise<PendingItemOperation[]> {
       accountKey(accountId, 'check')
       const records = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
@@ -1942,7 +2067,7 @@ export function createStorage(name = 'shopping-app') {
       await tx.done
     },
     async cacheAccountListMetadata(accountId: string, rows: readonly {
-      id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number
+      id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number; revision?: number
     }[], { partial = false } = {}): Promise<void> {
       if (rows.some(row => row.ownerId !== accountId)) throw new Error('Foreign list metadata')
       const byId = new Map(rows.map(row => [row.id, row]))
@@ -1951,7 +2076,7 @@ export function createStorage(name = 'shopping-app') {
         const row = byId.get(mapping.remoteListId)
         if (row) {
           const { name, kind, position } = row
-          await tx.store.put({ ...mapping, metadata: { name, kind, position } })
+          await tx.store.put({ ...mapping, metadata: { name, kind, position }, cloudRevision: row.revision ?? mapping.cloudRevision })
         } else if (!partial && mapping.metadata) {
           const { metadata: _metadata, ...withoutMetadata } = mapping
           await tx.store.put(withoutMetadata)
