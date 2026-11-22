@@ -904,6 +904,7 @@ test('creates a list and queues and cancels completion in a signed-out account c
   await archive.getByRole('button', { name: 'Отменить операцию' }).click()
   await expect(archive.getByText('Чай', { exact: true })).toHaveCount(0)
   await expect(archive.getByText('Архив ещё не сохранён на этом устройстве.', { exact: false })).toBeVisible()
+  await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
   await card.click()
   await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeEnabled()
 
