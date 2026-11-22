@@ -1688,6 +1688,12 @@ export function createStorage(name = 'shopping-app') {
           ? (await tx.objectStore('accountItems').get(accountKey(accountId, operation.itemId)))?.item.listId
           : (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
               .find(row => row.remoteListId === operation.remoteListId)?.localListId
+      const merges = await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)
+      if (merges.some(row => row.pendingMerge && (!affected || mergeTouches(row.pendingMerge, affected)))) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        throw new Error('Объединение этих списков ожидает синхронизации.')
+      }
       if (inFlight.some(row => !affected || row.intent.localListId === affected)) {
         tx.abort()
         await tx.done.catch(() => {})
@@ -1847,7 +1853,9 @@ export function createStorage(name = 'shopping-app') {
           for (const row of rows) {
             if (!mergeTouches(merge, row.item.listId)) continue
             await items.delete(row.key)
-            await versions.delete(row.key)
+            // Keep the last known version for removed target IDs. A pull
+            // started before the merge must not import those rows again.
+            if (row.item.listId === merge.source.localListId) await versions.delete(row.key)
           }
           for (const { item, version } of confirmed) {
             const key = accountKey(accountId, item.id)
