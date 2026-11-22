@@ -15,11 +15,7 @@ on:
       - '.github/workflows/local-profiles-hosted-ab.yml'
       - 'src/App.tsx'
       - 'src/style.css'
-      - 'src/data/account-sync.ts'
-      - 'src/data/e4-cloud-list-operations.ts'
-      - 'src/data/e4-cloud-list-operations.test.ts'
-      - 'tests/e3-e4-cloud-acceptance.spec.ts'
-      - 'tests/e3-e4-cloud-modes.spec.ts'
+      - 'playwright.config.ts'
       - 'tests/e3-e4-cloud-oneoff.spec.ts'
       - 'tests/e3-e4-cloud-conflict.spec.ts'
       - 'tests/e3-e4-cloud-permanent.spec.ts'
@@ -82,7 +78,7 @@ jobs:
           if [[ "$GITHUB_REF_NAME" == feature/e4-accepted-reintegration ]]; then
             npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts tests/profile-transfer.spec.ts --project=iphone-webkit --workers=1
           else
-            npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --workers=1
+            npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --project=iphone-webkit --workers=1
           fi
       - name: Real A/B authentication and forbidden cross-account access
         run: node scripts/e3-real-session-gate.mjs

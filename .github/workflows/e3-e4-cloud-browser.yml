@@ -32,12 +32,8 @@ jobs:
           test -n "$E3E4_LAB_TEST_PASSWORD" || { echo "::error::Missing disposable test password"; exit 1; }
           test -n "$E3E4_LAB_TEST_LIST_ID" || { echo "::error::Missing owned disposable test list"; exit 1; }
       - run: npm run build
-      - name: User-facing cloud archive and account controls
-        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts --project=iphone-webkit --workers=1
-      - name: Cloud add button and conflict across Chromium and WebKit
-        run: |
-          npx playwright test tests/e3-e4-cloud-oneoff.spec.ts tests/e3-e4-cloud-conflict.spec.ts \
-            --project=mobile-chromium --workers=1 --grep 'oneoff list can be created|newer offline amount'
+      - name: Cloud archive, deletion recovery and two-device conflict
+        run: npx playwright test tests/e3-e4-cloud-oneoff.spec.ts tests/e3-e4-cloud-conflict.spec.ts --project=iphone-webkit --workers=1
       - run: npm run build
         env:
           VITE_LAB_CONTROLS: 'true'

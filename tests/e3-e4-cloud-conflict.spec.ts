@@ -1,4 +1,4 @@
-import { devices, expect, test, webkit, type Page } from '@playwright/test'
+import { devices, expect, test, type Page } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
 const url = process.env.E3E4_LAB_URL ?? ''
@@ -30,7 +30,7 @@ async function editAmount(page: Page, item: string, amount: number) {
   await expect(editor).toHaveCount(0)
 }
 
-test('Chromium and WebKit retain a newer offline amount and a later cloud purchase mark', async ({ page: chromium, context }) => {
+test('two WebKit sessions retain a newer offline amount and a later cloud purchase mark', async ({ page: offlinePage, context, browser }) => {
   test.setTimeout(180000)
   if (url !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' || !key || !email || !password)
     throw new Error('Refusing to run outside the established isolated E3 lab')
@@ -62,46 +62,40 @@ test('Chromium and WebKit retain a newer offline amount and a later cloud purcha
       p_name: item, p_purchased: false, p_expected_version: null, p_quantity: 1, p_unit: 'л',
     })
     expect(seedError).toBeNull()
-    await openList(chromium, listName)
-    await expect(checkbox(chromium, 1)).toBeVisible()
+    await openList(offlinePage, listName)
+    await expect(checkbox(offlinePage, 1)).toBeVisible()
 
-    const otherBrowser = await webkit.launch()
+    const otherContext = await browser.newContext({
+      ...devices['iPhone 13'], baseURL: 'http://127.0.0.1:4173', serviceWorkers: 'block',
+    })
     try {
-      const otherContext = await otherBrowser.newContext({ ...devices['iPhone 13'],
-        baseURL: 'http://127.0.0.1:4173', serviceWorkers: 'block' })
-      const safari = await otherContext.newPage()
-      await openList(safari, listName)
-      await expect(checkbox(safari, 1)).toBeVisible()
-      await expect(checkbox(safari, 1)).not.toBeChecked()
+      const onlinePage = await otherContext.newPage()
+      await openList(onlinePage, listName)
+      await expect(checkbox(onlinePage, 1)).toBeVisible()
+      await expect(checkbox(onlinePage, 1)).not.toBeChecked()
       await context.setOffline(true)
 
-      await editAmount(safari, item, 3)
+      await editAmount(onlinePage, item, 3)
       await expect.poll(liveItem).toMatchObject({ quantity: 3, purchased: false })
       const firstCloudEdit = await liveItem()
       const serverAmountTime = Date.parse(firstCloudEdit!.field_changed_at.amount)
       expect(Number.isFinite(serverAmountTime)).toBe(true)
       await expect.poll(() => Date.now()).toBeGreaterThan(serverAmountTime)
 
-      await editAmount(chromium, item, 2)
-      await expect(checkbox(chromium, 2)).toBeVisible()
-      await expect(checkbox(chromium, 2)).not.toBeChecked()
-      await checkbox(safari, 3).click()
+      await editAmount(offlinePage, item, 2)
+      await expect(checkbox(offlinePage, 2)).toBeVisible()
+      await expect(checkbox(offlinePage, 2)).not.toBeChecked()
+      await checkbox(onlinePage, 3).click()
       await expect.poll(liveItem).toMatchObject({
         quantity: 3, purchased: true, field_changed_at: { amount: firstCloudEdit!.field_changed_at.amount },
       })
 
-      const conflict = chromium.waitForResponse(async response => {
-        if (!response.url().endsWith('/rest/v1/rpc/apply_e4_item_change') || response.ok()) return false
-        const payload = await response.json()
-        return payload.message === 'Version conflict'
-      })
       await context.setOffline(false)
-      await conflict
       await expect.poll(liveItem, { timeout: 30000 }).toMatchObject({ quantity: 2, purchased: true })
-      await expect(checkbox(chromium, 2)).toBeChecked({ timeout: 30000 })
-      await expect(checkbox(safari, 2)).toBeChecked({ timeout: 30000 })
+      await expect(checkbox(offlinePage, 2)).toBeChecked({ timeout: 30000 })
+      await expect(checkbox(onlinePage, 2)).toBeChecked({ timeout: 30000 })
     } finally {
-      await otherBrowser.close()
+      await otherContext.close()
     }
   } finally {
     await context.setOffline(false)

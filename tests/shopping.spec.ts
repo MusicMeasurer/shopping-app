@@ -3,6 +3,7 @@ test('iPhone: lists, persistence, deletion and offline PWA', async ({ page, cont
   await page.goto('/shopping-app/')
   const input = page.getByLabel('Что нужно купить?')
   await expect(input).toBeEnabled()
+  await expect(page.getByText('Списки сохраняются на этом устройстве.', { exact: false })).toBeVisible()
   await input.fill('Молоко')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()

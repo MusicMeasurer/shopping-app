@@ -68,26 +68,6 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   tracePhase('adding item')
   const firstItem = 'E4_FIRST_CYCLE_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill(firstItem)
-  // A blocked pointer must fail quickly instead of consuming the entire mobile run.
-  // Capture real hit-testing geometry before tapping; CSS stacking guesses are
-  // insufficient when an overflowing grid physically covers the form.
-  console.log('[E4 mobile hit-test]', JSON.stringify(await page.evaluate(() => {
-    const selectors = ['nav.lists-grid', 'section[aria-labelledby="list-title"]', '.input-row', 'button[aria-label="Добавить товар"]']
-    return selectors.map(selector => {
-      const element = document.querySelector(selector)
-      if (!element) return { selector, missing: true }
-      const rect = element.getBoundingClientRect()
-      const style = getComputedStyle(element)
-      const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
-      const top = document.elementFromPoint(x, y)
-      return { selector, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
-        position: style.position, zIndex: style.zIndex, overflow: style.overflow,
-        hit: top?.outerHTML.slice(0, 240), viewport: { width: innerWidth, height: innerHeight } }
-    })
-  })))
-  // Mobile Chromium retains a focused input and changes its visual viewport;
-  // dismiss the virtual keyboard before a genuine pointer click (never force).
   await page.getByLabel('Что нужно купить?').blur()
   await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
   await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()

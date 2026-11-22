@@ -74,24 +74,6 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   tracePhase('adding item')
   const secondItem = 'E4_SECOND_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID() + '\n' + secondItem + ' 2 л')
-  // A blocked pointer must fail quickly instead of consuming the entire mobile run.
-  // Capture real hit-testing geometry before tapping; CSS stacking guesses are
-  // insufficient when an overflowing grid physically covers the form.
-  console.log('[E4 mobile hit-test]', JSON.stringify(await page.evaluate(() => {
-    const selectors = ['nav.lists-grid', 'section[aria-labelledby="list-title"]', '.input-row', 'button[aria-label="Добавить товар"]']
-    return selectors.map(selector => {
-      const element = document.querySelector(selector)
-      if (!element) return { selector, missing: true }
-      const rect = element.getBoundingClientRect()
-      const style = getComputedStyle(element)
-      const x = rect.left + rect.width / 2, y = rect.top + rect.height / 2
-      const top = document.elementFromPoint(x, y)
-      return { selector, rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-        scrollHeight: element.scrollHeight, clientHeight: element.clientHeight,
-        position: style.position, zIndex: style.zIndex, overflow: style.overflow,
-        hit: top?.outerHTML.slice(0, 240), viewport: { width: innerWidth, height: innerHeight } }
-    })
-  })))
   // Keep the editor focused and use a normal pointer click to verify hit testing.
   await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
   await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()

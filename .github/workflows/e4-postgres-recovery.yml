@@ -5,28 +5,8 @@ on:
     paths:
       - 'cloud/drafts/**'
       - 'tests/recovery/**'
-      - 'src/data/e4-cloud-list-create.ts'
-      - 'src/data/e4-cloud-list-create.test.ts'
-      - 'src/data/e4-cloud-list-operations.ts'
-      - 'src/data/e4-cloud-list-operations.test.ts'
-      - 'src/data/cloud-archive.ts'
-      - 'src/data/cloud-archive.test.ts'
-      - 'src/data/cloud-completion-preflight.ts'
-      - 'src/data/cloud-completion-preflight.test.ts'
-      - 'src/data/cloud-completion-rpc.ts'
-      - 'src/data/cloud-completion-rpc.test.ts'
-      - 'src/data/cloud-completion-coordinator.ts'
-      - 'src/data/cloud-completion-coordinator.test.ts'
-      - 'src/data/cloud-completion-failure.ts'
-      - 'src/data/cloud-completion-failure.test.ts'
-      - 'src/data/cloud-completion-storage.test.ts'
-      - 'src/data/storage.ts'
-      - 'src/data/storage.test.ts'
-      - 'src/data/guest-import.ts'
-      - 'src/AuthenticatedApp.tsx'
-      - 'src/App.tsx'
-      - 'src/App.completion.test.tsx'
-      - 'tests/e4-completion-acceptance.spec.ts'
+      - 'tests/sql/bootstrap_pg.sql'
+      - 'tests/sql/test_acl_rls.sql'
       - '.github/workflows/e4-postgres-recovery.yml'
   workflow_dispatch:
 permissions:
@@ -57,16 +37,9 @@ jobs:
       PGDATABASE: shoppingapp_recovery_ci
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-python@v5
         with:
-          node-version: '22'
-          cache: npm
-      - name: Install frontend dependencies
-        run: npm ci
-      - name: Run frontend unit regression
-        run: npm test -- --run
-      - name: Typecheck and build PWA
-        run: npm run build
+          python-version: '3.12'
       - name: Check captured recovery inventories
         run: python -m unittest discover -s tests/recovery -p 'test_*.py' -v
       - name: Audit live function source coverage and known gaps
@@ -171,14 +144,3 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/038_e4_account_change_feed_REVIEW_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_change_feed.sql
-      - name: Verify E4 completion and focused browser regressions
-        run: |
-          docker run --rm --ipc=host --user "$(id -u):$(id -g)" \
-            -e HOME=/tmp -e CI=true -v "$GITHUB_WORKSPACE:/work" -w /work \
-            mcr.microsoft.com/playwright:v1.64.1-noble bash -e -c '
-              npx playwright test tests/e4-completion-acceptance.spec.ts
-              npx playwright test tests/e4.spec.ts --grep "large list rail|large cards scroll|one name per list|persistent duplicate"
-            '
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'

@@ -7,7 +7,7 @@ Scope: browser UI + authenticated cloud account + isolated Supabase-compatible t
 - Two temporary authenticated users (A and B) with isolated test data; do not use real credentials.
 - Browser test fixture capable of signing in user A and seeding owned remote lists, local IndexedDB mappings and reconciled remote/local items with matching versions.
 - Cleanup of test users, lists, receipts and archives after each run; assert no residual user data.
-- Mobile WebKit and mobile Chromium, screenshots/traces on failure.
+- WebKit with the iPhone profile, screenshots/traces on failure.
 
 ## Cases (browser-driven, authenticated A)
 1. **Cancel confirmation**: add two synced items, click marked-only, dismiss native confirm, verify no RPC call, no local/remote/archive mutation.

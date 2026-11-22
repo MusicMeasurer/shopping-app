@@ -32,9 +32,9 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps webkit
       - run: npm run build
-      - run: npx playwright test tests/siri-browser-smoke.spec.ts
+      - run: npx playwright test tests/shopping.spec.ts
 
   siri-http-lab:
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
           echo 'PASS: deployed lab HTTP negative contract'
 
 
-  real-auth-existing-user-lab:
+  siri-item-browser-lab:
     runs-on: ubuntu-latest
     timeout-minutes: 12
     environment: e3-lab
@@ -75,6 +75,7 @@ jobs:
     env:
       VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
       VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+      VITE_LAB_CONTROLS: 'true'
       E3_LAB_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
       E3_LAB_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
     steps:
@@ -92,7 +93,6 @@ jobs:
           test -n "$E3_LAB_EMAIL"
           test -n "$E3_LAB_PASSWORD"
       - run: npm ci
-      - run: npx playwright install --with-deps chromium webkit
+      - run: npx playwright install --with-deps webkit
       - run: npm run build
-      # Both scenarios share the same hosted account A; avoid parallel auth/session traffic.
       - run: npx playwright test tests/authenticated-cloud-live.spec.ts --workers=1

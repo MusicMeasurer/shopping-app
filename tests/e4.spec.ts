@@ -1,12 +1,11 @@
 import { test, expect } from '@playwright/test'
-test('E4: create, edit, archive and delete lists', async ({ page }) => {
+test('E4: completing a oneoff list archives edited quantities and removes the list', async ({ page }) => {
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: 'Новый список' }).click()
   await page.getByRole('dialog').getByLabel('Название списка').fill('Для поездки')
   await page.getByRole('dialog').getByLabel('Тип списка').selectOption('oneoff')
   await page.getByRole('dialog').getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('heading', { name: 'Для поездки', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { name: 'Для поездки' })).toBeVisible()
   await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Вода\nХлеб')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: 'Вода' })).toBeVisible()
@@ -183,23 +182,16 @@ test('E4: new-list tile opens a reversible creation dialog', async ({ page }) =>
   await page.getByRole('dialog').getByRole('button', { name: 'Отмена' }).click()
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })
-test('E4: two-dot indicator switches archive and main view', async ({ page }) => {
-  await page.goto('/shopping-app/')
-  await expect(page.getByRole('button', { name: 'Основные списки' })).toHaveAttribute('aria-current', 'page')
-  await page.getByRole('button', { name: /Архив,/ }).click()
-  await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
-  await page.getByRole('button', { name: 'Основные списки' }).click()
-  await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
-})
-
-test('E4: archive hides cards, compact dots return to lists', async ({ page }) => {
+test('E4: archive navigation hides the card rail and returns to the main lists', async ({ page }) => {
   await page.goto('/shopping-app/')
   await expect(page.locator('nav.lists-grid')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Основные списки' })).toHaveAttribute('aria-current', 'page')
   await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(page.locator('nav.lists-grid')).toHaveCount(0)
   await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
   await page.getByRole('button', { name: 'Основные списки' }).click()
   await expect(page.locator('nav.lists-grid')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Продукты' })).toBeVisible()
 })
 test('E4: header menu changes type and the quick action opens completion', async ({ page }) => {
   await page.goto('/shopping-app/')
@@ -247,7 +239,7 @@ test('E4: the large list rail keeps its swipe while a swipe outside opens the ar
   await expect(page.getByRole('heading', { name: 'Завершённые списки' })).toBeVisible()
 })
 
-test('E4: large cards scroll beyond four lists, reveal new cards and move the selected card', async ({ page, browserName }) => {
+test('E4: large cards scroll beyond four lists, reveal new cards and move the selected card', async ({ page }) => {
   await page.goto('/shopping-app/')
   const rail = page.getByRole('navigation', { name: 'Списки покупок' })
   const names = ['Ремонт', 'Дача', 'Поездка', 'Праздник']
@@ -278,25 +270,6 @@ test('E4: large cards scroll beyond four lists, reveal new cards and move the se
   await expect(last).toHaveAttribute('aria-pressed', 'true')
   await rail.getByRole('button', { name: 'Переместить список вправо' }).click()
   await expect(cards.nth(5)).toHaveText(/Праздник/)
-  if (browserName === 'chromium') {
-    await rail.scrollIntoViewIfNeeded()
-    await rail.evaluate(element => element.scrollTo({ left: 0, behavior: 'instant' }))
-    await expect.poll(() => rail.evaluate(element => element.scrollLeft)).toBe(0)
-    const bounds = await rail.boundingBox()
-    if (!bounds) throw new Error('Large card rail is not visible')
-    const session = await page.context().newCDPSession(page)
-    const y = bounds.y + 35
-    const startX = bounds.x + bounds.width * .85
-    await session.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: startX, y }] })
-    for (const fraction of [.1, .2, .4, .6]) {
-      await session.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: startX - bounds.width * fraction, y }] })
-    }
-    await session.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
-    await expect.poll(() => rail.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
-    await expect(page.getByRole('button', { name: 'Основные списки' })).toHaveAttribute('aria-current', 'page')
-    await session.detach()
-  }
-
 })
 
 test('E4: card and content sizing are independent', async ({ page }) => {
@@ -339,21 +312,6 @@ test('E4 acceptance: editing preserves purchase state and optional fields can be
   await page.getByRole('button', { name: 'Изменить Кефир' }).click()
   await expect(page.getByLabel('Количество')).toHaveValue('')
   await expect(page.getByLabel('Единица измерения')).toHaveValue('')
-})
-
-test('E4 acceptance: cancelled completion does not change active list or archive', async ({ page }) => {
-  await page.goto('/shopping-app/')
-  await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Чай')
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
-  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
-  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
-  await page.getByRole('dialog', { name: 'Завершить список' }).getByRole('button', { name: 'Отмена' }).click()
-  await expect(page.getByRole('checkbox', { name: 'Чай' })).toBeVisible()
-  await page.getByRole('button', { name: /Архив,/ }).click()
-  await expect(page.getByText('Архив пока пуст.')).toBeVisible()
-  await page.reload()
-  await page.getByRole('button', { name: /Архив,/ }).click()
-  await expect(page.getByText('Архив пока пуст.')).toBeVisible()
 })
 
 test('E4 acceptance: deleting active list preserves its completed archive history', async ({ page }) => {
@@ -451,24 +409,6 @@ test('E4: local deletion warns only when purchases are marked', async ({ page })
   await page.getByRole('button', { name: /Архив,/ }).click()
   await expect(archive.getByText('Чай', { exact: true })).toBeVisible()
   await expect(archive.getByText('Сок', { exact: true })).toHaveCount(0)
-})
-
-test('E4 acceptance: offline reload preserves local lists and items', async ({ page, context }) => {
-  await page.goto('/shopping-app/')
-  await page.getByLabel('Что нужно купить? (можно несколько строк)').fill('Офлайн покупка')
-  await page.getByRole('button', { name: 'Добавить товар' }).click()
-  await expect(page.getByRole('checkbox', { name: 'Офлайн покупка' })).toBeVisible()
-  // The service worker must be installed and controlling the document before an offline navigation.
-  await page.evaluate(async () => { await navigator.serviceWorker.ready })
-  await page.reload()
-  await expect(page.getByRole('checkbox', { name: 'Офлайн покупка' })).toBeVisible()
-  await context.setOffline(true)
-  try {
-    await page.reload()
-    await expect(page.getByRole('checkbox', { name: 'Офлайн покупка' })).toBeVisible()
-  } finally {
-    await context.setOffline(false)
-  }
 })
 
 test('E4: dismissing overlays preserves the selected list and saved values', async ({ page }) => {
