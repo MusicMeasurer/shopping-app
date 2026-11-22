@@ -82,6 +82,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [deletionReview, setDeletionReview] = useState<{ accountId: string; localListId: ListId; remoteListId: string; items: { id: string; name: string }[] } | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
+  const requestCloudRefresh = useRef<(() => void) | undefined>(undefined)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const [syncError, setSyncError] = useState('')
   const [listOperations, setListOperations] = useState<ListOperationStatus[]>([])
@@ -284,6 +285,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     void (async () => {
       try {
         if (activeAccount.current !== accountId) return
+        if (!(await storage.readAccountPending(accountId)).length) {
+          if (activeAccount.current === accountId) setPushState({ account: accountId, status: 'done' })
+          return
+        }
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
         do {
           flushRequested.current.delete(accountId)
@@ -416,6 +421,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     let running = false
     let queued: 'all' | 'changed' | undefined
     const pulledRevisions = new Map<string, number>()
+    const resumeIntervalMs = 30_000
+    let lastSuccess: number | undefined
+    let pullFailed = false
     async function refresh(mode: 'all' | 'changed' = 'all') {
       if (!client || disposed || document.visibilityState === 'hidden' || !navigator.onLine) return
       if (running) {
@@ -427,12 +435,23 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       let imported = 0
       let failed = false
       let pulling = false
+      const started = performance.now()
+      let stage = 'session'
+      const reportFailure = (cause: unknown) => {
+        const code = (cause as { code?: unknown } | null)?.code
+        console.warn('Cloud list refresh failed', {
+          stage, elapsedMs: Math.round(performance.now() - started),
+          code: typeof code === 'string' && /^[A-Z0-9]{5,10}$/.test(code) ? code : undefined,
+        })
+      }
       try {
         if (activeAccount.current !== accountId) return
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
+        stage = 'local-index'
         const [mappings, completions, merges] = await Promise.all([
           storage.readAccountListMappings(accountId), storage.readAccountCompletions(accountId), storage.readQueuedListMerges(accountId),
         ])
+        stage = 'list-index'
         const owned = await fetchCloudListMetadata(client, accountId)
         const stillActive = () => !disposed && activeAccount.current === accountId
         const mappingsByRemoteId = new Map(mappings.map(mapping => [mapping.remoteListId, mapping]))
@@ -447,6 +466,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         const toPull = owned.filter(row => !completing.has(row.id) &&
           (mode === 'all' || pulledRevisions.get(row.id) !== row.revision))
         if (!stillActive() || !toPull.length) return
+        stage = 'list-items'
         pulling = true
         setPullState({ account: accountId, status: 'syncing' })
         setDismissedSyncError(false)
@@ -473,19 +493,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
                 : [...current, { id: row.id, name: row.name }])
             }
             pulledRevisions.set(row.id, row.revision)
-          } catch {
+          } catch (cause) {
             // Keep processing other bound lists, but never import conflicting
             // items from this list or hide the error from the account owner.
             if (disposed || activeAccount.current !== accountId) return
             pulledRevisions.delete(row.id)
+            reportFailure(cause)
             failed = true
           }
         }
-      } catch {
-        // Identity, mapping, or network errors outside a single list.
+      } catch (cause) {
+        if (!disposed && activeAccount.current === accountId) reportFailure(cause)
         failed = true
       } finally {
-        if (!disposed && activeAccount.current === accountId && (pulling || failed || mode === 'all')) {
+        if (!disposed && activeAccount.current === accountId && !failed) lastSuccess = performance.now()
+        if (!disposed && activeAccount.current === accountId && (pulling || failed || pullFailed || mode === 'all')) {
+          pullFailed = failed
           setPullState({ account: accountId, status: failed ? 'error' : 'done' })
           if (imported > 0) setWorkspaceRevision(value => value + 1)
           if (failed) setCloudRefreshStatus(imported > 0
@@ -497,19 +520,28 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (queued) void refresh(queued)
       }
     }
-    const onVisible = () => { if (document.visibilityState === 'visible') void refresh() }
-    const onOnline = () => void refresh()
+    const onVisible = () => {
+      if (!running && document.visibilityState === 'visible' &&
+          (pullFailed || lastSuccess === undefined || performance.now() - lastSuccess >= resumeIntervalMs)) void refresh('changed')
+    }
+    const onOnline = () => void refresh('changed')
+    requestCloudRefresh.current = onOnline
     document.addEventListener('visibilitychange', onVisible)
     window.addEventListener('online', onOnline)
     const stopWatching = watchCloudListChanges(client, accountId, () => void refresh('changed'))
     void refresh()
     return () => {
       disposed = true
+      requestCloudRefresh.current = undefined
       stopWatching()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('online', onOnline)
     }
-  }, [client, currentAccount, readyAccount, storage, cloudMappingRevision])
+  }, [client, currentAccount, readyAccount, storage])
+
+  useEffect(() => {
+    if (cloudMappingRevision > 0) requestCloudRefresh.current?.()
+  }, [cloudMappingRevision])
 
   async function loadCloudMetadata() {
     if (!client || !currentAccount || readyAccount !== currentAccount || cloudLoading) return
