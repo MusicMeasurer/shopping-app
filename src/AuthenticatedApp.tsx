@@ -645,6 +645,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setCloudMetadata(rows => rows?.filter(row => row.id !== source.remoteListId) ?? null)
         setCloudLists(rows => rows.filter(row => row.id !== source.remoteListId))
         try {
+          if (await storage.readAccountFeedPosition(account) !== undefined) {
+            if (stillActive()) requestCloudRefresh.current?.()
+            return
+          }
           await createAccountSync(storage, connection, { accountId: account, localListId: target.localListId,
             remoteListId: target.remoteListId, isActive: stillActive }).importRemoteOnly({ reconcileNames: true })
           if (stillActive()) setWorkspaceRevision(value => value + 1)

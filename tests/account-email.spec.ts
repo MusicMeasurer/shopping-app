@@ -207,20 +207,40 @@ test('reopens the signed-in account by its profile row with several empty local 
   expect(calls.filter(call => call.path === '/auth/v1/token' || call.path === '/auth/v1/logout')).toHaveLength(1)
 })
 
-test('ignores ten quick returns and catches up once on reconnect without reopening every list', async ({ page }) => {
+test('syncs once after reconnect and merges with a verified session after ten quick returns', async ({ page }) => {
   const calls = await mockCloud(page)
   const listId = '40000000-0000-4000-8000-000000000001'
+  const targetId = '40000000-0000-4000-8000-000000000002'
   const itemId = '50000000-0000-4000-8000-000000000001'
+  const movedId = '50000000-0000-4000-8000-000000000002'
   const row = { id: itemId, list_id: listId, name: 'Молоко', purchased: false, version: 1, created_at: '2026-11-22T00:00:00Z' }
-  const snapshot = { position: '1', lists: [{ id: listId, owner_id: accountId, name: 'Продукты', kind: 'permanent', position: 0, revision: 1 }], items: [row] }
+  const source = { id: listId, owner_id: accountId, name: 'Продукты', kind: 'permanent', position: 0, revision: 1 }
+  const target = { ...source, id: targetId, name: 'Покупки на завтра', position: 1 }
+  const snapshot = { position: '1', lists: [source, target], items: [row] }
   let pulls = 0
   let changed = false
+  let merged = false
+  await page.route(`**${fixturePath}/rest/v1/rpc/*list*`, async route => {
+    const path = new URL(route.request().url()).pathname
+    const body = route.request().postDataJSON()
+    if (path.endsWith('/preview_e4_list_merge'))
+      return route.fulfill({ json: { source, target, items: [{ ...row, purchased: true }] } })
+    if (!path.endsWith('/merge_e4_personal_lists')) return route.fallback()
+    expect(body).toMatchObject({ p_source: listId, p_target: targetId, p_items: [{ name: 'Молоко', purchased: true }] })
+    merged = true
+    await route.fulfill({ json: { operation_id: body.p_operation, source_id: listId, target_id: targetId } })
+  })
   await page.route(`**${fixturePath}/rest/v1/rpc/*account_changes`, async route => {
     const path = new URL(route.request().url()).pathname
     if (path.endsWith('/snapshot_e4_account_changes')) return route.fulfill({ json: snapshot })
     if (!path.endsWith('/pull_e4_account_changes')) return route.fallback()
     pulls++
     const cursor = route.request().postDataJSON().p_after
+    if (merged && cursor === '2') return route.fulfill({ json: [
+      { event_position: '3', entity: 'list', list_id: listId, entity_id: listId, deleted: true, snapshot: null },
+      { event_position: '4', entity: 'item', list_id: targetId, entity_id: movedId, deleted: false,
+        snapshot: { ...row, id: movedId, list_id: targetId, purchased: true } },
+    ] })
     await route.fulfill({ json: changed && cursor === '1' ? [
       { event_position: '2', entity: 'item', list_id: listId, entity_id: itemId, deleted: false,
         snapshot: { ...row, purchased: true, version: 2 } },
@@ -254,5 +274,16 @@ test('ignores ten quick returns and catches up once on reconnect without reopeni
   await page.context().setOffline(false)
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
   expect(pulls).toBe(before + 1)
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Объединить со списком', exact: true }).click()
+  const merge = page.getByRole('dialog', { name: 'Объединить списки' })
+  await merge.getByRole('button', { name: target.name, exact: true }).click()
+  await expect(merge.getByText(/исчезнет из активных списков/)).toBeVisible()
+  await merge.getByRole('button', { name: 'Объединить', exact: true }).click()
+  await expect(merge).toBeHidden()
+  await expect(page.getByRole('button', { name: source.name, exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: target.name, exact: true }).click()
+  await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
   expect(calls.some(call => call.path === '/rest/v1/shopping_items')).toBe(false)
 })
