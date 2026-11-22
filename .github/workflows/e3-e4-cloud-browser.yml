@@ -1,24 +1,6 @@
 name: E3 E4 authenticated cloud browser acceptance (isolated lab)
 on:
-  workflow_dispatch:
-  push:
-    branches: [feature/e4-accepted-reintegration]
-    paths:
-      - 'src/App.tsx'
-      - 'src/style.css'
-      - 'src/AuthenticatedApp.tsx'
-      - 'src/data/account-sync.ts'
-      - 'src/data/e4-cloud-list-operations.ts'
-      - 'src/data/e4-cloud-list-operations.test.ts'
-      - 'tests/e3-e4-cloud-acceptance.spec.ts'
-      - 'tests/e3-e4-cloud-modes.spec.ts'
-      - 'tests/e3-e4-cloud-oneoff.spec.ts'
-      - 'tests/e3-e4-cloud-conflict.spec.ts'
-      - 'tests/e3-e4-cloud-permanent.spec.ts'
-      - '.github/workflows/e3-e4-cloud-browser.yml'
-concurrency:
-  group: shoppingapp-migration-lab-account-a
-  queue: max
+  workflow_call:
 
 permissions:
   contents: read

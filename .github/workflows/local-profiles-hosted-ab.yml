@@ -13,6 +13,17 @@ on:
       - 'scripts/e3-real-session-gate.mjs'
       - 'scripts/e3-rpc-write-probe.mjs'
       - '.github/workflows/local-profiles-hosted-ab.yml'
+      - 'src/App.tsx'
+      - 'src/style.css'
+      - 'src/data/account-sync.ts'
+      - 'src/data/e4-cloud-list-operations.ts'
+      - 'src/data/e4-cloud-list-operations.test.ts'
+      - 'tests/e3-e4-cloud-acceptance.spec.ts'
+      - 'tests/e3-e4-cloud-modes.spec.ts'
+      - 'tests/e3-e4-cloud-oneoff.spec.ts'
+      - 'tests/e3-e4-cloud-conflict.spec.ts'
+      - 'tests/e3-e4-cloud-permanent.spec.ts'
+      - '.github/workflows/e3-e4-cloud-browser.yml'
   workflow_dispatch:
 
 permissions:
@@ -77,3 +88,9 @@ jobs:
         run: node scripts/e3-real-session-gate.mjs
       - name: Real RPC idempotency, version conflicts and cleanup
         run: node scripts/e3-rpc-write-probe.mjs
+
+  cloud-browser:
+    needs: hosted-ab
+    if: ${{ !cancelled() && github.ref_name == 'feature/e4-accepted-reintegration' }}
+    uses: ./.github/workflows/e3-e4-cloud-browser.yml
+    secrets: inherit
