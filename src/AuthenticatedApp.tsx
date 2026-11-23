@@ -9,6 +9,8 @@ import type { ListActionMessage } from './ListActionNotice'
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { isAuthApiError, isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
+import { AccountDeletionDialog } from './AccountDeletionDialog'
+import { useAccountDeletion } from './hooks/useAccountDeletion'
 import { AccountEmailDialog, type AccountEmailMode } from './AccountEmailDialog'
 import { createAccountEmailClient } from './data/cloud-client'
 import { LocalProfileLimitError, profileName, type LocalProfile } from './data/local-profiles'
@@ -39,11 +41,16 @@ import type { SessionCandidate } from './data/auth-scope'
 type Controller = ReturnType<typeof createAuthController>
 
 const localWorkspaceKey = 'shopping-show-local-workspace'
+const accountDeletionEnabled = import.meta.env.VITE_ACCOUNT_DELETION === 'true'
 const accountEmailEnabled = import.meta.env.VITE_ACCOUNT_EMAIL_CODES === 'true'
 const showLabControls = import.meta.env.VITE_LAB_CONTROLS === 'true'
 
 export function AuthenticatedApp({ storage, client }: { storage: Storage; client: SupabaseClient | null }) {
   const [view, setView] = useState<AuthView>(client ? { status: 'checking' } : { status: 'guest' })
+  const deletion = useAccountDeletion(accountDeletionEnabled ? client : null, storage)
+  const { check: checkDeletedAccount, watch: watchDeletion, api: deletionApi } = deletion
+  const [deleteDialogAccount, setDeleteDialogAccount] = useState<string | null>(null)
+  const [deletionNotice, setDeletionNotice] = useState(false)
   const [controller, setController] = useState<Controller | null>(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -97,12 +104,34 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [dismissedSyncError, setDismissedSyncError] = useState(false)
   const completionWorkers = useRef(new Set<string>())
   const completionRequested = useRef(new Set<string>())
-  const signedInAccount = view.status === 'account' ? view.accountId : null
-  const sessionAccount = signedInAccount ?? (view.status === 'offline-account' ? view.accountId : null)
+  const viewAccount = view.status === 'account' || view.status === 'offline-account' ? view.accountId : null
+  const accountWasDeleted = !!viewAccount && deletion.deleted.has(viewAccount)
+  const signedInAccount = view.status === 'account' && !accountWasDeleted && !deletion.booting ? view.accountId : null
+  const sessionAccount = signedInAccount ?? (view.status === 'offline-account' && !accountWasDeleted ? view.accountId : null)
   const currentAccount = localBrowsing ? null : signedInAccount
-  const offlineAccount = !localBrowsing && view.status === 'offline-account' ? view.accountId : null
+  const offlineAccount = !localBrowsing && view.status === 'offline-account' && !accountWasDeleted && !deletion.booting ? view.accountId : null
   const workspaceAccount = currentAccount ?? offlineAccount
   const cloudArchives = loadedArchive?.accountId === workspaceAccount ? loadedArchive.snapshots : null
+  useEffect(() => {
+    if (sessionAccount) return watchDeletion(sessionAccount)
+  }, [sessionAccount, watchDeletion])
+  useEffect(() => {
+    if (!deletionApi || !currentAccount || !syncOnline) return
+    let cancelled = false
+    void storage.readInstallationIdentity().then(identity => {
+      if (!cancelled) return deletionApi.register(identity)
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [currentAccount, deletionApi, storage, syncOnline])
+  useEffect(() => {
+    if (!accountWasDeleted || !client || !controller || !syncOnline) return
+    let cancelled = false
+    void client.auth.getSession().then(({ data }) => {
+      if (!cancelled && data.session?.user?.id.toLowerCase() === viewAccount)
+        return controller.signOut('local')
+    }).catch(() => {})
+    return () => { cancelled = true }
+  }, [accountWasDeleted, client, controller, syncOnline, viewAccount])
   useEffect(() => {
     const update = () => setSyncOnline(navigator.onLine)
     window.addEventListener('online', update)
@@ -386,9 +415,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }, nextView => {
       setView(nextView)
       if (nextView.status === 'guest') setSignOutError('')
-    }, guard, session => verifySessionIdentity(client, session), async session => {
+    }, guard, async session => {
+      const id = session.user?.id?.toLowerCase()
+      if (id && await checkDeletedAccount(id)) return null
+      return verifySessionIdentity(client, session)
+    }, async session => {
       if (navigator.onLine || guard.isPending()) return null
       const id = session.user?.id?.toLowerCase()
+      if (id && await storage.isDeletedAccount(id)) return null
       const registry = await storage.readLocalProfiles()
       return registry?.profiles.some(profile => profile.cloudAccountId === id) ? id : null
     })
@@ -398,7 +432,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       next.dispose()
       setController(null)
     }
-  }, [client, storage])
+  }, [client, storage, checkDeletedAccount])
 
   useEffect(() => {
     if (!controller) return
@@ -968,6 +1002,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setAccountEmailNotice('')
     let submittingCredentials = false
     try {
+      if (target && await checkDeletedAccount(target, true)) {
+        setDeletionNotice(true)
+        return
+      }
+      if (!target && deletionApi) {
+        const registry = await storage.readLocalProfiles()
+        const oldCopy = registry?.profiles.find(row => row.cloudAccountId && row.login?.trim().toLowerCase() === address.toLowerCase())
+        if (oldCopy?.cloudAccountId) await checkDeletedAccount(oldCopy.cloudAccountId, true)
+      }
       offerTransfer.current = !target
       submittingCredentials = true
       if (sessionAccount || target) {
@@ -1399,6 +1442,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
+  if (deletion.booting) return <main><p role="status">Проверяем сохранённые профили…</p></main>
   if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
     {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="e4-create profile-transfer-dialog"
       initialFocusRef={declineTransferButton} onDismiss={() => answerTransfer('skip')}>
@@ -1452,6 +1496,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudMappingRevision(value => value + 1)
   }
   return <>
+    {deletionApi && deleteDialogAccount === currentAccount && currentAccount && <AccountDeletionDialog
+      api={deletionApi} email={verifiedEmail} account={currentAccount} onClose={() => setDeleteDialogAccount(null)}
+      onDeleted={account => {
+        activeAccount.current = null
+        setDeleteDialogAccount(null)
+        setDeletionNotice(true)
+        void deletion.remove(account)
+      }} />}
+    {(deletionNotice || accountWasDeleted || deletion.activeRemoved) && <p role="status">Облачный аккаунт удалён.
+      <button type="button" onClick={() => { setAccountDialogOpen(true); setDeletionNotice(false); deletion.clearActiveRemoved() }}>Выбрать другой профиль</button>
+    </p>}
+    {deletion.cleanupError && <p role="alert">Очистка устройства прервана.
+      <button type="button" onClick={() => void deletion.sweep().catch(() => {})}>Повторить</button>
+    </p>}
     {client && !workspaceAccount && accountEmailMode && <AccountEmailDialog
       mode={accountEmailMode} initialEmail={email} createClient={createAccountEmailClient}
       onDismiss={() => { setAccountEmailMode(null); setAccountDialogOpen(true) }}
@@ -1462,7 +1520,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setAccountDialogOpen(true)
       }} />}
     {client && offlineAccount && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
-    <App key={workspaceAccount ?? 'local'} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+    <App key={workspaceAccount ?? 'local:' + deletion.revision} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
       onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
         const listId = decision.change.listId
         const remoteListId = cloudBindings[listId]
@@ -1522,10 +1580,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
         busy, name: verifiedEmail || undefined, syncState,
         onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount,
+        hiddenAccountIds: deletion.deleted,
+        checkLocalProfile: deletionApi ? async account => {
+          const removed = await checkDeletedAccount(account, true)
+          if (removed) setDeletionNotice(true)
+          return removed
+        } : undefined,
         content: profile => <>
         {workspaceAccount ? (view.status === 'account' ? <>
           {(syncFailed || listSyncFailed) && <button type="button" onClick={retrySync}>Повторить синхронизацию</button>}
-          <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button>
+          <div className="account-exit-actions">
+            <button type="button" disabled={busy} onClick={() => void signOut()}>Выйти</button>
+            {deletionApi && currentAccount && <button type="button" className="danger" disabled={busy || !syncOnline}
+              onClick={() => setDeleteDialogAccount(currentAccount)}>Удалить аккаунт</button>}
+          </div>
         </> : <p role="status">Локальный профиль доступен без сети. Для проверки аккаунта и выхода подключитесь к интернету.</p>) : <>
           {(!profile?.cloudAccountId || profile.cloudAccountId !== sessionAccount) &&
           <form className="profile-login" onSubmit={event => void signIn(event, profile)}>

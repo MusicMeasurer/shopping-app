@@ -534,3 +534,6 @@ nav .list-conflict-marker{
 
 .workspace-dialog .profile-delete-actions{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(0,1fr)}
 .profile-delete-actions button.danger{background:#fff1f0;border-color:#d9a4a2;color:#9c2525}
+
+.account-exit-actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.account-exit-actions button.danger{background:#fff1f0;border-color:#d9a4a2;color:#9c2525}

@@ -190,7 +190,14 @@ interface GuestImport {
   removeSource?: boolean
   archiveOnly?: boolean
 }
+interface AccountDeletionRecord {
+  accountId: string
+  purged: boolean
+  acknowledged: boolean
+}
 interface ShoppingDB extends DBSchema {
+  installationIdentity: { key: string; value: { id: string; proof: string } }
+  accountDeletions: { key: string; value: AccountDeletionRecord }
   guestImports: { key: string; value: GuestImport }
   profileLists: { key: string; value: ProfileOwnedRecord<ShoppingListRecord>; indexes: { byProfile: string } }
   profileItems: { key: string; value: ProfileOwnedRecord<Item>; indexes: { byProfile: string } }
@@ -220,8 +227,10 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 17, {
+  const database = openDB<ShoppingDB>(name, 18, {
     upgrade(db, oldVersion, _newVersion, tx) {
+      if (!db.objectStoreNames.contains('installationIdentity')) db.createObjectStore('installationIdentity')
+      if (!db.objectStoreNames.contains('accountDeletions')) db.createObjectStore('accountDeletions', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('accountFeed')) db.createObjectStore('accountFeed', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
@@ -679,16 +688,97 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
+    async readInstallationIdentity(): Promise<{ id: string; proof: string }> {
+      const tx = (await database).transaction('installationIdentity', 'readwrite')
+      const existing = await tx.store.get('device')
+      const identity = existing ?? { id: crypto.randomUUID(), proof: crypto.randomUUID() }
+      if (!existing) await tx.store.add(identity, 'device')
+      await tx.done
+      return identity
+    },
+    async readAccountDeletions(): Promise<AccountDeletionRecord[]> {
+      return (await database).getAll('accountDeletions')
+    },
+    async isDeletedAccount(accountId: string): Promise<boolean> {
+      return !!await (await database).get('accountDeletions', accountId)
+    },
+    async rememberDeletedAccount(accountId: string): Promise<void> {
+      const tx = (await database).transaction('accountDeletions', 'readwrite')
+      if (!await tx.store.get(accountId)) await tx.store.add({ accountId, purged: false, acknowledged: false })
+      await tx.done
+    },
+    async purgeDeletedAccount(accountId: string): Promise<void> {
+      const accountIndexed = ['accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests',
+        'accountListMappings', 'accountItemVersions', 'accountDraftLists'] as const
+      const profileIndexed = ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const
+      const tx = (await database).transaction(['accountDeletions', 'localProfileRegistry', 'profileMigrations',
+        'profileCutover', 'accountArchiveCache', 'accountFeed', 'guestImports', 'lists', 'items', 'archives', 'pendingOperations', ...accountIndexed, ...profileIndexed], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        const marker = await tx.objectStore('accountDeletions').get(accountId)
+        if (!marker) throw new Error('Account deletion is not confirmed')
+        if (!marker.purged) {
+          for (const storeName of accountIndexed) {
+            const store = tx.objectStore(storeName)
+            for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
+          }
+          await tx.objectStore('accountArchiveCache').delete(accountId)
+          await tx.objectStore('accountFeed').delete(accountId)
+          await tx.objectStore('profileMigrations').delete('restore-account:' + accountId)
+          const imports = tx.objectStore('guestImports')
+          const legacyOwner = (await tx.objectStore('profileMigrations').get('legacy-guest-v1'))?.profileId
+          const legacyImport = legacyOwner ? await imports.get(legacyOwner) : undefined
+          if (legacyImport?.accountId === accountId && legacyImport.removeSource && legacyImport.imported) {
+            for (const store of ['lists', 'items', 'archives', 'pendingOperations'] as const) await tx.objectStore(store).clear()
+          }
+          for (const batch of await imports.getAll()) {
+            if (batch.accountId === accountId) await imports.delete(batch.key)
+          }
+          const registries = tx.objectStore('localProfileRegistry')
+          const saved = await registries.get('device')
+          const profile = saved?.registry.profiles.find(row => row.cloudAccountId === accountId)
+          if (saved && profile) {
+            for (const storeName of profileIndexed) {
+              const store = tx.objectStore(storeName)
+              for (const key of await store.index('byProfile').getAllKeys(profile.id)) await store.delete(key)
+            }
+            const registry = saved.registry.profiles.length === 1
+              ? { ...saved.registry, profiles: [...saved.registry.profiles,
+                { id: crypto.randomUUID(), cloudAccountId: null, createdAt: Date.now(), name: 'Мои покупки' }] }
+              : saved.registry
+            const remaining = removeProfileMetadata(registry, profile.id)
+            const fence = tx.objectStore('profileCutover')
+            const cutover = await fence.get('legacy-guest-v1')
+            if (cutover?.profileId === profile.id) await fence.put({ ...cutover, profileId: remaining.profiles[0].id })
+            await registries.put({ key: 'device', registry: remaining })
+          }
+          await tx.objectStore('accountDeletions').put({ ...marker, purged: true })
+        }
+        await done
+      } catch (error) {
+        try { tx.abort() } catch { /* already closed */ }
+        await done.catch(() => {})
+        throw error
+      }
+    },
+    async acknowledgeDeletedAccount(accountId: string): Promise<void> {
+      const tx = (await database).transaction('accountDeletions', 'readwrite')
+      const marker = await tx.store.get(accountId)
+      if (marker?.purged) await tx.store.put({ ...marker, acknowledged: true })
+      await tx.done
+    },
     /** Consent is explicit and belongs to the active unbound source, never another account. */
     async ensureVerifiedAccountProfile(verifiedAccountId: string, options: {
       login?: string; sourceProfileId?: string; collisionMode?: 'separate' | 'merge'
     } = {}): Promise<LocalProfileRegistry> {
       if (!verifiedAccountId.trim()) throw new Error('Verified account required')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'localProfileRegistry', 'profileCutover', 'guestImports', 'profileLists', 'profileItems', 'profileArchives'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
+        if (await tx.objectStore('accountDeletions').get(verifiedAccountId)) throw new Error('Account deletion was confirmed')
         const current = await tx.objectStore('localProfileRegistry').get('device')
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!current || !cutover || current.registry.profiles[0]?.id !== cutover.profileId) throw new Error('Profile cutover is not active')
@@ -760,7 +850,8 @@ export function createStorage(name = 'shopping-app') {
     async confirmGuestImport(batch: GuestImport, mappings: readonly {
       id: string; name: string; kind: 'permanent' | 'oneoff'; position: number; symbol?: string
     }[], items: readonly { item: Item; version: number }[], confirmedArchive?: CloudArchiveCompletion[]): Promise<void> {
-      const tx = (await database).transaction(['accountArchiveCache', 'guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountArchiveCache', 'guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(batch.accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -1399,7 +1490,8 @@ export function createStorage(name = 'shopping-app') {
     },
     async saveAccountItem(accountId: string, item: Item): Promise<void> {
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountCompletions'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountCompletions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const intents = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
         if (intents.some(row => row.intent.localListId === item.listId))
@@ -1412,7 +1504,8 @@ export function createStorage(name = 'shopping-app') {
     },
     async removeAccountItem(accountId: string, itemId: string): Promise<void> {
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountCompletions'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountCompletions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const key = accountKey(accountId, itemId)
         const existing = await tx.objectStore('accountItems').get(key)
@@ -1443,7 +1536,8 @@ export function createStorage(name = 'shopping-app') {
       return rows.map(({ key: _key, ...row }) => row).sort((a, b) => a.createdAt - b.createdAt)
     },
     async saveAccountDraftList(accountId: string, list: ShoppingListRecord): Promise<void> {
-      const tx = (await database).transaction(['accountDraftLists', 'accountListMappings', 'localProfileRegistry'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountListMappings', 'localProfileRegistry'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -1482,7 +1576,8 @@ export function createStorage(name = 'shopping-app') {
     async promoteAccountDraft(draft: AccountDraftList, remote: { id: string; ownerId: string; name: string; kind: ShoppingListRecord['kind']; position: number }): Promise<string | undefined> {
       if (remote.ownerId !== draft.accountId || remote.name !== draft.name || remote.kind !== draft.kind)
         throw new Error('Подтверждение создания не совпадает с локальным списком.')
-      const tx = (await database).transaction(['accountDraftLists', 'accountListMappings', 'accountItems', 'accountOperations', 'accountCompletionRequests'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountListMappings', 'accountItems', 'accountOperations', 'accountCompletionRequests'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(draft.accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -1526,7 +1621,8 @@ export function createStorage(name = 'shopping-app') {
       }
     },
     async writeDraftItem(accountId: string, item: Item, remove = false): Promise<boolean> {
-      const tx = (await database).transaction(['accountDraftLists', 'accountItems', 'accountCompletionRequests'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountItems', 'accountCompletionRequests'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const key = accountKey(accountId, item.listId)
       if (!await tx.objectStore('accountDraftLists').get(key)) { await tx.done; return false }
       try {
@@ -1587,7 +1683,8 @@ export function createStorage(name = 'shopping-app') {
     },
     async queueAccountCompletion(request: CloudCompletionRequest, local = false): Promise<void> {
       const { accountId, localListId, remoteListId } = request
-      const tx = (await database).transaction(['accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems', 'accountDraftLists'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountCompletionRequests', 'accountCompletions', 'accountListMappings', 'accountItems', 'accountDraftLists'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, localListId))
         if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
@@ -1643,8 +1740,9 @@ export function createStorage(name = 'shopping-app') {
           !Number.isSafeInteger(intent.expectedRevision) || intent.expectedRevision < 0 ||
           (intent.mode !== 'delete_list' && !itemIds.length) || new Set(itemIds).size !== itemIds.length) throw new Error('Invalid completion intent')
       const db = await database
-      const tx = db.transaction(['accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountOperations', 'accountListMappings'], 'readwrite')
       try {
+        if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
         if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
           .some(row => mergeTouches(row.pendingMerge, localListId)))
           throw new Error('Объединение этих списков ожидает синхронизации.')
@@ -1695,7 +1793,8 @@ export function createStorage(name = 'shopping-app') {
           tombstones.some(row => !intent.itemIds.includes(row.id) || !Number.isSafeInteger(row.version) || row.version < 1))
         throw new Error('Invalid confirmed completion tombstones')
       const db = await database
-      const tx = db.transaction(['localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountArchiveCache'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountArchiveCache'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(intent.accountId)) throw new Error('Account data was deleted')
       try {
         const key = accountKey(intent.accountId, intent.operationId)
         const stored = await tx.objectStore('accountCompletions').get(key)
@@ -1756,8 +1855,9 @@ export function createStorage(name = 'shopping-app') {
     },
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
       changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean): Promise<boolean> {
-      const tx = (await database).transaction(['accountFeed', 'accountListMappings', 'accountItems',
+      const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountListMappings', 'accountItems',
         'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -1889,7 +1989,8 @@ export function createStorage(name = 'shopping-app') {
     async enqueueAccountPending(accountId: string, operation: PendingItemOperation): Promise<void> {
       const key = accountKey(accountId, operation.operationId)
       const db = await database
-      const tx = db.transaction(['accountOperations', 'accountCompletions', 'accountListMappings', 'accountItems'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountOperations', 'accountCompletions', 'accountListMappings', 'accountItems'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
       const affected = operation.kind === 'upsert'
         ? operation.item.listId
@@ -1931,7 +2032,8 @@ export function createStorage(name = 'shopping-app') {
         serverVersion: number; serverItem?: Item; replacement?: CloudPendingOperation
       },
     ): Promise<void> {
-      const tx = (await database).transaction(['accountOperations', 'accountItems', 'accountItemVersions', 'accountListMappings'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountOperations', 'accountItems', 'accountItemVersions', 'accountListMappings'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const queue = tx.objectStore('accountOperations')
         const key = accountKey(accountId, operation.operationId)
@@ -2005,7 +2107,8 @@ export function createStorage(name = 'shopping-app') {
       return mappings.flatMap(row => row.pendingMerge ? [row.pendingMerge] : [])
     },
     async queueLocalListMerge(accountId: string, expected: ListMergeSnapshot, choices: ReadonlyMap<string, MergeChoice>, operationId: string) {
-      const tx = (await database).transaction(['accountListMappings', 'accountItems', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountListMappings', 'accountItems', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const store = tx.objectStore('accountListMappings')
         const mappings = await store.index('byAccount').getAll(accountId)
@@ -2090,7 +2193,8 @@ export function createStorage(name = 'shopping-app') {
       return orderedListChanges(await (await database).getAllFromIndex('accountListMappings', 'byAccount', accountId))
     },
     async queueLocalListChange(accountId: string, id: string, action: 'rename' | 'kind' | 'reorder', value: string) {
-      const tx = (await database).transaction(['accountListMappings', 'accountCompletionRequests', 'accountCompletions'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountListMappings', 'accountCompletionRequests', 'accountCompletions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const store = tx.objectStore('accountListMappings')
         const mappings = await store.index('byAccount').getAll(accountId)
@@ -2185,17 +2289,18 @@ export function createStorage(name = 'shopping-app') {
       }
       const key = accountKey(accountId, localListId)
       const db = await database
-      const tx = db.transaction('accountListMappings', 'readwrite')
-      const existing = await tx.store.get(key)
+      const tx = db.transaction(['accountDeletions', 'accountListMappings'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
+      const existing = await tx.objectStore('accountListMappings').get(key)
       if (existing && existing.remoteListId !== remoteListId) {
         await tx.done
         throw new Error('List mapping cannot be silently replaced')
       }
-      if (!existing && (await tx.store.index('byAccount').getAll(accountId)).some(row => row.remoteListId === remoteListId)) {
+      if (!existing && (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)).some(row => row.remoteListId === remoteListId)) {
         await tx.done
         throw new Error('Cloud list is already bound to another local ID')
       }
-      if (!existing) await tx.store.add({ key, accountId, localListId, remoteListId })
+      if (!existing) await tx.objectStore('accountListMappings').add({ key, accountId, localListId, remoteListId })
       await tx.done
     },
     /** Persist an account edit and its cloud operation in one IndexedDB transaction. */
@@ -2204,7 +2309,8 @@ export function createStorage(name = 'shopping-app') {
       if (!listId || items.some(item => item.listId !== listId))
         throw new Error('Batch must belong to one list')
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, listId))
         if ((await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
@@ -2278,7 +2384,8 @@ export function createStorage(name = 'shopping-app') {
         throw new Error('Invalid remote item version or list')
       }
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, item.listId))
       const key = accountKey(accountId, item.id)
       const existing = await tx.objectStore('accountItems').get(key)
@@ -2306,7 +2413,8 @@ export function createStorage(name = 'shopping-app') {
       if (ids.size !== entries.length || entries.some(entry =>
         !Number.isSafeInteger(entry.version) || entry.version < 0)) throw new Error('Invalid import batch')
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
         if (inFlight.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion pending; import/review blocked')
@@ -2345,8 +2453,9 @@ export function createStorage(name = 'shopping-app') {
       entries: readonly VersionedItemChange[]): Promise<number> {
       if (!entries.length) return 0
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations',
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountItemVersions', 'accountOperations',
         'accountListMappings', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const mappings = tx.objectStore('accountListMappings')
       if ((await mappings.index('byAccount').getAll(accountId)).some(row => mergeTouches(row.pendingMerge, localListId))) {
         await tx.done
@@ -2396,7 +2505,8 @@ export function createStorage(name = 'shopping-app') {
         throw new Error('Invalid reviewed deletion batch')
       }
       const db = await database
-      const tx = db.transaction(['accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountCompletions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const inFlight = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
         if (inFlight.some(row => row.intent.remoteListId === remoteListId)) throw new Error('Completion pending; import/review blocked')

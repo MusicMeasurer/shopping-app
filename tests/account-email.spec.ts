@@ -14,7 +14,7 @@ const session = { access_token: token({ alg: 'HS256', typ: 'JWT' }) + '.' +
     token({ sub: accountId, exp: Math.floor(Date.now() / 1000) + 3600 }) + '.test',
   refresh_token: 'test-refresh', expires_in: 3600, token_type: 'bearer', user }
 
-async function mockCloud(page: Page, duplicate = false) {
+async function mockCloud(page: Page, duplicate = false, deletion = { removed: false }) {
   const calls: { method: string; path: string; body: Record<string, unknown> }[] = []
   // Route fake Auth calls to a local endpoint before the browser does DNS.
   // WebKit can resolve a cross-origin hostname before Playwright intercepts it.
@@ -52,6 +52,18 @@ async function mockCloud(page: Page, duplicate = false) {
       await respond(user)
     } else if (path === '/auth/v1/recover' || path === '/auth/v1/resend' || path === '/auth/v1/logout') {
       await respond({})
+    } else if (path === '/rest/v1/rpc/account_deletion_status') {
+      await route.fulfill({ json: deletion.removed && body.p_account === accountId })
+    } else if (path === '/rest/v1/rpc/register_account_deletion_device') {
+      await route.fulfill({ json: true })
+    } else if (path === '/rest/v1/rpc/request_account_deletion') {
+      await respond({ status: 'requested', id: 'deletion-challenge', expiresAt: '2026-11-23T02:00:00Z' })
+    } else if (path === '/rest/v1/rpc/confirm_account_deletion') {
+      if (body.p_code !== emailCode) await route.fulfill({ json: 'invalid' })
+      else {
+        deletion.removed = true
+        await route.abort('failed')
+      }
     } else if (path === '/rest/v1/rpc/snapshot_e4_account_changes') {
       await respond({ code: 'PGRST202', message: 'Function not found' }, 404)
     } else if (path.startsWith('/rest/v1/')) {
@@ -363,4 +375,39 @@ test('syncs once after reconnect and merges with a verified session after ten qu
   await page.getByRole('button', { name: target.name, exact: true }).click()
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeChecked()
   expect(calls.some(call => call.path === '/rest/v1/shopping_items')).toBe(false)
+})
+
+test('deletes the cloud workspace after a lost confirmation response and keeps local purchases', async ({ page }) => {
+  const calls = await mockCloud(page)
+  await page.goto('/shopping-app/')
+  await page.getByLabel('Что нужно купить?', { exact: false }).fill('Покупка локального профиля')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Покупка локального профиля' })).toBeVisible()
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  const account = page.getByRole('button', { name: /Открыть аккаунт/ })
+  await account.click()
+  await page.getByRole('button', { name: 'Удалить аккаунт', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Удаление облачного аккаунта' })
+  await dialog.getByRole('button', { name: 'Отмена' }).click()
+  expect(calls.some(call => call.path.endsWith('/request_account_deletion'))).toBe(false)
+  await page.getByRole('button', { name: 'Удалить аккаунт', exact: true }).click()
+  await dialog.getByLabel(/Напомнить мне по почте/).check()
+  await dialog.getByRole('button', { name: 'Отправить код' }).click()
+  const code = dialog.getByLabel('Код подтверждения')
+  await code.fill('222222')
+  await dialog.getByRole('button', { name: 'Удалить аккаунт безвозвратно' }).click()
+  await expect(dialog.getByRole('alert')).toContainText('Код неверный')
+  await code.fill(emailCode)
+  await dialog.getByRole('button', { name: 'Удалить аккаунт безвозвратно' }).click()
+  await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Покупка локального профиля' })).toBeVisible()
+  await expect.poll(() => calls.some(call => call.path.endsWith('/acknowledge_account_deletion'))).toBe(true)
+  expect(calls.find(call => call.path.endsWith('/request_account_deletion'))?.body).toEqual({ p_remind: true })
+  await page.reload()
+  await expect(account).toHaveCount(0)
+  await expect(page.getByRole('checkbox', { name: 'Покупка локального профиля' })).toBeVisible()
 })

@@ -37,7 +37,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null; checkLocalProfile?: (account: string) => Promise<boolean>; hiddenAccountIds?: ReadonlySet<string> }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -151,6 +151,15 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   }
   async function selectGuestProfile(row: LocalProfile) {
     if (profileBusy || accountMenu?.busy || !registry) return
+    if (row.cloudAccountId && accountMenu?.checkLocalProfile) {
+      setProfileBusy(true)
+      try {
+        if (await accountMenu.checkLocalProfile(row.cloudAccountId)) return
+      } catch {
+        setProfileActionError('Не удалось проверить профиль. Повторите открытие.')
+        return
+      } finally { setProfileBusy(false) }
+    }
     if (row.cloudAccountId && row.cloudAccountId === accountMenu?.sessionAccount) {
       accountMenu.onOpenLinked(row, guestProfile ?? undefined)
       return
@@ -232,9 +241,11 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   const profile = registry?.profiles.find(row => row.id === guestProfile)
   const name = accountId ? (accountMenu?.name || registry?.profiles.find(p => p.cloudAccountId === accountId)?.login || 'Аккаунт') :
     profile ? profileName(profile, registry!.profiles.indexOf(profile)) : 'Мои покупки'
+  const hiddenProfile = (row: LocalProfile) => !!row.cloudAccountId && !!accountMenu?.hiddenAccountIds?.has(row.cloudAccountId)
+  if (profile && hiddenProfile(profile)) return <main><p role="status">Убираем данные удалённого аккаунта с устройства…</p></main>
   const mode = accountId ? (cloudOffline ? 'offline' : 'cloud') : profile?.cloudAccountId ? 'linked' : 'local'
   const otherProfiles = sortProfiles(registry?.profiles ?? []).filter(row => (accountId !== null ? row.cloudAccountId !== accountId
-    : row.id !== guestProfile || (!!row.cloudAccountId && !!accountMenu?.sessionAccount)) && !reservedSources.includes(row.id))
+    : row.id !== guestProfile || (!!row.cloudAccountId && !!accountMenu?.sessionAccount)) && !reservedSources.includes(row.id) && !hiddenProfile(row))
   const actionsBusy = profileBusy || accountMenu?.busy
   function closeMenu() {
     setMenuOpen(false)
@@ -319,7 +330,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     </WorkspaceDialog>}
   </>
   const archiveTargets = profileDeletion
-    ? (registry?.profiles ?? []).filter(row => row.id !== profileDeletion.id && !reservedSources.includes(row.id))
+    ? (registry?.profiles ?? []).filter(row => row.id !== profileDeletion.id && !reservedSources.includes(row.id) && !hiddenProfile(row))
     : []
   const selectedTarget = archiveTargets.find(row => row.id === archiveTarget)
   const createArchiveTarget = archiveTarget === 'new' && registry?.profiles.length === 1

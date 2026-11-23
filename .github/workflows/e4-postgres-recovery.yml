@@ -144,3 +144,8 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/038_e4_account_change_feed_REVIEW_ONLY.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_change_feed.sql
+      - name: Verify confirmed account deletion, old-session fences and worker recovery
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/bootstrap_account_deletion_pg.sql
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/039_e4_account_deletion_REVIEW_ONLY.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion.sql

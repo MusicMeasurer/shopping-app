@@ -36,6 +36,7 @@ jobs:
     container: mcr.microsoft.com/playwright:v1.64.1-noble
     env:
       VITE_ACCOUNT_EMAIL_CODES: 'true'
+      VITE_ACCOUNT_DELETION: 'true'
       VITE_SUPABASE_URL: https://account-email-test.supabase.co
       VITE_SUPABASE_PUBLISHABLE_KEY: sb_publishable_ci_mock
     steps:

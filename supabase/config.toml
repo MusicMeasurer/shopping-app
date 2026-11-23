@@ -10,3 +10,7 @@ otp_length = 6
 # credential in Postgres. Do not deploy before lab integration/security tests.
 [functions.siri-add]
 verify_jwt = false
+
+# Only the scheduler bearer is accepted by the handler.
+[functions.account-deletion-worker]
+verify_jwt = false
