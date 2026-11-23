@@ -33,6 +33,7 @@ import type { CloudCompletionRequest, Storage } from './data/storage'
 import { ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { ListOperationStatus } from './App'
 import { createAuthController } from './data/auth-controller'
+import { markAuthStage, exportAuthStages } from './data/auth-flow-diagnostics'
 import { createSignOutGuard } from './data/signout-guard'
 import { checkVerifiedAccountId, verifiedAccountId, verifySessionIdentity } from './data/verified-account'
 import type { AuthView } from './data/auth-view'
@@ -169,6 +170,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   } | null>(null)
   const [readyAccount, setReadyAccount] = useState<string | null>(null)
   const [profileError, setProfileError] = useState('')
+  const [authDiagnosticsCopied, setAuthDiagnosticsCopied] = useState(false)
+  function copyAuthDiagnostics() {
+    void navigator.clipboard.writeText(exportAuthStages())
+      .then(() => setAuthDiagnosticsCopied(true))
+      .catch(() => setAuthDiagnosticsCopied(false))
+  }
   const [profileAttempt, setProfileAttempt] = useState(0)
   const [transferError, setTransferError] = useState('')
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
@@ -208,6 +215,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     let cancelled = false
     setReadyAccount(null)
     setProfileError('')
+    markAuthStage('profile_open_start')
     const verifyAccount = async () => {
       if (await checkVerifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
     }
@@ -254,9 +262,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       await storage.ensureVerifiedAccountProfile(currentAccount, { login: identity.data.user.email,
         ...(source && collisionMode ? { sourceProfileId: source.id, collisionMode } : {}) })
       try {
+        markAuthStage('merge_sync_start')
         await syncGuestImports(storage, client, currentAccount,
           async () => !cancelled && await verifiedAccountId(client) === currentAccount, 'profile')
+        markAuthStage('merge_sync_complete')
       } catch (error) {
+        markAuthStage('merge_sync_failed', error)
         if (!cancelled) setTransferError((error as { code?: string })?.code === '23505'
           ? 'Перенос остановлен: в аккаунте уже есть список с таким названием. Локальные данные сохранены.'
           : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
@@ -297,10 +308,12 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!cancelled) await verifyAccount()
       if (!cancelled) {
         offerTransfer.current = false
+        markAuthStage('profile_open_ready')
         setReadyAccount(currentAccount)
       localReturnProfile.current = undefined
       }
     })().catch((cause: unknown) => {
+      markAuthStage('profile_open_failed', cause)
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
     return () => { cancelled = true; transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
@@ -957,6 +970,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   }
 
   function enterLocalWorkspace() {
+    markAuthStage('local_profile_selected')
     offerTransfer.current = false
     setPassword('')
     setError('')
@@ -1024,8 +1038,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         const isolated = createAccountEmailClient()
         if (!isolated) throw new Error('Подключение к аккаунту недоступно.')
         // Validate credentials before replacing the currently authorized session.
+        markAuthStage('credentials_requested')
         const { data, error: credentialsError } = await isolated.auth.signInWithPassword({ email: address, password })
         if (credentialsError) throw credentialsError
+        markAuthStage('credentials_accepted')
         submittingCredentials = false
         if (!data.session || !data.user || (target && data.user.id.toLowerCase() !== target))
           throw new Error('Вход выполнен в другой аккаунт. Проверьте адрес выбранного профиля.')
@@ -1044,6 +1060,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         })
         if (result.error) throw result.error
         if (result.data.user?.id !== data.user.id) throw new Error('Не удалось подтвердить сессию. Повторите вход.')
+        markAuthStage('linked_session_set')
+        await controller.confirmSession(data.user.id.toLowerCase())
       } else {
         await controller.signIn(address, password)
         submittingCredentials = false
@@ -1051,6 +1069,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setPassword('')
       selectLocalBrowsing(false)
     } catch (cause) {
+      markAuthStage('credentials_rejected', cause)
       offerTransfer.current = false
       if (isAuthApiError(cause) && cause.code === 'invalid_credentials') {
         setError('Неверный email или пароль.')
@@ -1479,6 +1498,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     {profileError ? <p role="alert">{profileError}</p> : <p role="status">Подготавливаем локальный профиль аккаунта…</p>}
     {profileError && <>
       <button type="button" onClick={() => setProfileAttempt(value => value + 1)}>Повторить открытие</button>
+      <button type="button" onClick={copyAuthDiagnostics}>Скопировать диагностику входа</button>
+      {authDiagnosticsCopied && <p role="status">Диагностика скопирована без личных данных.</p>}
       <button type="button" disabled={busy || !controller} onClick={() => void returnToLocalProfiles()}>Вернуться к локальным профилям</button>
       {signOutError && <p role="alert">{signOutError}</p>}
     </>}
@@ -1618,7 +1639,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             <label htmlFor="auth-password">Пароль</label>
             <input id="auth-password" type="password" autoComplete="current-password" required value={password}
               aria-describedby={error ? 'auth-login-error' : undefined} onChange={event => setPassword(event.target.value)} />
-            {error && <p className="profile-login-error" id="auth-login-error" role="alert">{error}</p>}
+            {error && <><p className="profile-login-error" id="auth-login-error" role="alert">{error}</p>
+              <button type="button" onClick={copyAuthDiagnostics}>Скопировать диагностику входа</button>
+              {authDiagnosticsCopied && <p role="status">Диагностика скопирована без личных данных.</p>}</>}
             <div className="profile-login-actions">
               <button className="profile-login-submit" disabled={busy || !controller}>Войти</button>
               {accountEmailEnabled && <button type="button" disabled={busy}
