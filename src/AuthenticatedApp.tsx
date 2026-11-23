@@ -132,11 +132,16 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     // hiding the revoked account: that call can stall on the Auth storage lock.
     deletedSignOutAccount.current = viewAccount
     setSignOutError('')
-    void controller.signOut('local').then(() => {
-      if (deletedSignOutAccount.current === viewAccount) deletedSignOutAccount.current = null
+    void controller.signOut('local', () => {
+      // Also runs when Supabase finishes AFTER the UI sign-out timeout.
+      if (deletedSignOutAccount.current === viewAccount) {
+        deletedSignOutAccount.current = null
+        setSignOutError('')
+      }
     }).catch(() => {
       // Keep the sign-out guard in place but provide a retry without reloading Safari.
-      setSignOutError('Не удалось завершить выход с устройства. Повторите попытку.')
+      if (deletedSignOutAccount.current === viewAccount)
+        setSignOutError('Не удалось завершить выход с устройства. Повторите попытку.')
     })
   }, [accountWasDeleted, controller, viewAccount])
   useEffect(() => {
@@ -1456,10 +1461,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (!controller || busy) return
     setBusy(true)
     setSignOutError('')
-    const deletedAccount = deletedSignOutAccount.current !== null
+    const deletedAccount = deletedSignOutAccount.current
     try {
-      await controller.signOut(deletedAccount ? 'local' : undefined)
-      if (deletedAccount) deletedSignOutAccount.current = null
+      await controller.signOut(deletedAccount ? 'local' : undefined, deletedAccount
+        ? () => {
+          // Clear the marker on actual SDK completion, not only when await resolves.
+          if (deletedSignOutAccount.current === deletedAccount) {
+            deletedSignOutAccount.current = null
+            setSignOutError('')
+          }
+        }
+        : undefined)
       setAccountDialogOpen(false)
       selectLocalBrowsing(false)
       setVerifiedEmail('')

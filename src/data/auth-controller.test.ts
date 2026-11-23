@@ -274,6 +274,59 @@ it('finishes sign-out automatically when the server confirms it after the UI dea
   }
 })
 
+it('clears a deleted-account marker after a timed-out local logout eventually succeeds', async () => {
+  vi.useFakeTimers()
+  try {
+    const values = new Map<string, string>()
+    const guard = createSignOutGuard({
+      getItem: key => values.get(key) ?? null,
+      setItem: (key, value) => { values.set(key, value) },
+      removeItem: key => { values.delete(key) },
+    })
+    const fake = fakeClient(session)
+    let savedSession: SessionCandidate | null = session
+    fake.client.getSession = vi.fn(async () => ({ data: { session: savedSession }, error: null }))
+    let finishFirst!: (result: { error: null }) => void
+    fake.client.signOut = vi.fn()
+      .mockImplementationOnce(() => new Promise<{ error: null }>(resolve => { finishFirst = resolve }))
+      .mockResolvedValueOnce({ error: null })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), guard)
+    await controller.initialize()
+
+    let deletedSignOutAccount: string | null = id
+    const clearDeletionMarker = () => {
+      if (deletedSignOutAccount === id) deletedSignOutAccount = null
+    }
+    const timedOut = expect(controller.signOut('local', clearDeletionMarker))
+      .rejects.toThrow('Sign-out timed out')
+    await vi.advanceTimersByTimeAsync(12000)
+    await timedOut
+    expect(deletedSignOutAccount).toBe(id)
+    expect(guard.isPending()).toBe(true)
+
+    // The abandoned Promise resolves after the UI has already shown Retry.
+    finishFirst({ error: null })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(deletedSignOutAccount).toBeNull()
+    expect(guard.isPending()).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+
+    // A later account must use the normal global logout, not stale local scope.
+    savedSession = { user: { id: secondId }, access_token: 'second-token' }
+    await controller.initialize()
+    expect(views.at(-1)).toEqual({ status: 'account', accountId: secondId })
+    await controller.signOut(deletedSignOutAccount ? 'local' : undefined)
+    expect(fake.client.signOut).toHaveBeenCalledTimes(2)
+    expect(fake.client.signOut).toHaveBeenNthCalledWith(1, 'local')
+    expect(fake.client.signOut).toHaveBeenNthCalledWith(2)
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
 it('can retry a deleted account local sign-out after an earlier request stalls indefinitely', async () => {
   vi.useFakeTimers()
   try {

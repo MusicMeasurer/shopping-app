@@ -158,7 +158,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       markAuthStage('credentials_accepted')
       await confirmSession()
     },
-    async signOut(scope?: 'local') {
+    async signOut(scope?: 'local', onSuccess?: () => void) {
       markAuthStage('signout_requested')
       // Hide account data before the remote sign-out request.
       if (signingOut) return
@@ -174,6 +174,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
             // the UI deadline or while a second attempt is in flight.
             if (!result.error && active) {
               guard?.clear()
+              // Notify the UI even if its 12-second wait already timed out.
+              // The original attempt can still complete after the caller rejected.
+              onSuccess?.()
               emit({ status: 'guest' })
             }
             return result
