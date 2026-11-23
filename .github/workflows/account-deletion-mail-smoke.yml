@@ -1,0 +1,32 @@
+name: Account deletion email smoke
+on:
+  push:
+    branches: [test/account-deletion-mail-20261123]
+    paths: [.github/workflows/account-deletion-mail-smoke.yml]
+permissions: {}
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    environment: e3-lab
+    env:
+      URL: ${{ secrets.E3_LAB_URL }}
+      API_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+      EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+    steps:
+      - run: |
+          node --input-type=module <<'JS'
+          const {URL, API_KEY, EMAIL, PASSWORD} = process.env
+          if (URL !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' || !API_KEY || !EMAIL || !PASSWORD) process.exit(1)
+          const headers = {apikey: API_KEY, 'Content-Type':'application/json'}
+          const auth = await fetch(URL+'/auth/v1/token?grant_type=password', {method:'POST', headers, body:JSON.stringify({email:EMAIL,password:PASSWORD})})
+          if (!auth.ok) throw Error('Lab sign-in status: '+auth.status)
+          const {access_token, user} = await auth.json()
+          if (!access_token || user?.email?.toLowerCase() !== EMAIL.toLowerCase()) process.exit(1)
+          const req = await fetch(URL+'/rest/v1/rpc/request_account_deletion', {method:'POST',headers:{...headers,Authorization:'Bearer '+access_token},body:JSON.stringify({p_remind:false})})
+          if (!req.ok) throw Error('Queue request status: '+req.status)
+          const result = await req.json()
+          if (result.status !== 'requested' || !/^[0-9a-f-]{36}$/i.test(result.id)) throw Error('Request did not queue a new email')
+          console.log('Queued test email:',result.id)
+          JS
