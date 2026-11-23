@@ -417,7 +417,7 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   let signOutRequests = 0
   await page.route(`**${fixturePath}/auth/v1/logout`, async route => {
     signOutRequests++
-    if (signOutRequests === 1) return route.abort('failed')
+    if (signOutRequests === 1) return route.fulfill({ status: 503, json: { code: 'server_error', msg: 'Try again' } })
     await route.fulfill({ status: 200, json: {} })
   })
   await page.goto('/shopping-app/')
