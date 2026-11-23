@@ -13,6 +13,9 @@
 
 ## Текущая приёмка · 23 ноября 2026
 
+**Задача A опубликована на полигоне 23.11:** ревизия исходного кода [`da792a7`](https://github.com/MusicMeasurer/shopping-app/commit/da792a757fb918670f05ba6213a83edadb7e448a), [полигон](https://musicmeasurer.github.io/shopping-app-preview/integration/?v=da792a7), [успешный GitHub Pages run 45179493106](https://github.com/MusicMeasurer/shopping-app-preview/actions/runs/45179493106). Проверены checkout указанного SHA и доставка Pages в GitHub Actions; прямое HTTP-чтение `revision.txt` из среды помощника не удалось. **Физическая приёмка на iPhone открыта**: одноразовый аккаунт → код удаления → автоматический выход либо доступный повтор без обновления Safari → отсутствие удалённой копии и сохранность другого профиля. Production не менялся. [Журнал](05_DEV_LOG.md#2026-11-23--публикация-задачи-a-на-интеграционном-полигоне).
+
+
 **Задача A после автоматических проверок 23.11:** в `feature/e4-accepted-reintegration` реализован повтор выхода без перезапуска Safari после подтверждённого удаления облачного аккаунта; итоговый коммит [`da792a7`](https://github.com/MusicMeasurer/shopping-app/commit/da792a757fb918670f05ba6213a83edadb7e448a). [CI run 45175286979](https://github.com/MusicMeasurer/shopping-app/actions/runs/45175286979) **success**: 348 unit (2 skipped), 37 E4 browser, 8 account/email WebKit, сборка. Физическая приёмка на iPhone и публикация **не выполнены**. Задачи B–E и отложенные проверки не закрыты. [Журнал](05_DEV_LOG.md#2026-11-23--задача-a-устранение-бесконечной-проверки-после-удаления-аккаунта).
 
 
