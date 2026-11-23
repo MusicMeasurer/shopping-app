@@ -510,7 +510,7 @@ test('shows the same 24-hour cooldown in a fresh browser without any linked prof
 })
 
 test('re-checks server restriction if deletion starts between preflight and Auth signup', async ({ page }) => {
-  const calls = await mockCloud(page)
+  await mockCloud(page)
   let statusChecks = 0
   await page.route(`**${fixturePath}/rest/v1/rpc/registration_email_status`, async route => {
     statusChecks++
