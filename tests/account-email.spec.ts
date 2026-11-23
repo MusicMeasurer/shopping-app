@@ -549,7 +549,7 @@ test('reopens a signed-out linked account on the first restart after offline loc
   await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
   await profile.click()
   await page.getByRole('button', { name: 'Выйти', exact: true }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+  await expect(profile).toHaveAttribute('data-profile-mode', 'linked')
 
   // Edit the linked local copy, reload Safari once, then sign in immediately.
   // Before this fix the server could accept credentials while the local
@@ -558,7 +558,7 @@ test('reopens a signed-out linked account on the first restart after offline loc
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: 'Сохранить локально после выхода' })).toBeVisible()
   await page.reload()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+  await expect(profile).toHaveAttribute('data-profile-mode', 'linked')
   await expect(page.getByRole('checkbox', { name: 'Сохранить локально после выхода' })).toBeVisible()
   await profile.click()
   // The linked profile displays its own verified account login and password.
