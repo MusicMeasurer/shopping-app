@@ -554,6 +554,11 @@ test('reopens a signed-out linked account on the first restart after offline loc
   // Edit the linked local copy, reload Safari once, then sign in immediately.
   // Before this fix the server could accept credentials while the local
   // controller remained in guest state until a second page restart.
+  await page.getByRole('button', { name: 'Новый список', exact: true }).click()
+  const create = page.getByRole('dialog', { name: 'Создать список' })
+  await create.getByLabel('Название списка').fill('Локальный список после выхода')
+  await create.getByRole('button', { name: 'Создать', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Локальный список после выхода', exact: true })).toBeVisible()
   await page.getByLabel('Что нужно купить?', { exact: false }).fill('Сохранить локально после выхода')
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name: 'Сохранить локально после выхода' })).toBeVisible()
