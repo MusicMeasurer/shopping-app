@@ -127,7 +127,8 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     return () => { cancelled = true; unsubscribe() }
   }, [storage, accountId])
   async function createGuestProfile() {
-    if (profileBusy || accountMenu?.busy || !registry || !guestProfile) return
+    if (profileBusy || accountMenu?.busy || !registry || cloudOffline ||
+        (accountId === null && !guestProfile)) return
     setProfileBusy(true)
     try {
       const next = await storage.createLocalProfile(crypto.randomUUID(), Date.now())
@@ -139,6 +140,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       setStartupError('')
     } catch (error) { setProfileActionError(error instanceof Error ? error.message : 'Не удалось создать локальный профиль.') }
     finally { setProfileBusy(false) }
+  }
+  function closeProfileName() {
+    setProfileRename(null)
+    if (accountId !== null) accountMenu?.onSelectLocal()
   }
   async function selectGuestProfile(row: LocalProfile) {
     if (profileBusy || accountMenu?.busy || !registry) return
@@ -255,7 +260,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       </div>}
       {otherProfiles.length > 2 && <button type="button" aria-expanded={showAllProfiles}
         onClick={() => setShowAllProfiles(value => !value)}>{showAllProfiles ? 'Свернуть' : 'Ещё'}</button>}
-      {accountId === null && <>
+      {!cloudOffline && <>
         <button type="button" disabled={actionsBusy || registry.profiles.length >= MAX_LOCAL_PROFILES}
           onClick={() => { setProfileActionError(''); void createGuestProfile() }}>Добавить профиль</button>
         {registry.profiles.length >= MAX_LOCAL_PROFILES && <p>Достигнут лимит в {MAX_LOCAL_PROFILES} профилей на устройстве.</p>}
@@ -266,8 +271,8 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </ProfileMenu>
   const renameDialog = <>
     {profileRename !== null && guestProfile && <WorkspaceDialog label="Имя локального профиля" className="e4-editor profile-name-dialog"
-      onDismiss={() => { if (!profileBusy) setProfileRename(null) }}>
-      <form onSubmit={event => { event.preventDefault(); setProfileBusy(true); void storage.renameLocalProfile(guestProfile, profileRename).then(next => { setRegistry(next); setProfileRename(null); setProfileActionError('') }).catch(error => setProfileActionError(error instanceof Error ? error.message : 'Не удалось изменить имя.')).finally(() => setProfileBusy(false)) }}>
+      onDismiss={() => { if (!profileBusy) closeProfileName() }}>
+      <form onSubmit={event => { event.preventDefault(); setProfileBusy(true); void storage.renameLocalProfile(guestProfile, profileRename).then(next => { setRegistry(next); closeProfileName(); setProfileActionError('') }).catch(error => setProfileActionError(error instanceof Error ? error.message : 'Не удалось изменить имя.')).finally(() => setProfileBusy(false)) }}>
         <h2>Имя локального профиля</h2>
         <label htmlFor="profile-name">Имя профиля</label>
         <div className="rename-input">
@@ -281,7 +286,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
         </div>
         {profileActionError && <p role="alert">{profileActionError}</p>}
         <div className="dialog-buttons">
-          <button type="button" disabled={profileBusy} onClick={() => setProfileRename(null)}>Отмена</button>
+          <button type="button" disabled={profileBusy} onClick={closeProfileName}>Отмена</button>
           <button type="submit" disabled={profileBusy || !profileRename.trim()}>Сохранить имя</button>
         </div>
       </form>
@@ -1138,7 +1143,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <button type="button" disabled={!onResolveItemDeletion || resolvingConflict} onClick={() => void resolveConflict(selectedConflict, false)}>Подтвердить удаление</button>
       <button type="button" disabled={resolvingConflict} onClick={() => setConflictId(undefined)}>Позже</button>
     </WorkspaceDialog>}
-    {!showArchive && editingItem && !activeListLocked && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) { shopping.clearError(); setEditingId(null) } }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/>
+    {!showArchive && editingItem && !activeListLocked && <WorkspaceDialog className="e4-editor" label="Редактирование товара" onDismiss={() => { if (!shopping.busy) { shopping.clearError(); setEditingId(null) } }}><h2>Изменить товар</h2><form onSubmit={event => void saveEdit(event, editingItem)}><label htmlFor={`edit-${editingItem.id}`}>Название</label><input id={`edit-${editingItem.id}`} value={editingName} maxLength={120} onChange={event => setEditingName(event.target.value)} disabled={shopping.busy}/><label htmlFor={`quantity-${editingItem.id}`}>Количество</label><input id={`quantity-${editingItem.id}`} type="number" min="0.001" step="any" value={editingQuantity} onChange={event => setEditingQuantity(event.target.value)} disabled={shopping.busy}/><label htmlFor={`unit-${editingItem.id}`}>Единица измерения</label><input id={`unit-${editingItem.id}`} autoCapitalize="none" maxLength={30} value={editingUnit} onChange={event => setEditingUnit(event.target.value)} disabled={shopping.busy}/>
       <div className="item-unit-options" role="group" aria-label="Быстрый выбор единицы измерения">
         {['шт.', 'уп.'].map(unit => <button type="button" key={unit} aria-pressed={editingUnit === unit}
           disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}

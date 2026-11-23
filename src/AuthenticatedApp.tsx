@@ -139,6 +139,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
   const [rememberDecline, setRememberDecline] = useState(false)
   type TransferAnswer = 'skip' | 'skip-saved' | 'separate' | 'merge' | 'yes'
+  const declineTransferButton = useRef<HTMLButtonElement>(null)
   const transferAnswer = useRef<((answer: TransferAnswer) => void) | null>(null)
   function answerTransfer(answer: TransferAnswer) {
     transferAnswer.current?.(answer)
@@ -1387,7 +1388,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }
   if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
-    {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="e4-create profile-transfer-dialog" onDismiss={() => answerTransfer('skip')}>
+    {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="e4-create profile-transfer-dialog"
+      initialFocusRef={declineTransferButton} onDismiss={() => answerTransfer('skip')}>
       {transferPrompt.phase === 'consent' ? <>
         <h2>Синхронизировать профиль «{transferPrompt.name}» с аккаунтом?</h2>
         <p>Списки, товары и архив будут перенесены в аккаунт. Профиль будет называться логином аккаунта.</p>
@@ -1397,7 +1399,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           Больше не спрашивать для этого профиля
         </ProfileTransferPreference>
         <button type="button" onClick={() => answerTransfer('yes')}>Синхронизировать профиль</button>
-        <button type="button" autoFocus onClick={() => answerTransfer(rememberDecline ? 'skip-saved' : 'skip')}>Не синхронизировать</button>
+        <button type="button" ref={declineTransferButton} onClick={() => answerTransfer(rememberDecline ? 'skip-saved' : 'skip')}>Не синхронизировать</button>
       </> : <>
         <h2>Совпадают названия списков</h2>
         <p>Выберите действие для всех совпадений ({transferPrompt.collisions.length}).</p>

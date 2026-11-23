@@ -188,6 +188,8 @@ test('reopens the signed-in account by its profile row with several empty local 
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   const transfer = page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
   const remember = transfer.getByRole('checkbox', { name: /Больше не спрашивать/ })
+  await expect(transfer.getByRole('button', { name: 'Не синхронизировать', exact: true })).toBeFocused()
+  await expect(remember).toHaveCSS('outline-style', 'none')
   await transfer.getByRole('button', { name: 'Синхронизировать профиль', exact: true }).focus()
   await page.keyboard.press('Shift+Tab')
   await expect(remember).toBeFocused()
@@ -200,10 +202,8 @@ test('reopens the signed-in account by its profile row with several empty local 
   await expect(menu).toHaveAttribute('data-profile-mode', 'cloud')
   await menu.click()
   await expect(page.getByRole('button', { name: /Удалить локальный профиль/ })).toHaveCount(0)
-  await row('Мои покупки').click()
   for (let i = 0; i < 2; i++) {
-    await expect(menu).toHaveAttribute('data-profile-mode', 'local')
-    await menu.click()
+    if (i > 0) await menu.click()
     await page.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
     const nameDialog = page.getByRole('dialog', { name: 'Имя локального профиля' })
     await expect(nameDialog).toBeVisible()
@@ -212,6 +212,7 @@ test('reopens the signed-in account by its profile row with several empty local 
     await nameDialog.getByLabel('Имя профиля', { exact: true }).fill('Новый профиль ' + i)
     await nameDialog.getByRole('button', { name: 'Сохранить имя' }).click()
     await expect(menu).toContainText('Новый профиль ' + i)
+    await expect(menu).toHaveAttribute('data-profile-mode', 'local')
     await expect(menu).toHaveAttribute('aria-expanded', 'false')
   }
   await menu.click()
