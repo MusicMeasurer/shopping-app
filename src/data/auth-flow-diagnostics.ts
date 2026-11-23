@@ -30,11 +30,14 @@ function read(): Record[] {
   try {
     const rows: unknown = JSON.parse(sessionStorage.getItem(traceKey) ?? '[]')
     if (!Array.isArray(rows)) return []
-    return rows.filter((v): v is Record =>
-      !!v && typeof v === 'object' && typeof v.at === 'string' &&
-      allowedStages.includes(v.stage) &&
-      (v.code === undefined || (typeof v.code === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(v.code)))
-    ).slice(-35)
+    return rows.filter((v): v is Record => {
+      if (!v || typeof v !== 'object') return false
+      const row = v as Partial<Record>
+      return typeof row.at === 'string' &&
+        allowedStages.some(stage => stage === row.stage) &&
+        (row.code === undefined ||
+          (typeof row.code === 'string' && /^[a-z][a-z0-9_]{0,39}$/.test(row.code)))
+    }).slice(-35)
   } catch { return [] }
 }
 
