@@ -411,3 +411,42 @@ test('deletes the cloud workspace after a lost confirmation response and keeps l
   await expect(account).toHaveCount(0)
   await expect(page.getByRole('checkbox', { name: 'Покупка локального профиля' })).toBeVisible()
 })
+
+test('recovers an interrupted deleted-account sign-out without reloading Safari', async ({ page }) => {
+  const calls = await mockCloud(page)
+  let signOutRequests = 0
+  await page.route(`**${fixturePath}/auth/v1/logout`, async route => {
+    signOutRequests++
+    if (signOutRequests === 1) return route.abort('failed')
+    await route.fulfill({ status: 200, json: {} })
+  })
+  await page.goto('/shopping-app/')
+  await page.getByLabel('Что нужно купить?', { exact: false }).fill('Оставить в локальном профиле')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await page.getByRole('button', { name: /Открыть аккаунт/ }).click()
+  await page.getByRole('button', { name: 'Удалить аккаунт', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Удаление облачного аккаунта' })
+  await dialog.getByRole('button', { name: 'Отправить код' }).click()
+  await dialog.getByLabel('Код подтверждения').fill(emailCode)
+  await dialog.getByRole('button', { name: 'Удалить аккаунт безвозвратно' }).click()
+
+  // The server already deleted the account, but the first local sign-out
+  // fails. Show a safe Retry, never spin indefinitely or reveal its lists.
+  const retry = page.getByRole('button', { name: 'Повторить выход', exact: true })
+  await expect(retry).toBeVisible()
+  await expect(page.getByRole('alert')).toContainText('Не удалось завершить выход')
+  await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
+  await retry.click()
+  await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible()
+  await expect(page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })).toBeVisible()
+  expect(signOutRequests).toBe(2)
+  expect(calls.filter(call => call.path.endsWith('/confirm_account_deletion'))).toHaveLength(1)
+  await page.reload()
+  await expect(page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })).toBeVisible()
+  await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
+})
