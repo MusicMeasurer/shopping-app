@@ -2,16 +2,13 @@ import { describe, expect, it } from 'vitest'
 import { accountEmailErrorMessage } from './account-email-error'
 
 describe('account email failure classification', () => {
-  it('explains verified post-deletion cooldown without calling an HTTP 500 a network error', () => {
+  it('does not misreport an HTTP 500 as network failure or assume a deletion', () => {
     const issue = { status: 500, code: 'unexpected_failure', message: 'Database error saving new user' }
-    const known = accountEmailErrorMessage(issue, 'register', true)
-    expect(known).toContain('24 часа')
-    expect(known).toContain('после завершения удаления')
-    expect(known).not.toContain('интернет')
-    const unknown = accountEmailErrorMessage(issue, 'register', false)
-    expect(unknown).toContain('Сервер')
-    expect(unknown).toContain('Если вы недавно удалили')
-    expect(unknown).not.toContain('неверный email')
+    const message = accountEmailErrorMessage(issue, 'register')
+    expect(message).toContain('Сервер')
+    expect(message).not.toContain('24 часа')
+    expect(message).not.toContain('интернет')
+    expect(message).not.toContain('неверный email')
   })
   it('distinguishes email provider refusal, rate limits and transport problems', () => {
     expect(accountEmailErrorMessage({ status: 429, code: 'over_email_send_rate_limit' }, 'register')).toContain('Слишком много')
