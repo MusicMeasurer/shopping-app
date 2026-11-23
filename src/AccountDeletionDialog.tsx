@@ -1,6 +1,7 @@
 import { useRef, useState, type FormEvent } from 'react'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import type { AccountDeletionApi, DeletionChallenge } from './data/account-deletion'
+import { rememberDeletedEmail } from './data/recent-deleted-email'
 
 export function AccountDeletionDialog({ api, email, account, onClose, onDeleted }: {
   api: AccountDeletionApi
@@ -22,6 +23,11 @@ export function AccountDeletionDialog({ api, email, account, onClose, onDeleted 
     onClose()
   }
 
+  async function finishDeleted() {
+    await rememberDeletedEmail(email)
+    onDeleted(account)
+  }
+
   async function submit(event: FormEvent) {
     event.preventDefault()
     if (busy) return
@@ -35,7 +41,7 @@ export function AccountDeletionDialog({ api, email, account, onClose, onDeleted 
         return
       }
       const result = await api.confirm(challenge.id, code)
-      if (result === 'deleted') onDeleted(account)
+      if (result === 'deleted') await finishDeleted()
       else if (result === 'expired') {
         setChallenge(null)
         setCode('')
@@ -43,7 +49,7 @@ export function AccountDeletionDialog({ api, email, account, onClose, onDeleted 
       } else setError('Код неверный. Проверьте письмо и повторите ввод.')
     } catch {
       if (challenge && await api.isDeleted(account).catch(() => false)) {
-        onDeleted(account)
+        await finishDeleted()
         return
       }
       setError('Не удалось получить ответ сервера. Проверьте подключение и повторите действие.')
