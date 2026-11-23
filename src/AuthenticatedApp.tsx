@@ -192,7 +192,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const source = registry?.profiles.find(p => p.id === registry.activeProfileId && !p.cloudAccountId)
       const pending = await storage.readGuestImports(currentAccount)
       let collisionMode: 'separate' | 'merge' | undefined
-      if (source && offerTransfer.current && !source.skipTransferPrompt && !pending.length) {
+      if (source && offerTransfer.current && !source.skipTransferPrompt && !pending.some(batch => !batch.archiveOnly)) {
         const prompt = { name: profileName(source, registry!.profiles.indexOf(source)),
           existing: registry!.profiles.some(p => p.cloudAccountId === currentAccount), collisions: [] as string[] }
         const ask = (phase: 'consent' | 'collision', collisions: string[] = []) => new Promise<TransferAnswer>(resolve => {
@@ -220,7 +220,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         ...(source && collisionMode ? { sourceProfileId: source.id, collisionMode } : {}) })
       try {
         await syncGuestImports(storage, client, currentAccount,
-          async () => !cancelled && await verifiedAccountId(client) === currentAccount)
+          async () => !cancelled && await verifiedAccountId(client) === currentAccount, 'profile')
       } catch (error) {
         if (!cancelled) setTransferError((error as { code?: string })?.code === '23505'
           ? 'Перенос остановлен: в аккаунте уже есть список с таким названием. Локальные данные сохранены.'
@@ -290,6 +290,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     void (async () => {
       try {
         if (activeAccount.current !== accountId) return
+        if ((await storage.readGuestImports(accountId)).some(batch => batch.archiveOnly)) {
+          await syncGuestImports(storage, client, accountId, async () => {
+            if (activeAccount.current !== accountId) return false
+            if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
+            return activeAccount.current === accountId
+          }, 'archive')
+          const snapshots = await storage.readAccountArchive(accountId)
+          if (activeAccount.current !== accountId) return
+          if (snapshots) setLoadedArchive({ accountId, snapshots })
+          setSyncQueueRevision(revision => revision + 1)
+          setSyncError('')
+        }
         if (!(await storage.readAccountPending(accountId)).length) {
           if (activeAccount.current === accountId) setPushState({ account: accountId, status: 'done' })
           return
@@ -1358,7 +1370,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     if (!offlineAccount || offlineAccount !== readyAccount) return
     let cancelled = false
-    void storage.readAccountArchive(offlineAccount).then(snapshots => {
+    void storage.readLocalCompletionView(offlineAccount).then(({ snapshots }) => {
       if (!cancelled && snapshots) setLoadedArchive({ accountId: offlineAccount, snapshots })
     }).catch(() => {
       if (!cancelled) setCloudArchiveError('Не удалось прочитать сохранённый архив.')

@@ -24,7 +24,7 @@ function setup() {
   vi.mocked(fetchRemoteItems).mockResolvedValue([{ id: 'remote-item', listId: 'remote', name: 'Milk', purchased: false, createdAt: new Date(1).toISOString(), version: 1 }])
   vi.mocked(fetchCloudArchive).mockResolvedValue([{ id: 'remote-archive', sourceListId: 'remote', sourceListName: 'Food', completedAt: new Date(1).toISOString(), items: [{ ordinal: 0, name: 'Bread', quantity: 2, unit: 'шт.' }] }])
   const run = (active = async () => true) => syncGuestImports(storage as unknown as Storage, { rpc } as unknown as SupabaseClient, 'a', active)
-  return { storage, rpc, run }
+  return { batch, storage, rpc, run }
 }
 it('confirms complete owned snapshot and persists archive before source cleanup', async () => {
   const { storage, rpc, run } = setup()
@@ -50,4 +50,17 @@ it('never confirms or purges after identity changes or RPC fails', async () => {
   rpc.mockResolvedValue({ error: { message: 'offline' }, data: null })
   await expect(run()).rejects.toEqual({ message: 'offline' })
   expect(storage.confirmGuestImport).not.toHaveBeenCalled()
+})
+
+it('sends only archived purchases and confirms the receipt without fetching active lists', async () => {
+  const { batch, storage, rpc, run } = setup()
+  const archiveOnly = { ...batch, archiveOnly: true, removeSource: false, collisionMode: 'separate', lists: [], items: [] }
+  storage.readGuestImports.mockResolvedValue([archiveOnly])
+  rpc.mockResolvedValue({ data: { lists: {}, items: [], archives: ['remote-archive'] }, error: null })
+  await run()
+  expect(rpc).toHaveBeenCalledWith('import_e4_profile_merge', expect.objectContaining({
+    p_snapshot: { collisionMode: 'separate', lists: [], items: [], archives: batch.archives },
+  }))
+  expect(fetchCloudListMetadata).not.toHaveBeenCalled()
+  expect(storage.confirmGuestImport).toHaveBeenCalledWith(archiveOnly, [], [], [expect.objectContaining({ id: 'remote-archive' })])
 })

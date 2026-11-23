@@ -5,9 +5,10 @@ import { fetchCloudArchive } from './cloud-archive'
 import { fetchRemoteItems } from './remote-snapshot'
 
 export async function syncGuestImports(
-  storage: Storage, client: SupabaseClient, accountId: string, isActive: () => Promise<boolean>,
+  storage: Storage, client: SupabaseClient, accountId: string, isActive: () => Promise<boolean>, kind?: 'profile' | 'archive',
 ) {
   for (const batch of await storage.readGuestImports(accountId)) {
+    if ((kind === 'archive' && !batch.archiveOnly) || (kind === 'profile' && batch.archiveOnly)) continue
     if (!await isActive()) return
     const { data, error } = await client.rpc(batch.collisionMode ? 'import_e4_profile_merge' : 'import_e4_guest_profile', {
       p_operation: batch.operationId,
@@ -19,7 +20,7 @@ export async function syncGuestImports(
     const ids = batch.lists.map(list => data?.lists?.[list.id])
     if (ids.some(id => typeof id !== 'string'))
       throw new Error('Unconfirmed guest import')
-    const lists = (await fetchCloudListMetadata(client, accountId)).filter(list => ids.includes(list.id))
+    const lists = ids.length ? (await fetchCloudListMetadata(client, accountId)).filter(list => ids.includes(list.id)) : []
     if (lists.length !== new Set(ids).size) throw new Error('Guest import lists are missing from the verified account')
     const items = (await Promise.all(lists.map(async list => {
       const rows = []
@@ -30,7 +31,7 @@ export async function syncGuestImports(
         if (!await isActive()) throw new Error('Transfer identity changed')
       }
     }))).flat()
-    if (batch.removeSource) {
+    if (batch.removeSource || batch.archiveOnly) {
       const archives = await fetchCloudArchive(client, true)
       if (!Array.isArray(data?.archives) || data.archives.length !== batch.archives.length ||
           data.archives.some((id: string, index: number) => {
@@ -45,6 +46,14 @@ export async function syncGuestImports(
           !Array.isArray(data?.items) || data.items.length !== batch.items.length ||
           data.items.some((id: string) => !items.some(row => row.id === id))) throw new Error('Transfer snapshot is not fully confirmed')
       if (!await isActive()) return
+      if (batch.archiveOnly) {
+        const confirmed = data.archives.map((id: string) => archives.find(row => row.id === id)!)
+        if (new Set(data.archives).size !== batch.archives.length ||
+            confirmed.some((row: typeof archives[number], index: number) => Date.parse(row.completedAt) !== batch.archives[index].completedAt))
+          throw new Error('Archive transfer is not fully confirmed')
+        await storage.confirmGuestImport(batch, [], [], confirmed)
+        continue
+      }
       await storage.cacheAccountArchive(accountId, archives)
     }
     if (!await isActive()) return

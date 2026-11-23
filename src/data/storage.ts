@@ -188,6 +188,7 @@ interface GuestImport {
   lists: ShoppingListRecord[]; items: Item[]; archives: ArchivedListRecord[]
   collisionMode?: 'separate' | 'merge'
   removeSource?: boolean
+  archiveOnly?: boolean
 }
 interface ShoppingDB extends DBSchema {
   guestImports: { key: string; value: GuestImport }
@@ -758,8 +759,8 @@ export function createStorage(name = 'shopping-app') {
     },
     async confirmGuestImport(batch: GuestImport, mappings: readonly {
       id: string; name: string; kind: 'permanent' | 'oneoff'; position: number; symbol?: string
-    }[], items: readonly { item: Item; version: number }[]): Promise<void> {
-      const tx = (await database).transaction(['guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
+    }[], items: readonly { item: Item; version: number }[], confirmedArchive?: CloudArchiveCompletion[]): Promise<void> {
+      const tx = (await database).transaction(['accountArchiveCache', 'guestImports', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -767,6 +768,14 @@ export function createStorage(name = 'shopping-app') {
         if (!current || current.accountId !== batch.accountId || current.operationId !== batch.operationId)
           throw new Error('Guest import ownership changed')
         if (!current.imported) {
+          if (current.archiveOnly) {
+            if (!confirmedArchive || confirmedArchive.length !== current.archives.length) throw new Error('Archive transfer not confirmed')
+            const cache = tx.objectStore('accountArchiveCache')
+            const existing = await cache.get(batch.accountId)
+            const ids = new Set(confirmedArchive.map(row => row.id))
+            await cache.put({ accountId: batch.accountId, awaitingRefresh: [...new Set([...(existing?.awaitingRefresh ?? []), ...ids])],
+              snapshots: [...confirmedArchive, ...(existing?.snapshots.filter(row => !ids.has(row.id)) ?? [])] })
+          }
           for (const { id, name, kind, position, symbol } of mappings) {
             const key = accountKey(batch.accountId, id)
             const existing = (await tx.objectStore('accountListMappings').index('byAccount').getAll(batch.accountId)).find(row => row.remoteListId === id)
@@ -828,15 +837,28 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     },
-    /** Irreversible LOCAL-only purge, requiring a fresh exact confirmation.
-     * Never removes the original migrated guest, the last profile, or cloud data.
-     */
-    async deleteLocalProfile(profileId: string, confirmationId: string): Promise<LocalProfileRegistry> {
+    async readLocalProfileDeletion(profileId: string) {
+      const tx = (await database).transaction(['localProfileRegistry', 'profileArchives', 'profileItems'])
+      const [saved, archives, items] = await Promise.all([
+        tx.objectStore('localProfileRegistry').get('device'),
+        tx.objectStore('profileArchives').index('byProfile').getAllKeys(profileId),
+        tx.objectStore('profileItems').index('byProfile').getAll(profileId),
+      ])
+      await tx.done
+      if (!saved?.registry.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
+      return { registry: saved.registry, archiveCount: archives.length, hasMarked: items.some(row => row.record.purchased) }
+    },
+    /** Transfer and purge device data in one transaction. Linked sources only clear their local cache. */
+    async deleteLocalProfile(profileId: string, confirmationId: string, choice?: {
+      archiveCount: number; hasMarked: boolean
+      target?: { id: string; accountId: string | null } | 'new'
+    }): Promise<LocalProfileRegistry> {
       if (!profileId.trim() || confirmationId !== profileId) throw new Error('Profile deletion confirmation mismatch')
       const db = await database
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
         'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
+        'lists', 'items', 'archives', 'pendingOperations',
         'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists', 'accountFeed',
       ], 'readwrite')
       const done = tx.done
@@ -847,8 +869,18 @@ export function createStorage(name = 'shopping-app') {
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
         if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) throw new Error('Profile has unsynced operations; deletion blocked')
-        if (cutover.profileId === profileId) throw new Error('Original guest profile cannot be deleted')
-        const accountId = current.registry.profiles.find(profile => profile.id === profileId)?.cloudAccountId
+        const source = current.registry.profiles.find(profile => profile.id === profileId)
+        if (!source) throw new Error('Unknown local profile')
+        const accountId = source.cloudAccountId
+        const archives = tx.objectStore('profileArchives')
+        const snapshots = await archives.index('byProfile').getAll(profileId)
+        if ((accountId && choice) || (!accountId && snapshots.length && !choice))
+          throw new Error('Profile deletion preview changed')
+        if (!accountId && choice && (snapshots.length !== choice.archiveCount ||
+            (!choice.hasMarked && (await tx.objectStore('profileItems').index('byProfile').getAll(profileId))
+              .some(row => row.record.purchased)))) {
+          throw new Error('Profile deletion preview changed')
+        }
         if (accountId) {
           const [operations, completions, requests, drafts, imports] = await Promise.all([
             tx.objectStore('accountOperations').index('byAccount').count(accountId),
@@ -870,9 +902,43 @@ export function createStorage(name = 'shopping-app') {
             for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
           }
         }
-        const registry = removeProfileMetadata(current.registry, profileId)
         const pending = await tx.objectStore('profilePendingOperations').index('byProfile').getAll(profileId)
         if (pending.length) throw new Error('Profile has unsynced operations; deletion blocked')
+        let registry = {
+          ...current.registry,
+          profiles: current.registry.profiles.map((profile, index) =>
+            profile.cloudAccountId || profile.name ? profile : { ...profile, name: profileName(profile, index) }),
+        }
+        const last = registry.profiles.length === 1
+        const targetChoice = choice?.target
+        if (targetChoice && (accountId || !snapshots.length)) throw new Error('No local purchase archive to transfer')
+        if (targetChoice === 'new' && !last) throw new Error('Profile deletion target changed')
+        if (last) registry = addProfile(registry, { id: crypto.randomUUID(), cloudAccountId: null, createdAt: Date.now(), name: 'Мои покупки' })
+        if (targetChoice) {
+          const target = targetChoice === 'new' ? registry.profiles.find(profile => profile.id === registry.activeProfileId)
+            : registry.profiles.find(profile => profile.id === targetChoice.id && profile.cloudAccountId === targetChoice.accountId)
+          if (!target || target.id === profileId || (await tx.objectStore('guestImports').get(target.id))?.removeSource)
+            throw new Error('Profile deletion target changed')
+          if (target.cloudAccountId) {
+            const operationId = crypto.randomUUID()
+            await tx.objectStore('guestImports').add({
+              key: `archive:${operationId}`, accountId: target.cloudAccountId, operationId, imported: false,
+              lists: [], items: [], archives: snapshots.map(row => row.record), collisionMode: 'separate', archiveOnly: true,
+            })
+          } else {
+            for (const { record } of snapshots) {
+              const id = await archives.get(JSON.stringify([target.id, record.id])) ? crypto.randomUUID() : record.id
+              await archives.add({ key: JSON.stringify([target.id, id]), profileId: target.id, record: { ...record, id } })
+            }
+          }
+        }
+        registry = removeProfileMetadata(registry, profileId)
+        if (cutover.profileId === profileId) {
+          await tx.objectStore('profileCutover').put({ ...cutover, profileId: registry.profiles[0].id })
+          if ((await tx.objectStore('profileMigrations').get('legacy-guest-v1'))?.profileId === profileId) {
+            for (const name of ['lists', 'items', 'archives', 'pendingOperations'] as const) await tx.objectStore(name).clear()
+          }
+        }
         for (const storeName of ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const) {
           const store = tx.objectStore(storeName)
           const records = await store.index('byProfile').getAll(profileId)
@@ -1485,11 +1551,12 @@ export function createStorage(name = 'shopping-app') {
         .sort((left, right) => left.createdAt - right.createdAt)
     },
     async readLocalCompletionView(accountId: string) {
-      const tx = (await database).transaction(['accountCompletionRequests', 'accountArchiveCache', 'accountCompletions'])
-      const [requests, archive, intents] = await Promise.all([
+      const tx = (await database).transaction(['accountCompletionRequests', 'accountArchiveCache', 'accountCompletions', 'guestImports'])
+      const [requests, archive, intents, imports] = await Promise.all([
         tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId),
         tx.objectStore('accountArchiveCache').get(accountId),
         tx.objectStore('accountCompletions').index('byAccount').getAll(accountId),
+        tx.objectStore('guestImports').getAll(),
       ])
       await tx.done
       const confirmed = archive?.snapshots ?? []
@@ -1504,11 +1571,17 @@ export function createStorage(name = 'shopping-app') {
           const snapshot = completionArchive(request, request.operationId)
           return snapshot ? [{ ...snapshot, pending: true }] : []
         })
-      const snapshots = [...pending, ...confirmed]
+      const transfers = imports.filter(batch => batch.archiveOnly && !batch.imported && batch.accountId === accountId)
+        .flatMap(batch => batch.archives.map((row, index): CloudArchiveCompletion => ({
+          id: `${batch.operationId}:${index}`, pending: true, sourceListId: row.sourceListId,
+          sourceListName: row.name, completedAt: new Date(row.completedAt).toISOString(),
+          items: row.items.map((item, ordinal) => ({ name: item.name, quantity: item.quantity ?? null, unit: item.unit ?? null, ordinal })),
+        })))
+      const snapshots = [...pending, ...transfers, ...confirmed]
         .sort((left, right) => Date.parse(right.completedAt) - Date.parse(left.completedAt))
       const unsent = requests.filter(request => request.fromLocalCopy &&
         !intents.some(row => row.intent.operationId === request.operationId))
-      return { operations, unsent, snapshots: archive || pending.length ? snapshots : null }
+      return { operations, unsent, snapshots: archive || pending.length || transfers.length ? snapshots : null }
     },
     async queueAccountCompletion(request: CloudCompletionRequest, local = false): Promise<void> {
       const { accountId, localListId, remoteListId } = request
