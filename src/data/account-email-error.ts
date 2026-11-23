@@ -1,7 +1,7 @@
 /** User-facing Auth errors must not turn server or SMTP failures into network errors. */
 export type AccountEmailAction = 'register' | 'recover' | 'verify' | 'resend' | 'password'
 
-export function accountEmailErrorMessage(cause: unknown, action: AccountEmailAction, recentlyDeleted = false): string {
+export function accountEmailErrorMessage(cause: unknown, action: AccountEmailAction): string {
   const issue = cause && typeof cause === 'object' ? cause as { code?: string; status?: number } : {}
   if (issue.status === 429 || issue.code === 'over_email_send_rate_limit')
     return 'Слишком много запросов. Подождите и попробуйте снова.'
@@ -16,9 +16,7 @@ export function accountEmailErrorMessage(cause: unknown, action: AccountEmailAct
 
   if (typeof issue.status === 'number' && issue.status >= 500) {
     if (action === 'register') {
-      return recentlyDeleted
-        ? 'После удаления аккаунта повторная регистрация с тем же адресом возможна через 24 часа после завершения удаления. Сервер пока не выполнил регистрацию. Попробуйте позже.'
-        : 'Сервер не смог выполнить регистрацию. Если вы недавно удалили аккаунт с этим адресом, повторная регистрация возможна через 24 часа после завершения удаления. Иначе повторите попытку позже.'
+      return 'Сервер не смог выполнить регистрацию. Повторите попытку позже.'
     }
     if (action === 'verify') return 'Сервер не смог проверить код. Повторите попытку позже.'
     if (action === 'password') return 'Сервер не смог обновить пароль. Повторите попытку позже.'
