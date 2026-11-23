@@ -106,22 +106,39 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       let timeout: ReturnType<typeof setTimeout> | undefined
       try {
         guard?.markPending()
-        pendingSignOut ??= (scope ? client.signOut(scope) : client.signOut()).then(result => {
-          // The request may succeed after the UI deadline. Finish the same
-          // sign-out when the SDK confirms it, even if nobody clicked Retry.
-          if (!result.error && active) {
-            guard?.clear()
-            emit({ status: 'guest' })
-          }
-          return result
-        }).finally(() => { pendingSignOut = undefined })
-        const { error } = await Promise.race([
-          pendingSignOut,
-          new Promise<never>((_, reject) => {
-            timeout = setTimeout(() => reject(new Error('Sign-out timed out')), signOutTimeoutMs)
-          }),
-        ])
-        if (error) throw new Error(error.message)
+        if (!pendingSignOut) {
+          const attempt = (scope ? client.signOut(scope) : client.signOut()).then(result => {
+            // A late success must still unlock the hidden workspace, even after
+            // the UI deadline or while a second attempt is in flight.
+            if (!result.error && active) {
+              guard?.clear()
+              emit({ status: 'guest' })
+            }
+            return result
+          }).finally(() => {
+            if (pendingSignOut === attempt) pendingSignOut = undefined
+          })
+          pendingSignOut = attempt
+        }
+        const attempt = pendingSignOut
+        let timedOut = false
+        try {
+          const { error } = await Promise.race([
+            attempt,
+            new Promise<never>((_, reject) => {
+              timeout = setTimeout(() => {
+                timedOut = true
+                reject(new Error('Sign-out timed out'))
+              }, signOutTimeoutMs)
+            }),
+          ])
+          if (error) throw new Error(error.message)
+        } catch (error) {
+          // A permanently stalled request must not block every future Retry.
+          // The persisted guard stays set until some attempt succeeds.
+          if (timedOut && pendingSignOut === attempt) pendingSignOut = undefined
+          throw error
+        }
       } finally {
         clearTimeout(timeout)
         signingOut = false
