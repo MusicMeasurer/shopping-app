@@ -68,6 +68,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [signOutError, setSignOutError] = useState('')
+  const deletedSignOutAccount = useRef<string | null>(null)
   const [accountEmailMode, setAccountEmailMode] = useState<AccountEmailMode | null>(null)
   const [accountEmailNotice, setAccountEmailNotice] = useState('')
   const [cloudLists, setCloudLists] = useState<OwnedCloudList[]>([])
@@ -124,14 +125,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     return () => { cancelled = true }
   }, [currentAccount, deletionApi, storage, syncOnline])
   useEffect(() => {
-    if (!accountWasDeleted || !client || !controller || !syncOnline) return
-    let cancelled = false
-    void client.auth.getSession().then(({ data }) => {
-      if (!cancelled && data.session?.user?.id.toLowerCase() === viewAccount)
-        return controller.signOut('local')
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [accountWasDeleted, client, controller, syncOnline, viewAccount])
+    if (!accountWasDeleted || !controller || !viewAccount ||
+        deletedSignOutAccount.current === viewAccount) return
+    // Deletion is already confirmed. Do not await another getSession() before
+    // hiding the revoked account: that call can stall on the Auth storage lock.
+    deletedSignOutAccount.current = viewAccount
+    setSignOutError('')
+    void controller.signOut('local').then(() => {
+      if (deletedSignOutAccount.current === viewAccount) deletedSignOutAccount.current = null
+    }).catch(() => {
+      // Keep the sign-out guard in place but provide a retry without reloading Safari.
+      setSignOutError('Не удалось завершить выход с устройства. Повторите попытку.')
+    })
+  }, [accountWasDeleted, controller, viewAccount])
   useEffect(() => {
     const update = () => setSyncOnline(navigator.onLine)
     window.addEventListener('online', update)
@@ -1431,13 +1437,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (!controller || busy) return
     setBusy(true)
     setSignOutError('')
+    const deletedAccount = deletedSignOutAccount.current !== null
     try {
-      await controller.signOut()
+      await controller.signOut(deletedAccount ? 'local' : undefined)
+      if (deletedAccount) deletedSignOutAccount.current = null
       setAccountDialogOpen(false)
       selectLocalBrowsing(false)
       setVerifiedEmail('')
     } catch {
-      setSignOutError('Не удалось завершить выход на сервере. Проверьте подключение.')
+      setSignOutError(deletedAccount
+        ? 'Не удалось завершить выход с устройства. Повторите попытку.'
+        : 'Не удалось завершить выход на сервере. Проверьте подключение.')
     } finally {
       setBusy(false)
     }
@@ -1474,7 +1484,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     </>}
   </main>
   if (view.status === 'checking') return <main>
-    <p role="status">{signOutError ? 'Аккаунт заблокирован до завершения выхода.' : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
+    <p role="status">{signOutError ? 'Аккаунт заблокирован до завершения выхода.'
+      : deletedSignOutAccount.current ? 'Завершаем выход после удаления аккаунта…'
+      : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
     {signOutError && <><p role="alert">{signOutError}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
   </main>
   const pendingWork = pendingSync && pendingSync.account === workspaceAccount ? pendingSync.pending : undefined
