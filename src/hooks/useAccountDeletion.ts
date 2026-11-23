@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { accountDeletionApi } from '../data/account-deletion'
+import { rememberDeletedEmail } from '../data/recent-deleted-email'
 import type { Storage } from '../data/storage'
 
 export function useAccountDeletion(client: SupabaseClient | null, storage: Storage) {
@@ -21,6 +22,12 @@ export function useAccountDeletion(client: SupabaseClient | null, storage: Stora
       try {
         await storage.rememberDeletedAccount(account)
         const profiles = await storage.readLocalProfiles()
+        // This account was verified as deleted by the server (or has a persisted
+        // deletion marker). Capture the linked login BEFORE purging the profile:
+        // remote devices must give the same 24-hour signup guidance as the
+        // device which confirmed deletion. Never infer deletion from an email.
+        const linkedLogin = profiles?.profiles.find(profile => profile.cloudAccountId === account)?.login
+        if (linkedLogin) await rememberDeletedEmail(linkedLogin)
         if (profiles?.profiles.some(profile => profile.id === profiles.activeProfileId && profile.cloudAccountId === account))
           setActiveRemoved(true)
         channel.current?.postMessage(account)
