@@ -534,3 +534,38 @@ test('re-checks server restriction if deletion starts between preflight and Auth
   expect(signups).toBe(1)
   await expect(dialog.getByLabel('Код из письма')).toHaveCount(0)
 })
+
+
+test('reopens a signed-out linked account on the first restart after offline local edits', async ({ page }) => {
+  await mockCloud(page)
+  await page.goto('/shopping-app/')
+  const profile = page.locator('.profile-menu-trigger')
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
+    .getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  await profile.click()
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+
+  // Edit the linked local copy, reload Safari once, then sign in immediately.
+  // Before this fix the server could accept credentials while the local
+  // controller remained in guest state until a second page restart.
+  await page.getByLabel('Что нужно купить?', { exact: false }).fill('Сохранить локально после выхода')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  await expect(page.getByRole('checkbox', { name: 'Сохранить локально после выхода' })).toBeVisible()
+  await page.reload()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+  await expect(page.getByRole('checkbox', { name: 'Сохранить локально после выхода' })).toBeVisible()
+  await profile.click()
+  // The linked profile displays its own verified account login and password.
+  await expect(page.locator('.account-full-email')).toHaveText(email)
+  await page.getByLabel('Пароль').fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 15000 })
+  await expect(profile).toContainText(email)
+  await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toHaveCount(0)
+})
