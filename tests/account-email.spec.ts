@@ -121,7 +121,8 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   const signIn = page.getByRole('dialog', { name: 'Вход в аккаунт' })
   await expect(signIn.getByRole('status')).toContainText('Почта подтверждена')
   await expect(signIn.getByLabel('Пароль')).toHaveValue('')
-  expect(calls.some(call => call.path.startsWith('/rest/v1/'))).toBe(false)
+  expect(calls.some(call => call.path.startsWith('/rest/v1/') &&
+    call.path !== '/rest/v1/rpc/registration_email_status')).toBe(false)
   expect(calls.find(call => call.path === '/auth/v1/verify')?.body.type).toBe('email')
 
   await signIn.getByLabel('Пароль').fill(password)
@@ -166,7 +167,8 @@ test('duplicate registration stays generic and recovery resets the password with
   await expect(page.getByRole('status').filter({ hasText: 'Пароль обновлён' })).toBeVisible()
   expect(calls.find(call => call.path === '/auth/v1/verify')?.body).toMatchObject({ type: 'recovery', token: emailCode })
   expect(calls.find(call => call.path === '/auth/v1/user' && call.method === 'PUT')?.body.password).toBe(password)
-  expect(calls.some(call => call.path === '/auth/v1/token' || call.path.startsWith('/rest/v1/'))).toBe(false)
+  expect(calls.some(call => call.path === '/auth/v1/token' ||
+    (call.path.startsWith('/rest/v1/') && call.path !== '/rest/v1/rpc/registration_email_status'))).toBe(false)
   expect(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('auth-token')))).toBe(false)
 })
 
@@ -514,8 +516,11 @@ test('re-checks server restriction if deletion starts between preflight and Auth
     statusChecks++
     await route.fulfill({ json: statusChecks === 1 ? 'available' : 'cooldown' })
   })
-  await page.route(`**${fixturePath}/auth/v1/signup`, route =>
-    route.fulfill({ status: 500, json: { code: 'unexpected_failure', message: 'Database error saving new user' } }))
+  let signups = 0
+  await page.route(`**${fixturePath}/auth/v1/signup`, route => {
+    signups++
+    return route.fulfill({ status: 500, json: { code: 'unexpected_failure', message: 'Database error saving new user' } })
+  })
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
   await page.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
@@ -526,6 +531,6 @@ test('re-checks server restriction if deletion starts between preflight and Auth
   await dialog.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
   await expect(dialog.getByRole('alert')).toContainText('24 часа с момента завершения удаления')
   expect(statusChecks).toBe(2)
-  expect(calls.filter(call => call.path === '/auth/v1/signup')).toHaveLength(1)
+  expect(signups).toBe(1)
   await expect(dialog.getByLabel('Код из письма')).toHaveCount(0)
 })
