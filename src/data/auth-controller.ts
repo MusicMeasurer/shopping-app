@@ -1,6 +1,7 @@
 import type { SignOutGuard } from './signout-guard'
 import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 import { transitionAuthView, type AuthView } from './auth-view'
+import { markAuthStage } from './auth-flow-diagnostics'
 
 const signOutTimeoutMs = 12000
 
@@ -29,6 +30,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     onChange(next)
   }
   async function resolveSession(session: SessionCandidate | null, startedAt: number) {
+    markAuthStage('identity_check')
     if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
     if (!session || !verifyIdentity) {
       emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
@@ -41,8 +43,10 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       const verifiedId = await verifyIdentity(session)
       if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
       if (verifiedId && verifiedId === accountIdFromSessionCandidate(session)) {
+        markAuthStage('identity_verified')
         emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
       } else {
+        markAuthStage('identity_rejected')
         if (restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
           const offlineId = await restoreOffline(session).catch(() => null)
           if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
@@ -50,7 +54,8 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
             ? { status: 'offline-account', accountId: offlineId } : { status: 'guest' })
         } else emit({ status: 'guest' })
       }
-    } catch {
+    } catch (cause) {
+      markAuthStage('identity_unavailable', cause)
       if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
       // Keep the already verified workspace mounted during a transient failure.
       // Cloud operations still verify identity before syncing.
@@ -64,6 +69,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     }
   }
   const subscription = client.onAuthStateChange((event, session) => {
+    markAuthStage(event === 'SIGNED_OUT' || event === 'USER_DELETED' ? 'auth_event_signed_out' : 'auth_event')
     generation++
     if (signingOut || guard?.isPending()) return
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
@@ -76,6 +82,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   }).data.subscription
 
   async function initialize() {
+    markAuthStage('initialize')
     if (guard?.isPending()) {
       emit({ status: 'checking' })
       return
@@ -91,13 +98,68 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     }
   }
 
+  /**
+   * A successful Auth response is not the same as a confirmed workspace.
+   * Reconcile explicitly instead of relying on a later onAuthStateChange
+   * callback: Safari may deliver INITIAL_SESSION/refresh events out of order.
+   * Each retry verifies the actual saved session with the Auth server;
+   * never display account data based solely on cached getSession().
+   */
+  async function confirmSession(expectedAccountId?: string): Promise<string> {
+    markAuthStage('session_recheck')
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!active || signingOut || guard?.isPending())
+        throw new Error('Вход прерван сменой сессии.')
+      const startedAt = generation
+      const { data, error } = await client.getSession()
+      if (error) throw new Error(error.message)
+      const session = data.session
+      const accountId = accountIdFromSessionCandidate(session)
+      if (!session || !accountId || (expectedAccountId && accountId !== expectedAccountId)) {
+        markAuthStage('session_interrupted')
+        throw new Error('Не удалось подтвердить сессию после входа. Повторите вход.')
+      }
+      let verifiedId: string | null
+      try {
+        verifiedId = verifyIdentity ? await verifyIdentity(session) : accountId
+      } catch (cause) {
+        markAuthStage('identity_unavailable', cause)
+        throw cause
+      }
+      if (!active || signingOut || guard?.isPending())
+        throw new Error('Вход прерван сменой сессии.')
+      if (generation !== startedAt) {
+        // Another Auth event superseded our candidate while checking it.
+        // Never publish stale credentials; re-read the current session.
+        continue
+      }
+      if (verifiedId !== accountId) {
+        markAuthStage('identity_rejected')
+        throw new Error('Не удалось проверить аккаунт на сервере. Повторите вход.')
+      }
+      markAuthStage('session_confirmed')
+      emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
+      return accountId
+    }
+    markAuthStage('session_interrupted')
+    throw new Error('Сессия изменилась во время входа. Повторите вход.')
+  }
+
   return {
     initialize,
+    confirmSession,
     async signIn(email: string, password: string) {
+      markAuthStage('credentials_requested')
       const { error } = await client.signInWithPassword({ email, password })
-      if (error) throw error
+      if (error) {
+        markAuthStage('credentials_rejected', error)
+        throw error
+      }
+      markAuthStage('credentials_accepted')
+      await confirmSession()
     },
     async signOut(scope?: 'local') {
+      markAuthStage('signout_requested')
       // Hide account data before the remote sign-out request.
       if (signingOut) return
       signingOut = true
