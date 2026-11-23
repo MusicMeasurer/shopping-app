@@ -16,7 +16,7 @@ async function signIn(page: Page, which: 0 | 1) {
   await openAccount.click()
   const emailField = page.getByLabel('Email', { exact: true })
   if (!await emailField.isVisible() && await page.locator('.account-full-email').textContent() !== email) {
-    await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).click()
+    await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
     await openAccount.click()
     await expect(emailField).toBeVisible()
   }
@@ -195,7 +195,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('button', { name: 'Основные списки' }).click()
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
     page.once('dialog', dialog => void dialog.accept())
-    await page.getByRole('button', { name: /^Удалить локальный профиль «/ }).click()
+    await page.getByRole('button', { name: `Удалить локальный профиль «${process.env.E3_USER_A_EMAIL}»`, exact: true }).click()
     await expect(page.locator('.profile-button-name')).toHaveText('Мои покупки')
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
     await expect(page.locator('.profile-option > button:first-child')).toHaveCount(0)
@@ -241,7 +241,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeEnabled()
     await page.getByRole('button', { name: 'Закрыть меню' }).click({ position: { x: 4, y: 4 } })
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
-    await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).click()
+    await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Новый список' })).toBeEnabled()
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
     await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeEnabled()
@@ -291,7 +291,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(page.locator('nav.list-rail')).toHaveClass(/standard/)
 
   await profile.click()
-  await localProfiles.getByRole('button', { name: /Мои покупки/ }).first().click()
+  await localProfiles.getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
   await expect(profile).toHaveAttribute('data-profile-mode', 'local')
   await expect(page.locator('nav.list-rail')).toHaveClass(/large/)
   await page.reload()
@@ -305,7 +305,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(page.locator('nav.list-rail')).toHaveClass(/standard/)
 
   await profile.click()
-  await localProfiles.getByRole('button', { name: /Мои покупки/ }).first().click()
+  await localProfiles.getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
   await profile.click()
   const skipTransfer = page.getByLabel('Не спрашивать о синхронизации этого профиля')
   await skipTransfer.uncheck()

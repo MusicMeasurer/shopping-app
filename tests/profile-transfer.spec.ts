@@ -80,7 +80,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await openSettings(page)
   await expect(page.locator('.profile-menu-heading h2')).toHaveText(email)
   await expect(page.getByRole('button', { name: 'Изменить имя профиля' })).toHaveCount(0)
-  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: new RegExp(guestName) }).click()
+  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: 'Локальный профиль ' + guestName, exact: true }).click()
   // Switching profiles closes the panel and opens the corresponding workspace.
   await expect(page.getByRole('button', { name: 'Новый список', exact: true })).toBeEnabled()
   console.log('[transfer]', mode, 'prepare guest archive and items')
@@ -147,7 +147,7 @@ test('keeps a deleted local profile archive offline and imports it into the sele
   await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
   await logout(page)
   await openSettings(page)
-  await page.getByRole('button', { name: /^Локальный профиль Мои покупки$/ }).click()
+  await page.getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
   await createList(page, list)
   await add(page, item)
   await page.getByRole('checkbox', { name: item, exact: true }).click()
