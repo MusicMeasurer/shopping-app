@@ -1343,8 +1343,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const { data: { user: stillCurrent }, error: recheckError } = await client.auth.getUser()
       if (recheckError || stillCurrent?.id !== currentAccount) throw new Error('Аккаунт изменился')
       if (activeAccount.current !== currentAccount) return
-      await storage.cacheAccountArchive(currentAccount, snapshots)
-      if (activeAccount.current === currentAccount) setLoadedArchive({ accountId: currentAccount, snapshots })
+      const cached = await storage.cacheAccountArchive(currentAccount, snapshots)
+      if (cached && activeAccount.current === currentAccount) setLoadedArchive({ accountId: currentAccount, snapshots: cached })
     } catch (err) {
       if (activeAccount.current === currentAccount)
         setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')

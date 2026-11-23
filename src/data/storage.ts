@@ -1373,19 +1373,21 @@ export function createStorage(name = 'shopping-app') {
       })
     },
     // Guest items remain in the original store until explicit migration.
-    async cacheAccountArchive(accountId: string, snapshots: CloudArchiveCompletion[]): Promise<void> {
+    async cacheAccountArchive(accountId: string, snapshots: CloudArchiveCompletion[]): Promise<CloudArchiveCompletion[] | null> {
       const tx = (await database).transaction(['localProfileRegistry', 'accountArchiveCache'], 'readwrite')
       const registry = (await tx.objectStore('localProfileRegistry').get('device'))?.registry
+      let saved: CloudArchiveCompletion[] | null = null
       if (registry?.profiles.some(profile => profile.cloudAccountId === accountId)) {
         const store = tx.objectStore('accountArchiveCache')
         const existing = await store.get(accountId)
         const incoming = new Set(snapshots.map(row => row.id))
         const awaitingRefresh = existing?.awaitingRefresh?.filter(id => !incoming.has(id)) ?? []
         const retained = new Set(awaitingRefresh)
-        await store.put({ accountId, awaitingRefresh,
-          snapshots: [...snapshots, ...(existing?.snapshots.filter(row => retained.has(row.id)) ?? [])] })
+        saved = [...snapshots, ...(existing?.snapshots.filter(row => retained.has(row.id)) ?? [])]
+        await store.put({ accountId, awaitingRefresh, snapshots: saved })
       }
       await tx.done
+      return saved
     },
     async readAccountArchive(accountId: string): Promise<CloudArchiveCompletion[] | null> {
       return (await (await database).get('accountArchiveCache', accountId))?.snapshots ?? null

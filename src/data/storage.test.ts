@@ -498,6 +498,8 @@ it('keeps an archive transfer across restart until the selected account confirms
   await reopened.confirmGuestImport(batch, [], [], [confirmed])
   expect(await reopened.readGuestImports('account-a')).toEqual([])
   expect((await reopened.readLocalCompletionView('account-a')).snapshots).toEqual([confirmed])
+  expect(await reopened.cacheAccountArchive('account-a', [])).toEqual([confirmed])
+  expect(await reopened.cacheAccountArchive('account-a', [confirmed])).toEqual([confirmed])
   await reopened.close()
 })
 
