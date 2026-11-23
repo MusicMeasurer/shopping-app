@@ -131,7 +131,7 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   const account = page.getByRole('button', { name: /Открыть аккаунт/ })
   await expect(account).toBeVisible()
   await account.click()
-  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: /Мои покупки/ }).click()
+  await page.getByRole('group', { name: 'Локальные профили' }).getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
   await expect(page.getByRole('checkbox', { name: 'Локальный чай' })).toBeVisible()
 })
 
