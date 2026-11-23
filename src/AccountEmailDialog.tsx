@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
+import { accountEmailErrorMessage } from './data/account-email-error'
+import { wasRecentlyDeletedEmail } from './data/recent-deleted-email'
 
 export type AccountEmailMode = 'register' | 'recover'
 const emailCodeLength = 6
@@ -89,18 +91,9 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
         onCompleted(address, 'Пароль обновлён. Войдите с новым паролем.')
       }
     } catch (cause) {
-      const issue = cause as { code?: string; status?: number }
-      if (issue?.status === 429 || issue?.code === 'over_email_send_rate_limit') {
-        setError('Слишком много запросов. Подождите и попробуйте снова.')
-      } else if (issue?.code === 'weak_password') {
-        setError('Выберите более надёжный пароль.')
-      } else if (recoveryVerified && issue?.code === 'same_password') {
-        setError('Выберите новый пароль, который отличается от прежнего.')
-      } else {
-        setError(recoveryVerified ? 'Не удалось обновить пароль. Проверьте соединение и повторите попытку.'
-          : codeSent ? 'Не удалось проверить код. Проверьте соединение и повторите попытку.'
-          : 'Не удалось запросить письмо. Проверьте соединение и повторите попытку.')
-      }
+      const action = recoveryVerified ? 'password' : codeSent ? 'verify' : registering ? 'register' : 'recover'
+      const wasDeletedHere = action === 'register' ? await wasRecentlyDeletedEmail(address) : false
+      setError(accountEmailErrorMessage(cause, action, wasDeletedHere))
     } finally {
       setBusy(false)
     }
@@ -117,9 +110,7 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
       if (issue && issue.code !== 'user_not_found' && issue.code !== 'user_already_exists') throw issue
       setCode('')
     } catch (cause) {
-      const issue = cause as { status?: number }
-      setError(issue?.status === 429 ? 'Слишком много запросов. Подождите и попробуйте снова.'
-        : 'Не удалось запросить новый код. Повторите попытку.')
+      setError(accountEmailErrorMessage(cause, 'resend'))
     } finally {
       setBusy(false)
     }
