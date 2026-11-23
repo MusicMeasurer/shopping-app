@@ -309,3 +309,86 @@ it('can retry a deleted account local sign-out after an earlier request stalls i
     vi.useRealTimers()
   }
 })
+
+
+it('confirms the first password sign-in even if Safari does not deliver a SIGNED_IN event', async () => {
+  const fake = fakeClient()
+  let saved: SessionCandidate | null = null
+  fake.client.getSession = vi.fn(async () => ({ data: { session: saved }, error: null }))
+  fake.client.signInWithPassword = vi.fn(async () => { saved = session; return { error: null } })
+  const verified = vi.fn(async candidate => candidate.user.id)
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verified)
+  await controller.initialize()
+  expect(views.at(-1)).toEqual({ status: 'guest' })
+  // Simulate WebKit's missed/delayed SIGNED_IN notification.
+  await controller.signIn('test@example.invalid', 'unrecorded-test-password')
+  expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+  expect(verified).toHaveBeenCalledOnce()
+  controller.dispose()
+})
+
+it('rechecks a verified session if an Auth refresh event races with first sign-in', async () => {
+  const fake = fakeClient()
+  let saved: SessionCandidate | null = null
+  let finishFirst!: (account: string | null) => void
+  let attempts = 0
+  const verify = vi.fn(() => {
+    attempts++
+    if (attempts === 1) return new Promise<string | null>(resolve => { finishFirst = resolve })
+    return Promise.resolve(id)
+  })
+  fake.client.getSession = vi.fn(async () => ({ data: { session: saved }, error: null }))
+  fake.client.signInWithPassword = vi.fn(async () => { saved = session; return { error: null } })
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+  await controller.initialize()
+  const pending = controller.signIn('test@example.invalid', 'test-password')
+  await vi.waitFor(() => expect(verify).toHaveBeenCalledTimes(1))
+  fake.notify('TOKEN_REFRESHED', session)
+  finishFirst(id)
+  await pending
+  await vi.waitFor(() => expect(views.at(-1)).toEqual({ status: 'account', accountId: id }))
+  expect(fake.client.getSession).toHaveBeenCalledTimes(3)
+  controller.dispose()
+})
+
+it('does not open a linked account if the saved Auth session belongs to another user', async () => {
+  const fake = fakeClient(session)
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view),
+    undefined, async candidate => candidate.user.id)
+  await expect(controller.confirmSession(secondId)).rejects.toThrow('Не удалось подтвердить сессию')
+  expect(views).toEqual([])
+  controller.dispose()
+})
+
+it('never publishes a saved session when server identity verification rejects it', async () => {
+  const fake = fakeClient()
+  fake.client.getSession = vi.fn(async () => ({ data: { session }, error: null }))
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view),
+    undefined, async () => secondId)
+  await expect(controller.confirmSession(id)).rejects.toThrow('Не удалось проверить аккаунт')
+  expect(views).toEqual([])
+  controller.dispose()
+})
+
+it('recovers a transient first verification failure with a normal retry, no page restart', async () => {
+  const fake = fakeClient()
+  let saved: SessionCandidate | null = null
+  fake.client.getSession = vi.fn(async () => ({ data: { session: saved }, error: null }))
+  fake.client.signInWithPassword = vi.fn(async () => { saved = session; return { error: null } })
+  let verifyCount = 0
+  const verify = async () => {
+    if (++verifyCount === 1) throw { code: 'temporary_network', status: 503 }
+    return id
+  }
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+  await expect(controller.signIn('test@example.invalid', 'test-password')).rejects.toMatchObject({ status: 503 })
+  expect(views).toEqual([])
+  await controller.signIn('test@example.invalid', 'test-password')
+  expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+  controller.dispose()
+})
