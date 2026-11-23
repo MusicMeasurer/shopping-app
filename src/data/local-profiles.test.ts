@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeProfile, addProfile, bindProfile, initializeProfiles, removeProfileMetadata, switchProfile } from './local-profiles'
+import { activeProfile, addProfile, bindProfile, defaultArchiveRecipient, initializeProfiles, removeProfileMetadata, switchProfile } from './local-profiles'
 
 describe('local profile model', () => {
   it('creates an offline profile before any cloud account exists', () => {
@@ -39,5 +39,30 @@ describe('local profile model', () => {
     const friend = addProfile(owner, { id: 'friend', cloudAccountId: null, createdAt: 2 })
     expect(owner.activeProfileId).toBe('owner')
     expect(friend.activeProfileId).toBe('friend')
+  })
+})
+
+
+describe('archive recipient preference', () => {
+  const a = { id: 'a', cloudAccountId: 'cloud-a', createdAt: 1, lastCloudActivatedAt: 30 }
+  const b = { id: 'b', cloudAccountId: 'cloud-b', createdAt: 20, lastCloudActivatedAt: 25, lastActivatedAt: 100 }
+  const local = { id: 'local', cloudAccountId: null, createdAt: 40, lastActivatedAt: 200 }
+  it('prefers the active cloud account, then the last activated cloud profile, even over newer local activity', () => {
+    expect(defaultArchiveRecipient([a, b, local], local.id)?.id).toBe(a.id)
+    expect(defaultArchiveRecipient([a, b, local], local.id, b.cloudAccountId)?.id).toBe(b.id)
+    expect(defaultArchiveRecipient([b, local], local.id)?.id).toBe(b.id)
+  })
+  it('falls back to the current or last activated remaining local profile and handles no recipient', () => {
+    const older = { id: 'older', cloudAccountId: null, createdAt: 2, lastActivatedAt: 300 }
+    expect(defaultArchiveRecipient([local, older], local.id)?.id).toBe(local.id)
+    expect(defaultArchiveRecipient([local, older], 'deleted')?.id).toBe(older.id)
+    expect(defaultArchiveRecipient([], 'deleted')).toBeUndefined()
+  })
+  it('records local activation without modifying the original registry', () => {
+    const initial = initializeProfiles('a', 1)
+    const both = addProfile(initial, { id: 'b', cloudAccountId: null, createdAt: 2 })
+    const next = switchProfile(both, 'a', 100)
+    expect(next.profiles[0].lastActivatedAt).toBe(100)
+    expect(both.profiles[0].lastActivatedAt).toBeUndefined()
   })
 })

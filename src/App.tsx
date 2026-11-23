@@ -21,7 +21,7 @@ import { cloudAwareItemStore } from './data/cloud-aware-item-store'
 import type { CloudArchiveCompletion } from './data/cloud-archive'
 import type { CompletionMode } from './data/cloud-completion-rpc'
 import { profileItemStore } from './data/profile-item-store'
-import { MAX_LOCAL_PROFILES, profileName, sortProfiles } from './data/local-profiles'
+import { MAX_LOCAL_PROFILES, defaultArchiveRecipient, profileName, sortProfiles } from './data/local-profiles'
 import { DeleteProfileButton, ProfileBadge, ProfileMenu, ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { LocalProfile, LocalProfileRegistry } from './data/local-profiles'
 export interface ListOperationStatus {
@@ -85,6 +85,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     id: string; name: string; archiveCount: number; hasMarked: boolean
   } | null>(null)
   const [archiveTarget, setArchiveTarget] = useState('')
+  const [keepArchive, setKeepArchive] = useState(false)
   const [profileRename, setProfileRename] = useState<string | null>(null)
   const [localMenuOpen, setLocalMenuOpen] = useState(false)
   const menuOpen = accountMenu?.open ?? localMenuOpen
@@ -179,6 +180,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   function closeProfileDeletion() {
     setProfileDeletion(null)
     setArchiveTarget('')
+    setKeepArchive(false)
     setProfileActionError('')
   }
   async function confirmProfileDeletion(id: string, choice?: Parameters<Storage['deleteLocalProfile']>[2]) {
@@ -187,10 +189,13 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     try {
       const next = await storage.deleteLocalProfile(id, id, choice)
       setRegistry(next)
-      setGuestProfile(next.activeProfileId)
+      if (accountId === null) setGuestProfile(next.activeProfileId)
       localChangesQueued()
+      // An archive destined for the open cloud workspace uses the existing
+      // durable archive-only queue immediately; other recipients wait for their login.
+      if (choice?.target && choice.target !== 'new' && accountId && choice.target.accountId === accountId) onQueued?.()
       closeProfileDeletion()
-      if (id === guestProfile) closeMenu()
+      if (accountId === null && id === guestProfile) closeMenu()
     } catch (error) {
       setProfileActionError(error instanceof Error && error.message.includes('unsynced operations')
         ? 'Есть неотправленные изменения. Войдите в этот аккаунт и дождитесь синхронизации перед удалением.'
@@ -200,7 +205,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     } finally { setProfileBusy(false) }
   }
   async function removeGuestProfile(id: string, name: string, linked: boolean) {
-    if (profileBusy || accountMenu?.busy || !registry || !guestProfile) return
+    if (profileBusy || accountMenu?.busy || !registry || (accountId === null && !guestProfile)) return
+    const source = registry.profiles.find(row => row.id === id)
+    // Never purge the local cache of a still-authorized account.
+    if (!source || (source.cloudAccountId && (source.cloudAccountId === accountId || source.cloudAccountId === accountMenu?.sessionAccount))) return
     setProfileActionError('')
     if (linked) {
       if (window.confirm(`Удалить локальную копию «${name}» с устройства? Данные в облаке сохранятся.`))
@@ -211,6 +219,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     try {
       const { registry: latest, archiveCount, hasMarked } = await storage.readLocalProfileDeletion(id)
       setRegistry(latest)
+      const targets = latest.profiles.filter(row => row.id !== id && !reservedSources.includes(row.id) &&
+        !(row.cloudAccountId && accountMenu?.hiddenAccountIds?.has(row.cloudAccountId)))
+      setArchiveTarget(defaultArchiveRecipient(targets, latest.activeProfileId, accountId)?.id ?? '')
+      setKeepArchive(false)
       setProfileDeletion({ id, name, archiveCount, hasMarked })
     } catch {
       setProfileActionError('Не удалось проверить данные профиля.')
@@ -224,9 +236,10 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   }
   const [pendingProfiles, setPendingProfiles] = useState<ReadonlySet<string>>(new Set())
   useEffect(() => {
-    if (!registry || accountId !== null) return
+    if (!registry) return
     let cancelled = false
-    const linked = registry.profiles.filter(row => row.cloudAccountId)
+    const linked = registry.profiles.filter(row => row.cloudAccountId && row.cloudAccountId !== accountId &&
+      row.cloudAccountId !== accountMenu?.sessionAccount)
     void Promise.all(linked.map(async row => {
       const pending = await storage.hasAccountSyncWork(row.cloudAccountId!)
       return pending ? row.id : null
@@ -234,7 +247,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       if (!cancelled) setPendingProfiles(new Set(rows.filter(id => id !== null)))
     }).catch(() => { if (!cancelled) setMenuError('Не удалось проверить состояние синхронизации профилей.') })
     return () => { cancelled = true }
-  }, [registry, accountId, storage, refreshRevision, menuOpen, localSyncRevision])
+  }, [registry, accountId, accountMenu?.sessionAccount, storage, refreshRevision, menuOpen, localSyncRevision])
   if (accountId === null && startupError) return <main><p role="alert">{startupError}</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined && upgradeBlocked) return <main><p role="alert">Другая открытая вкладка использует старую версию покупок и не даёт безопасно обновить хранилище. Закройте другие вкладки приложения, затем повторите открытие. Ваши покупки не удалены.</p><button type="button" onClick={() => window.location.reload()}>Повторить открытие</button></main>
   if (accountId === null && guestProfile === undefined) return <main><p role="status">Открываем сохранённые покупки…</p></main>
@@ -252,13 +265,15 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     setMenuError('')
     setProfileActionError('')
   }
+  const canDeleteProfile = (row: LocalProfile) => !row.cloudAccountId ||
+    (row.cloudAccountId !== accountId && row.cloudAccountId !== accountMenu?.sessionAccount)
   const deleteProfileButton = (id: string, label: string, linked: boolean) =>
     <DeleteProfileButton name={label} disabled={actionsBusy || pendingProfiles.has(id)}
       onDelete={() => void removeGuestProfile(id, label, linked)} />
   const profileMenu = <ProfileMenu name={name} mode={mode} open={menuOpen}
     syncState={accountMenu?.syncState ?? (profile && pendingProfiles.has(profile.id) ? 'waiting' : mode === 'offline' ? 'offline' : 'local')}
     onToggle={() => menuOpen ? closeMenu() : setMenuOpen(true)} onClose={closeMenu}
-    deleteCurrent={accountId === null && profile ? deleteProfileButton(profile.id, name, !!profile.cloudAccountId) : undefined}
+    deleteCurrent={accountId === null && profile && canDeleteProfile(profile) ? deleteProfileButton(profile.id, name, !!profile.cloudAccountId) : undefined}
     onRename={mode === 'local' && profile && !actionsBusy ? () => {
       setProfileActionError('')
       setProfileRename(name)
@@ -290,8 +305,8 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
               <ProfileBadge mode={row.cloudAccountId ? 'linked' : 'local'} compact={!!row.cloudAccountId} />
               <span>{label}</span>
             </button>
-            {accountId === null && deleteProfileButton(row.id, label, !!row.cloudAccountId)}
-            {accountId === null && pendingProfiles.has(row.id) && <p>Для удаления копии сначала синхронизируйте изменения.</p>}
+            {canDeleteProfile(row) && deleteProfileButton(row.id, label, !!row.cloudAccountId)}
+            {canDeleteProfile(row) && pendingProfiles.has(row.id) && <p>Для удаления копии сначала синхронизируйте изменения.</p>}
           </div>
         })}
       </div>}
@@ -333,7 +348,6 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     ? (registry?.profiles ?? []).filter(row => row.id !== profileDeletion.id && !reservedSources.includes(row.id) && !hiddenProfile(row))
     : []
   const selectedTarget = archiveTargets.find(row => row.id === archiveTarget)
-  const createArchiveTarget = archiveTarget === 'new' && registry?.profiles.length === 1
   return <>
     {renameDialog}
     {profileDeletion && <WorkspaceDialog label="Удаление профиля" className="e4-editor profile-delete-dialog"
@@ -342,32 +356,37 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
       <p>Все списки и товары этого профиля будут удалены с устройства. Если хотите сохранить списки, отмените удаление и сначала синхронизируйте профиль.</p>
       {profileDeletion.hasMarked && <p>В списках есть отмеченные покупки. Чтобы сохранить их в истории, отмените удаление и сначала завершите отмеченные покупки.</p>}
       {profileDeletion.archiveCount > 0 && <>
-        <label htmlFor="purchase-archive-target">Куда перенести архив покупок</label>
-        <select id="purchase-archive-target" value={archiveTarget} disabled={profileBusy}
-          onChange={event => setArchiveTarget(event.target.value)}>
-          <option value="">Выберите профиль</option>
-          {archiveTargets.map(row => <option key={row.id} value={row.id}>
-            {profileName(row, registry!.profiles.indexOf(row))}{row.cloudAccountId ? ' (локальная копия облака)' : ''}
-          </option>)}
-          {registry?.profiles.length === 1 && <option value="new">Новый локальный профиль</option>}
-        </select>
-        {selectedTarget?.cloudAccountId && <p>История появится в локальной копии сразу и попадёт в облако при синхронизации этого профиля.</p>}
+        <ProfileTransferPreference checked={!keepArchive} disabled={profileBusy}
+          onChange={() => setKeepArchive(false)}>Удалить архив</ProfileTransferPreference>
+        <ProfileTransferPreference checked={keepArchive} disabled={profileBusy || !archiveTargets.length}
+          onChange={() => {
+            setKeepArchive(true)
+            if (!selectedTarget && registry)
+              setArchiveTarget(defaultArchiveRecipient(archiveTargets, registry.activeProfileId, accountId)?.id ?? '')
+          }}>Сохранить архив</ProfileTransferPreference>
+        {keepArchive && <>
+          <label htmlFor="purchase-archive-target">Куда перенести архив покупок</label>
+          <select id="purchase-archive-target" value={archiveTarget} disabled={profileBusy}
+            onChange={event => setArchiveTarget(event.target.value)}>
+            <option value="" disabled>Выберите профиль</option>
+            {archiveTargets.map(row => <option key={row.id} value={row.id}>
+              {profileName(row, registry!.profiles.indexOf(row))}{row.cloudAccountId ? ' (локальная копия облака)' : ''}
+            </option>)}
+          </select>
+          {selectedTarget?.cloudAccountId && <p>История появится в локальной копии сразу и попадёт в облако при синхронизации этого профиля.</p>}
+        </>}
       </>}
       {profileActionError && <p role="alert">{profileActionError}</p>}
-      <button type="button" autoFocus disabled={profileBusy} onClick={closeProfileDeletion}>Отмена</button>
       <div className="dialog-buttons profile-delete-actions">
-        <button type="button" className="danger" disabled={profileBusy}
-          onClick={() => void confirmProfileDeletion(profileDeletion.id, {
-            archiveCount: profileDeletion.archiveCount, hasMarked: profileDeletion.hasMarked,
-          })}>{profileDeletion.archiveCount ? 'Удалить архив покупок' : 'Удалить профиль'}</button>
-        {profileDeletion.archiveCount > 0 && <button type="button" disabled={profileBusy || (!selectedTarget && !createArchiveTarget)}
+        <button type="button" autoFocus disabled={profileBusy} onClick={closeProfileDeletion}>Отмена</button>
+        <button type="button" className="danger" disabled={profileBusy || (keepArchive && !selectedTarget)}
           onClick={() => {
-            const target = selectedTarget ? { id: selectedTarget.id, accountId: selectedTarget.cloudAccountId }
-              : createArchiveTarget ? 'new' : undefined
-            if (target) void confirmProfileDeletion(profileDeletion.id, {
-              archiveCount: profileDeletion.archiveCount, hasMarked: profileDeletion.hasMarked, target,
+            if (keepArchive && !selectedTarget) return
+            void confirmProfileDeletion(profileDeletion.id, {
+              archiveCount: profileDeletion.archiveCount, hasMarked: profileDeletion.hasMarked,
+              ...(keepArchive && selectedTarget ? { target: { id: selectedTarget.id, accountId: selectedTarget.cloudAccountId } } : {}),
             })
-          }}>Оставить архив покупок</button>}
+          }}>Удалить профиль</button>
       </div>
     </WorkspaceDialog>}
     {(!registry?.profiles.find(row => row.id === guestProfile)?.cloudAccountId || accountId !== null || localAccount) && <ShoppingWorkspace key={accountId ?? guestProfile ?? 'legacy-guest'} storage={storage} accountId={accountId ?? localAccount?.id ?? null} cloudStatus={

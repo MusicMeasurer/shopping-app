@@ -7,6 +7,8 @@ export interface LocalProfile {
   skipTransferPrompt?: boolean
   createdAt: number
   listsChangedAt?: number
+  lastActivatedAt?: number
+  lastCloudActivatedAt?: number
 }
 export interface LocalProfileRegistry {
   profiles: LocalProfile[]
@@ -21,9 +23,21 @@ export function activeProfile(registry: LocalProfileRegistry): LocalProfile {
   if (!profile) throw new Error('Active local profile is missing')
   return profile
 }
-export function switchProfile(registry: LocalProfileRegistry, profileId: string): LocalProfileRegistry {
+export function switchProfile(registry: LocalProfileRegistry, profileId: string, activatedAt?: number): LocalProfileRegistry {
   if (!registry.profiles.some(p => p.id === profileId)) throw new Error('Unknown local profile')
-  return { ...registry, activeProfileId: profileId }
+  const profiles = activatedAt === undefined ? registry.profiles : registry.profiles.map(p => p.id === profileId
+    ? { ...p, lastActivatedAt: activatedAt } : p)
+  return { ...registry, profiles, activeProfileId: profileId }
+}
+
+/** Cloud activation takes priority over local activity. Old registries fall back to creation time. */
+export function defaultArchiveRecipient(profiles: readonly LocalProfile[], activeProfileId: string, activeCloudAccount?: string | null): LocalProfile | undefined {
+  const currentCloud = activeCloudAccount ? profiles.find(p => p.cloudAccountId === activeCloudAccount) : undefined
+  if (currentCloud) return currentCloud
+  const cloud = profiles.filter(p => p.cloudAccountId).sort((a, b) =>
+    (b.lastCloudActivatedAt ?? b.createdAt) - (a.lastCloudActivatedAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id))
+  return cloud[0] ?? profiles.find(p => p.id === activeProfileId) ?? [...profiles].sort((a, b) =>
+    (b.lastActivatedAt ?? b.createdAt) - (a.lastActivatedAt ?? a.createdAt) || b.createdAt - a.createdAt || a.id.localeCompare(b.id))[0]
 }
 /** Bind only an unclaimed profile, never reassign one account's data to another. */
 export function bindProfile(registry: LocalProfileRegistry, profileId: string, verifiedAccountId: string): LocalProfileRegistry {

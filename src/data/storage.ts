@@ -804,8 +804,9 @@ export function createStorage(name = 'shopping-app') {
         }
         let registry = existing ? { ...current.registry, activeProfileId: existing.id }
           : addProfile(current.registry, { id: crypto.randomUUID(), cloudAccountId: verifiedAccountId, createdAt: Date.now() }, options.sourceProfileId)
+        const activatedAt = Date.now()
         registry = { ...registry, profiles: registry.profiles.map(p => p.cloudAccountId === verifiedAccountId
-          ? { ...p, login: options.login?.trim() || p.login } : p) }
+          ? { ...p, login: options.login?.trim() || p.login, lastActivatedAt: activatedAt, lastCloudActivatedAt: activatedAt } : p) }
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
@@ -918,7 +919,7 @@ export function createStorage(name = 'shopping-app') {
         if (!current) throw new Error('Local profiles not initialized')
         const cutover = await tx.objectStore('profileCutover').get('legacy-guest-v1')
         if (!cutover) throw new Error('Profile cutover is not active')
-        const registry = switchProfile(current.registry, profileId)
+        const registry = switchProfile(current.registry, profileId, Date.now())
         await tx.objectStore('localProfileRegistry').put({ key: 'device', registry })
         await done
         return registry
@@ -948,7 +949,7 @@ export function createStorage(name = 'shopping-app') {
       const db = await database
       const tx = db.transaction([
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
-        'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations',
+        'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations', 'accountDeletions',
         'lists', 'items', 'archives', 'pendingOperations',
         'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists', 'accountFeed',
       ], 'readwrite')
@@ -1008,7 +1009,8 @@ export function createStorage(name = 'shopping-app') {
         if (targetChoice) {
           const target = targetChoice === 'new' ? registry.profiles.find(profile => profile.id === registry.activeProfileId)
             : registry.profiles.find(profile => profile.id === targetChoice.id && profile.cloudAccountId === targetChoice.accountId)
-          if (!target || target.id === profileId || (await tx.objectStore('guestImports').get(target.id))?.removeSource)
+          if (!target || target.id === profileId || (await tx.objectStore('guestImports').get(target.id))?.removeSource ||
+              (target.cloudAccountId && await tx.objectStore('accountDeletions').get(target.cloudAccountId)))
             throw new Error('Profile deletion target changed')
           if (target.cloudAccountId) {
             const operationId = crypto.randomUUID()
