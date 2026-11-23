@@ -2,7 +2,7 @@ import { useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { accountEmailErrorMessage } from './data/account-email-error'
-import { wasRecentlyDeletedEmail } from './data/recent-deleted-email'
+import { registrationEmailStatus, signupCooldownMessage } from './data/registration-email-status'
 
 export type AccountEmailMode = 'register' | 'recover'
 const emailCodeLength = 6
@@ -53,8 +53,27 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
       if (!client) setClient(isolated)
       if (!codeSent) {
         if (registering) {
+          // Always ask the server, on every device. If the status RPC is
+          // temporarily unavailable, Auth can still attempt signup and its
+          // existing server-side registration trigger remains authoritative.
+          const status = await registrationEmailStatus(isolated, address).catch(() => 'unknown')
+          if (status === 'cooldown') {
+            setError(signupCooldownMessage)
+            return
+          }
           const { data, error: issue } = await isolated.auth.signUp({ email: address, password })
-          if (issue && issue.code !== 'user_already_exists' && issue.code !== 'email_exists') throw issue
+          if (issue && issue.code !== 'user_already_exists' && issue.code !== 'email_exists') {
+            if ((issue.status ?? 0) >= 500) {
+              // Close the race between a first available status and the Auth
+              // trigger: a newly confirmed deletion may have started meanwhile.
+              const freshStatus = await registrationEmailStatus(isolated, address).catch(() => 'unknown')
+              if (freshStatus === 'cooldown') {
+                setError(signupCooldownMessage)
+                return
+              }
+            }
+            throw issue
+          }
           if (data.session) {
             await isolated.auth.signOut({ scope: 'local' })
             setError('Подтверждение почты недоступно. Попробуйте позже.')
@@ -92,8 +111,7 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
       }
     } catch (cause) {
       const action = recoveryVerified ? 'password' : codeSent ? 'verify' : registering ? 'register' : 'recover'
-      const wasDeletedHere = action === 'register' ? await wasRecentlyDeletedEmail(address) : false
-      setError(accountEmailErrorMessage(cause, action, wasDeletedHere))
+      setError(accountEmailErrorMessage(cause, action))
     } finally {
       setBusy(false)
     }
