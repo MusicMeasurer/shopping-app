@@ -312,3 +312,107 @@ test('remote item archival and active-list deletion are acknowledged once and su
     await client.auth.signOut({ scope: 'local' })
   }
 })
+
+test('remote merge restores the recipient and keeps an already shown notice before later deletion', async ({ page }) => {
+  test.setTimeout(180000)
+  const client = createClient(url, key, { auth: { persistSession: false } })
+  const auth = await client.auth.signInWithPassword({ email, password })
+  expect(auth.error).toBeNull()
+  const account = auth.data.user!.id
+  const suffix = crypto.randomUUID()
+  const fallbackName = 'SYNC_MERGE_F_' + suffix, firstName = 'SYNC_MERGE_A_' + suffix
+  const targetName = 'SYNC_MERGE_B_' + suffix, secondName = 'SYNC_MERGE_C_' + suffix
+  const ids: string[] = []
+  async function create(name: string) {
+    const r = await client.rpc('create_e4_list', { p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent' })
+    if (r.error) throw r.error
+    const id = r.data.list_id as string
+    ids.push(id)
+    return id
+  }
+  async function remove(id: string) {
+    const r = await client.from('shopping_lists').select('revision,deleted_at').eq('id', id).maybeSingle()
+    if (r.error) throw r.error
+    if (!r.data || r.data.deleted_at) return
+    const result = await client.rpc('complete_e4_list', {
+      p_operation: crypto.randomUUID(), p_list: id, p_expected_revision: r.data.revision, p_mode: 'delete_list',
+    })
+    if (result.error) throw result.error
+  }
+  async function merge(source: string, target: string) {
+    const preview = await client.rpc('preview_e4_list_merge', { p_source: source, p_target: target })
+    if (preview.error) throw preview.error
+    expect(preview.data.items).toEqual([])
+    const result = await client.rpc('merge_e4_personal_lists', {
+      p_operation: crypto.randomUUID(), p_source: source, p_target: target,
+      p_source_revision: preview.data.source.revision, p_target_revision: preview.data.target.revision, p_items: [],
+    })
+    if (result.error) throw result.error
+  }
+  async function captured() {
+    return page.evaluate(account => new Promise<string | null>((resolve, reject) => {
+      const open = indexedDB.open('shopping-app')
+      open.onerror = () => reject(open.error)
+      open.onsuccess = () => {
+        const db = open.result
+        const tx = db.transaction('accountSyncEvents', 'readonly')
+        const request = tx.objectStore('accountSyncEvents').get(account)
+        request.onsuccess = () => resolve(request.result?.context?.listId ?? null)
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => db.close()
+      }
+    }), account)
+  }
+  async function select(name: string, id: string) {
+    await page.getByRole('button', { name, exact: true }).click()
+    await expect.poll(captured).toBe(id)
+  }
+  try {
+    const fallback = await create(fallbackName), first = await create(firstName)
+    const target = await create(targetName), second = await create(secondName)
+    await page.goto('/shopping-app/')
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Пароль').fill(password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    if (await decline.isVisible()) await decline.click()
+    await select(fallbackName, fallback)
+    await select(firstName, first)
+    const rail = page.locator('.list-rail')
+    await rail.evaluate(el => { el.scrollLeft = el.scrollWidth })
+    await expect.poll(() => rail.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
+    await merge(first, target)
+    const merged = page.getByRole('dialog', { name: 'Списки объединены' })
+    await expect(merged).toBeVisible({ timeout: 45000 })
+    await expect(merged).toContainText('Список «' + firstName + '» объединён со списком «' + targetName + '» на другом устройстве.')
+    await merged.getByRole('button', { name: 'Понятно' }).click()
+    await expect(merged).toHaveCount(0)
+    await expect(page.getByRole('button', { name: targetName, exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => rail.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
+    // Establish an explicit fallback, then receive the second merge and delete
+    // its recipient while the original notification is still shown.
+    await select(fallbackName, fallback)
+    await select(secondName, second)
+    await merge(second, target)
+    await expect(merged).toBeVisible({ timeout: 45000 })
+    const firstText = 'Список «' + secondName + '» объединён со списком «' + targetName + '» на другом устройстве.'
+    await expect(merged).toContainText(firstText)
+    await remove(target)
+    await expect(page.locator('.list-select').filter({ hasText: targetName })).toHaveCount(0, { timeout: 45000 })
+    await expect(merged).toContainText(firstText)
+    await merged.getByRole('button', { name: 'Понятно' }).click()
+    const removed = page.getByRole('dialog', { name: 'Список удалён' })
+    await expect(removed).toBeVisible()
+    await expect(removed).toContainText('Список «' + targetName + '» удалён на другом устройстве.')
+    await removed.getByRole('button', { name: 'Понятно' }).click()
+    await expect(removed).toHaveCount(0)
+    await expect(page.getByRole('button', { name: fallbackName, exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect.poll(() => rail.evaluate(el => el.scrollLeft)).toBeLessThan(2)
+    await expect(merged).toHaveCount(0)
+  } finally {
+    for (const id of ids) await remove(id)
+    await client.auth.signOut({ scope: 'local' })
+  }
+})
