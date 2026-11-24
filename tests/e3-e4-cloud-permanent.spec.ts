@@ -13,6 +13,9 @@ test.beforeAll(() => {
 
 test('account E3/E4: permanent list archives all or marked purchases and skips a cycle without purchases', async ({ page }) => {
   test.setTimeout(300000)
+  // The overall limit covers multiple real shopping cycles, not a missing
+  // menu. Individual browser actions must fail promptly with their locator.
+  page.setDefaultTimeout(12000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
   page.on('pageerror', error => console.log('[browser pageerror]', error.message))
@@ -86,6 +89,41 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
   }, { timeout: 30000 }).toBe(1)
+  // This diagnostic covers operations on a confirmed item. A visible server
+  // row alone does not prove that its local version receipt survived a reload.
+  // The separate offline/recovery suites exercise intentionally pending writes.
+  async function waitForItemReceipt(itemName: string) {
+    const { data: list, error: listError } = await client.from('shopping_lists')
+      .select('id').eq('name', name).single()
+    expect(listError).toBeNull()
+    const { data: item, error: itemError } = await client.from('shopping_items')
+      .select('id,version').eq('list_id', list!.id).eq('name', itemName).is('deleted_at', null).single()
+    expect(itemError).toBeNull()
+    await expect.poll(() => page.evaluate(async ({ account, listId, itemId, version }) => {
+      const db = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open('shopping-app')
+        request.onsuccess = () => resolve(request.result)
+        request.onerror = () => reject(request.error)
+      })
+      try {
+        const tx = db.transaction(['accountItemVersions', 'accountOperations'], 'readonly')
+        const read = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        const [versions, queued] = await Promise.all([
+          read(tx.objectStore('accountItemVersions').index('byAccount').getAll(account)),
+          read(tx.objectStore('accountOperations').index('byAccount').getAll(account)),
+        ])
+        const confirmed = versions.find(row => row.itemId === itemId && row.remoteListId === listId)
+        return { versionConfirmed: typeof confirmed?.version === 'number' && confirmed.version >= version,
+          pending: queued.some(row => (row.operation.itemId ?? row.operation.item?.id) === itemId) }
+      } finally { db.close() }
+    }, { account: auth.user!.id, listId: list!.id, itemId: item!.id, version: item!.version }),
+    { timeout: 30000, message: 'Server item must have its confirmed local version and no pending item operation' })
+      .toEqual({ versionConfirmed: true, pending: false })
+  }
+  await waitForItemReceipt(firstItem)
   async function completeList(buttonName: string) {
     await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
     await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
@@ -105,8 +143,17 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     await editor.getByLabel('Название').fill(name)
     await editor.getByLabel('Количество').fill(quantity)
     await editor.getByLabel('Единица измерения').fill(unit)
-    await editor.getByRole('button', { name: 'Сохранить', exact: true }).click()
-    await expect(editor).toBeHidden()
+    const save = editor.getByRole('button', { name: 'Сохранить', exact: true })
+    try {
+      await save.click()
+      await expect(editor).toBeHidden()
+    } catch (error) {
+      console.log('[editor diagnostic]', { visible: await editor.isVisible(),
+        alerts: await editor.getByRole('alert').allTextContents(),
+        saveEnabled: await save.isEnabled({ timeout: 1000 }).catch(() => false),
+        profileStatus: await page.locator('.profile-menu-trigger .profile-status').textContent({ timeout: 1000 }).catch(() => null) })
+      throw error
+    }
   }
   const { data: editedList, error: editedListError } = await client.from('shopping_lists')
     .select('id').eq('name', name).single()
@@ -118,6 +165,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
       if (error) throw error
       return data
     }, { timeout: 30000 }).toEqual([{ name: editedItem, quantity, unit }])
+    await waitForItemReceipt(editedItem)
   }
   await page.reload()
   await page.getByRole('button', { name, exact: true }).click()
