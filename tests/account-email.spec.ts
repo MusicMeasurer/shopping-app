@@ -353,6 +353,14 @@ test('syncs once after reconnect and merges with a verified session after ten qu
   if (await decline.isVisible()) await decline.click()
   await expect(page.getByRole('checkbox', { name: 'Молоко' })).toBeVisible()
   await expect.poll(() => pulls).toBeGreaterThan(0)
+  // The throttle applies only to a healthy, idle workspace, not startup
+  // requests that are still settling. Confirm the archive and sync state
+  // before measuring the unchanged zero-extra-requests budget.
+  const profileStatus = page.locator('.profile-menu-trigger [data-sync]')
+  await page.getByRole('button', { name: /^Архив,/ }).click()
+  await expect(page.getByRole('button', { name: 'Показать завершённые покупки', exact: true })).toBeEnabled()
+  await page.getByRole('button', { name: 'Основные списки' }).click()
+  await expect(profileStatus).toHaveAttribute('data-sync', 'synced')
   await page.clock.runFor(400)
   const before = pulls
   const authBefore = calls.filter(call => call.path === '/auth/v1/user').length
