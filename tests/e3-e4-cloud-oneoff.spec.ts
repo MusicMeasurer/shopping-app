@@ -439,3 +439,156 @@ test('remote merge restores the recipient and keeps an already shown notice befo
     await client.auth.signOut({ scope: 'local' })
   }
 })
+
+test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, editor and caret', async ({ page }) => {
+  test.setTimeout(150000)
+  const client = createClient(url, key, { auth: { persistSession: false } })
+  const auth = await client.auth.signInWithPassword({ email, password })
+  expect(auth.error).toBeNull()
+  const suffix = crypto.randomUUID()
+  const ids: string[] = []
+  async function create(name: string) {
+    const r = await client.rpc('create_e4_list', { p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent' })
+    if (r.error) throw r.error
+    ids.push(r.data.list_id)
+    return r.data.list_id as string
+  }
+  async function remove(id: string) {
+    const r = await client.from('shopping_lists').select('revision,deleted_at').eq('id', id).maybeSingle()
+    if (r.error) throw r.error
+    if (!r.data || r.data.deleted_at) return
+    const result = await client.rpc('complete_e4_list', {
+      p_operation: crypto.randomUUID(), p_list: id, p_expected_revision: r.data.revision, p_mode: 'delete_list',
+    })
+    if (result.error) throw result.error
+  }
+  async function seed(list: string, name: string) {
+    const id = crypto.randomUUID()
+    const r = await client.rpc('apply_e4_item_change', {
+      p_operation: crypto.randomUUID(), p_list: list, p_action: 'add', p_item: id,
+      p_name: name, p_purchased: false, p_expected_version: null, p_quantity: null, p_unit: null,
+    })
+    if (r.error) throw r.error
+    return id
+  }
+  async function change(list: string, id: string, action: 'update' | 'delete', name: string) {
+    const current = await client.from('shopping_items').select('version').eq('id', id).single()
+    if (current.error) throw current.error
+    const r = await client.rpc('apply_e4_item_change', {
+      p_operation: crypto.randomUUID(), p_list: list, p_action: action, p_item: id,
+      p_name: name, p_purchased: action === 'update', p_expected_version: current.data.version,
+      p_quantity: action === 'update' ? 3 : null, p_unit: action === 'update' ? 'л' : null,
+    })
+    if (r.error) throw r.error
+  }
+  async function caret(locator: ReturnType<typeof page.locator>, value: string) {
+    await locator.fill(value)
+    await locator.evaluate(node => {
+      const input = node as HTMLInputElement | HTMLTextAreaElement
+      input.focus()
+      input.setSelectionRange(2, 5, 'backward')
+      input.dataset.contextProbe = 'original'
+    })
+  }
+  async function expectCaret(locator: ReturnType<typeof page.locator>, value: string) {
+    await expect(locator).toHaveValue(value)
+    await expect(locator).toBeFocused()
+    await expect(locator).toHaveAttribute('data-context-probe', 'original')
+    expect(await locator.evaluate(node => {
+      const field = node as HTMLInputElement | HTMLTextAreaElement
+      return [field.selectionStart, field.selectionEnd, field.selectionDirection]
+    })).toEqual([2, 5, 'backward'])
+  }
+  try {
+    const names = Array.from({ length: 7 }, (_, i) => 'SYNC_CTX_' + i + '_' + suffix)
+    for (const name of names) await create(name)
+    const activeName = names[3], activeId = ids[3]
+    const items: { id: string; name: string }[] = []
+    for (let i = 0; i < 18; i++) {
+      const name = 'Молоко ' + String(i).padStart(2, '0')
+      items.push({ name, id: await seed(activeId, name) })
+    }
+    await page.goto('/shopping-app/')
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Пароль').fill(password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+    await waitForAuthChoice(page)
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
+    if (await decline.isVisible()) await decline.click()
+    await expect(page.locator('.profile-menu-trigger .profile-status')).toHaveText(/Синхронизировано/, { timeout: INITIAL_SYNC_TIMEOUT })
+    const card = page.getByRole('button', { name: activeName, exact: true })
+    await card.click()
+    await expect(card).toHaveAttribute('aria-pressed', 'true')
+    const rail = page.locator('.list-rail')
+    const tile = card.locator('..')
+    await rail.evaluate((node, id) => {
+      const target = Array.from(node.querySelectorAll<HTMLElement>('[data-list-id]')).find(el => el.dataset.listId === id)!
+      node.scrollTo({ left: node.scrollLeft + target.getBoundingClientRect().left - node.getBoundingClientRect().left - 4, behavior: 'instant' })
+    }, activeId)
+    const railLeft = () => tile.evaluate(node => node.getBoundingClientRect().left - node.closest('nav')!.getBoundingClientRect().left)
+    await expect.poll(railLeft).toBeLessThan(10)
+    await expect.poll(railLeft).toBeGreaterThanOrEqual(-2)
+    const left = await railLeft()
+    // Delete a different card before the visible anchor. Do not select it.
+    await remove(ids[0])
+    await expect(page.getByRole('button', { name: names[0], exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    await expect.poll(async () => Math.abs(await railLeft() - left)).toBeLessThanOrEqual(4)
+    await expect(card).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('heading', { name: activeName, exact: true })).toBeVisible()
+    await page.getByLabel('Сортировка товаров').selectOption('name-asc')
+    await expect(page.locator('[data-item-id]')).toHaveCount(items.length)
+    await page.locator('[data-item-id]').nth(7).evaluate(row => {
+      window.scrollTo({ top: window.scrollY + row.getBoundingClientRect().top - 30, behavior: 'instant' })
+    })
+    const vertical = await page.evaluate(() => {
+      const row = Array.from(document.querySelectorAll<HTMLElement>('[data-item-id]'))
+        .find(el => el.getBoundingClientRect().bottom > 0 && el.getBoundingClientRect().top < innerHeight)!
+      return { id: row.dataset.itemId!, top: row.getBoundingClientRect().top, y: scrollY }
+    })
+    expect(vertical.y).toBeGreaterThan(100)
+    const anchor = page.locator('[data-item-id="' + vertical.id + '"]')
+    const top = () => anchor.evaluate(node => node.getBoundingClientRect().top)
+    const insertedName = 'Айсберг'
+    const inserted = await seed(activeId, insertedName)
+    await expect(page.getByRole('checkbox', { name: insertedName, exact: true })).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    await expect.poll(async () => Math.abs(await top() - vertical.top)).toBeLessThanOrEqual(4)
+    await change(activeId, inserted, 'delete', insertedName)
+    await expect(page.getByRole('checkbox', { name: insertedName, exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    await expect.poll(async () => Math.abs(await top() - vertical.top)).toBeLessThanOrEqual(4)
+    // The add field remains the same element with the same unsaved selection.
+    const input = page.locator('#item-name')
+    await caret(input, 'Несохранённая покупка')
+    await seed(activeId, 'Бананы')
+    await expect(page.getByRole('checkbox', { name: 'Бананы', exact: true })).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    await expectCaret(input, 'Несохранённая покупка')
+    // A remote change of the very item being edited must update its saved
+    // data, not the editor draft. Its native dialog must not be recreated.
+    const item = items[8]
+    await page.getByRole('button', { name: 'Изменить ' + item.name, exact: true }).click()
+    const editor = page.getByRole('dialog', { name: 'Редактирование товара' })
+    const field = editor.getByLabel('Название')
+    await editor.getByLabel('Единица измерения').fill('уп.')
+    await editor.getByLabel('Количество').fill('7')
+    await caret(field, 'Мой черновик товара')
+    await change(activeId, item.id, 'update', item.name)
+    // The underlying DOM is inert while a native modal is open. Inspect the
+    // real updated row, not an accessibility locator hidden by that modal.
+    const saved = page.locator('[data-item-id="' + item.id + '"]')
+    await expect(saved).toContainText(item.name + ' · 3 л', { timeout: REMOTE_UPDATE_TIMEOUT })
+    await expect(saved.locator('input[type="checkbox"]')).toBeChecked()
+    await expect(editor).toBeVisible()
+    await expectCaret(field, 'Мой черновик товара')
+    await expect(editor.getByLabel('Количество')).toHaveValue('7')
+    await expect(editor.getByLabel('Единица измерения')).toHaveValue('уп.')
+    await editor.getByRole('button', { name: 'Отмена', exact: true }).click()
+    await expect(editor).toHaveCount(0)
+    await expect(input).toHaveValue('Несохранённая покупка')
+    await expect(card).toHaveAttribute('aria-pressed', 'true')
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+  } finally {
+    for (const id of ids) await remove(id)
+    await client.auth.signOut({ scope: 'local' })
+  }
+})

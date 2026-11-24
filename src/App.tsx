@@ -14,6 +14,7 @@ import { ListIndicators, listKindLabels, type ListKind, type CloudStatus } from 
 import { version } from '../package.json'
 import { ListHeading } from './ListHeading'
 import { WorkspaceDialog } from './WorkspaceDialog'
+import { WorkspaceViewport } from './WorkspaceViewport'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
@@ -729,7 +730,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }, [storage, accountId, semanticEnabled, refreshRevision, semanticListSignature, draftRevision, semanticRefresh, semanticBusy])
   const activeVisible = visibleLists.some(row => row.id === active)
   // Capture the viewport before the missing source collapses the page.
-  // General scroll anchoring remains in SYNC-UI-03.
+  // Ordinary updates are anchored separately by WorkspaceViewport.
   useLayoutEffect(() => {
     if (!semanticEnabled || !activeVisible || showArchive || semanticPending || semanticPresented || semanticNavigation) return
     const rail = listRail.current
@@ -918,8 +919,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   } : cloudMerge
   const mergeTargets = (from: ListId) => visibleLists.filter(row => row.id !== from && !listLocked(row.id) &&
     (accountId === null || !!cloudBoundLists[row.id]))
-  // Only recovery changes this selection. General scroll/editor preservation
-  // and synchronization indicators are separate UI tasks.
+  // Only recovery changes this selection. Ordinary view preservation must not
+  // override semantic navigation or change synchronization indicators.
   const latestBindings = useRef(cloudBoundLists)
   latestBindings.current = cloudBoundLists
   const latestVisible = useRef(visibleLists)
@@ -1132,7 +1133,18 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
     }
   }
-  return <main className={`shopping-e4 content-${contentSize}`} onTouchStart={startSwipe} onTouchEnd={endSwipe}>
+  return <WorkspaceViewport scope={JSON.stringify([workspaceKey, active, showArchive, sort, cardSize, contentSize])}
+    overlay={JSON.stringify([editingId, renaming, newListDialog, settingsOpen, mergeSourceId, deleteListId,
+      completionListId, !!purchaseArchive, conflictId, nameConflict])}
+    layoutKey={JSON.stringify([refreshRevision, draftRevision, cloudStatus, visibleLists.map(row => [row.id, row.name, row.kind, row.symbol]),
+      rows.map(row => [row.id, row.name, row.quantity, row.unit, row.purchased]), listConflicts.map(row => [row.operationId, row.item.name]),
+      activeNameConflicts.map(group => group.map(row => [row.id, row.name])), notice?.at, completionError, cloudListError,
+      listError, shopping.error, semanticError, itemNotice, itemInputError,
+      displayedOperations.map(row => [row.localListId, row.phase, row.message])])}
+    preserve={accountId !== null && activeVisible && !showArchive && !shopping.loading &&
+      !semanticPending && !semanticPresented && !semanticNavigation && !pendingViewport.current &&
+      !revealCard && !movingCard.current}
+    className={`shopping-e4 content-${contentSize}`} onTouchStart={startSwipe} onTouchEnd={endSwipe}>
     <header>
       <div className="workspace-topbar">
         <button className="settings-trigger" type="button" aria-label="Настройки"
@@ -1418,7 +1430,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           </button></li>
         })}
       </ul>}
-      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => <li key={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy || activeListLocked} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
+      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => <li key={item.id} data-item-id={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy || activeListLocked} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
     {!showArchive && selectedNameConflict && <ItemNameConflictDialog
@@ -1458,5 +1470,5 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!semanticNotice && semanticError && <p role="alert" className="error">{semanticError}<button type="button"
       onClick={() => { semanticAttempt.current = ''; setSemanticError(''); setSemanticRefresh(value => value + 1) }}>Повторить</button></p>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
-  </main>
+  </WorkspaceViewport>
 }
