@@ -593,6 +593,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     }
     const id = await onCreateCloudList?.(newListName, newListKind, newListSymbol)
     if (!id) return
+    // The callback returns the verified, bound list ID only after success.
+    // Background list refreshes must not independently change the selection.
+    setActive(id)
     setNewListDialog(false)
     setRevealCard({ id })
   }
@@ -1087,7 +1090,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       }}/>}
     {newListDialog && <WorkspaceDialog label="Создать список" className="create-dialog"
       onDismiss={() => { if (!creatingList && !cloudListBusy) setNewListDialog(false) }}>
-        <div className="account-dialog-heading"><h2 id="new-list-title">Создать список</h2><button type="button" aria-label="Закрыть создание списка" onClick={() => setNewListDialog(false)}>×</button></div>
+        <div className="account-dialog-heading"><h2 id="new-list-title">Создать список</h2><button type="button" aria-label="Закрыть создание списка" disabled={creatingList || cloudListBusy} onClick={() => setNewListDialog(false)}>×</button></div>
         <form onSubmit={event => void submitNewList(event)}>
           <label htmlFor="new-list-name">Название списка</label>
           <input id="new-list-name" value={newListName} onChange={event => setNewListName(event.target.value)} maxLength={120} required disabled={creatingList || cloudListBusy || (accountId === null && localLists === null)}/>
@@ -1097,7 +1100,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           </select>
           <ListSymbolPicker value={newListSymbol} onChange={setNewListSymbol} disabled={creatingList || cloudListBusy}/>
           <button disabled={creatingList || cloudListBusy || (accountId === null && localLists === null) || !newListName.trim()}>Создать</button>
-          <button type="button" onClick={() => setNewListDialog(false)}>Отмена</button>
+          <button type="button" disabled={creatingList || cloudListBusy} onClick={() => setNewListDialog(false)}>Отмена</button>
           {(cloudListError || (localCopy && listError)) && <p role="alert">{cloudListError || listError}</p>}
         </form>
     </WorkspaceDialog>}

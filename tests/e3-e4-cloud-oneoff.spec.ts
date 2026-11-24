@@ -61,14 +61,20 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByRole('dialog').getByRole('button', { name: 'Подарок', exact: true }).click()
   await page.getByRole('button', { name: 'Создать', exact: true }).click()
   await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
-  // Creation does not implicitly change the active shopping workspace list.
-  // Explicitly select the newly created, verified and bound account list.
+  // Successful user creation selects the newly verified, bound list.
+  // Do not click the card: that would hide a selection regression.
   const cardSymbol = page.locator('.list-tile')
     .filter({ has: page.getByRole('button', { name, exact: true }) }).locator('.list-symbol')
   await expect(cardSymbol).toHaveText('🎁')
-  tracePhase('selecting oneoff')
-  await page.getByRole('button', { name, exact: true }).click()
+  tracePhase('verifying automatic selection of oneoff')
+  const newCard = page.getByRole('button', { name, exact: true })
+  await expect(newCard).toHaveAttribute('aria-pressed', 'true')
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
+  await expect.poll(() => newCard.evaluate(button => {
+    const item = button.getBoundingClientRect()
+    const viewport = button.closest('nav')!.getBoundingClientRect()
+    return item.left >= viewport.left - 1 && item.right <= viewport.right + 1
+  })).toBe(true)
   // Exercise the actual account item queue and completion protocol, not just
   // creation of a button. Use a unique disposable list in the isolated lab.
   tracePhase('adding item')
@@ -129,8 +135,25 @@ test.describe('queued cloud list operations', () => {
       await page.getByRole('button', { name: 'Новый список' }).click()
       await page.getByLabel('Название списка', { exact: true }).fill(name)
       await page.getByRole('button', { name: 'Создать', exact: true }).click()
-      await expect(page.getByRole('button', { name, exact: true })).toBeVisible()
+      await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'true')
+      await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
     }
+
+    // Cancel and a server-rejected duplicate must not change the selected list.
+    const selected = page.getByRole('button', { name: second, exact: true })
+    const newList = page.getByRole('button', { name: 'Новый список' })
+    await newList.click()
+    const createDialog = page.getByRole('dialog', { name: 'Создать список' })
+    await createDialog.getByLabel('Название списка').fill(first)
+    await createDialog.getByRole('button', { name: 'Отмена', exact: true }).click()
+    await expect(selected).toHaveAttribute('aria-pressed', 'true')
+    await newList.click()
+    await createDialog.getByLabel('Название списка').fill(first)
+    await createDialog.getByRole('button', { name: 'Создать', exact: true }).click()
+    await expect(createDialog.getByRole('alert')).toBeVisible()
+    await expect(selected).toHaveAttribute('aria-pressed', 'true')
+    await createDialog.getByRole('button', { name: 'Отмена', exact: true }).click()
+    await expect(page.getByRole('heading', { name: second, exact: true })).toBeVisible()
 
     await page.getByRole('button', { name: first, exact: true }).click()
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()

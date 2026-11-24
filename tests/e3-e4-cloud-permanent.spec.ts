@@ -56,9 +56,14 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     })
     expect(error).toBeNull()
   }
+  const previouslySelected = page.locator('.list-select[aria-pressed="true"]')
+  await expect(previouslySelected).toHaveCount(1)
+  const previousId = await previouslySelected.locator('..').getAttribute('data-list-id')
   await createExternal(name)
   await page.evaluate(() => window.dispatchEvent(new Event('online')))
   await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 60000 })
+  await expect(previouslySelected.locator('..')).toHaveAttribute('data-list-id', previousId!)
+  await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'false')
   // Discover and bind the existing server-owned list before allowing writes.
   tracePhase('selecting permanent list')
   await page.getByRole('button', { name, exact: true }).click()
