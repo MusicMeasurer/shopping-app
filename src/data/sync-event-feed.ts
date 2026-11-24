@@ -15,7 +15,7 @@ export interface SyncEvent {
   semantics?: SyncSemantics
 }
 export type SyncEventBatch =
-  | { kind: 'delta'; accountId: string; from: string; through: string; head: string; events: SyncEvent[] }
+  | { kind: 'delta'; accountId: string; from: string; through: string; head: string; events: SyncEvent[]; batchThrough?: string }
   | { kind: 'snapshot'; accountId: string; position: string; changes: AccountFeedChange[] }
   | { kind: 'unsupported'; accountId: string }
 
@@ -44,15 +44,14 @@ function parseSemantics(raw: unknown, change: AccountFeedChange): SyncSemantics 
 }
 
 /**
- * Read one bounded server batch. No cache writes or UI callbacks: stage 3
- * commits changes and semantic evidence together. Never expose partial results
- * after an interrupted page. A snapshot has no reliable operation history.
- * A newer head does not extend this bound; caller drains later batches and
- * defers new notices until the observed head is reached and data reconciled.
+ * Read and validate one page. through is the final position received;
+ * batchThrough is the fixed upper limit if further pages remain.
+ * Persist each verified page with both positions before requesting another.
  */
-export async function readSyncEventBatch(
+export async function readSyncEventPage(
   client: Pick<SupabaseClient, 'rpc'>, accountId: string, cursor: string | undefined,
   isActive: () => boolean, onRequest: () => void = () => {},
+  resumeThrough?: string, observedHead?: string,
 ): Promise<SyncEventBatch> {
   id(accountId)
   const assertActive = () => { if (!isActive()) throw new Error('Account changed during feed synchronization') }
@@ -68,42 +67,57 @@ export async function readSyncEventBatch(
   }
   if (cursor === undefined) return snapshot()
   const from = position(cursor)
+  if (resumeThrough !== undefined && BigInt(position(resumeThrough)) < BigInt(from))
+    throw new Error('Invalid saved account feed boundary')
+  assertActive()
+  onRequest()
+  const { data, error } = await client.rpc('pull_e4_account_changes_v2', {
+    p_account: accountId, p_after: from, p_limit: pageSize,
+    ...(resumeThrough === undefined ? {} : { p_through: resumeThrough }),
+  })
+  assertActive()
+  if (error?.code === 'P0002') return snapshot()
+  if (error?.code === 'PGRST202' && resumeThrough === undefined) return { kind: 'unsupported', accountId }
+  if (error) throw error
+  const page = record(data)
+  const head = position(page.head)
+  const bound = position(page.through)
+  if (BigInt(head) < BigInt(observedHead ?? from) || BigInt(bound) > BigInt(head)
+      || BigInt(bound) < BigInt(from) || (resumeThrough === undefined ? bound !== head : bound !== resumeThrough))
+    throw new Error('Invalid account feed batch boundary')
+  if (!Array.isArray(page.events) || page.events.length > pageSize) throw new Error('Invalid account feed page')
   let after = from
-  let through: string | undefined
-  let head = from
+  const events: SyncEvent[] = []
+  for (const raw of page.events) {
+    const row = record(raw)
+    const next = position(row.event_position)
+    if (BigInt(next) !== BigInt(after) + 1n || BigInt(next) > BigInt(bound))
+      throw new Error('Non-contiguous account feed page')
+    if (row.deleted === true && row.snapshot !== null) throw new Error('Deleted entity has a snapshot')
+    const change = parseAccountFeedChange(row, accountId)
+    const semantics = row.semantics === undefined ? undefined : parseSemantics(row.semantics, change)
+    events.push({ position: next, change, ...(semantics ? { semantics } : {}) })
+    after = next
+  }
+  if (after !== bound && page.events.length !== pageSize) throw new Error('Incomplete account feed page')
+  return { kind: 'delta', accountId, from, through: after, head, events,
+    ...(after !== bound ? { batchThrough: bound } : {}) }
+}
+
+/** Read-only full-batch helper. Never returns partial evidence after failure. */
+export async function readSyncEventBatch(
+  client: Pick<SupabaseClient, 'rpc'>, accountId: string, cursor: string | undefined,
+  isActive: () => boolean, onRequest: () => void = () => {},
+): Promise<SyncEventBatch> {
+  let after = cursor, bound: string | undefined, head: string | undefined
   const events: SyncEvent[] = []
   while (true) {
-    assertActive()
-    onRequest()
-    const { data, error } = await client.rpc('pull_e4_account_changes_v2', {
-      p_account: accountId, p_after: after, p_limit: pageSize,
-      ...(through === undefined ? {} : { p_through: through }),
-    })
-    assertActive()
-    if (error?.code === 'P0002') return snapshot()
-    if (error?.code === 'PGRST202' && through === undefined) return { kind: 'unsupported', accountId }
-    if (error) throw error
-    const page = record(data)
-    const pageHead = position(page.head)
-    const bound = position(page.through)
-    if (BigInt(pageHead) < BigInt(head) || BigInt(bound) > BigInt(pageHead)
-        || BigInt(bound) < BigInt(after) || (through === undefined ? bound !== pageHead : bound !== through))
-      throw new Error('Invalid account feed batch boundary')
-    through = bound
-    head = pageHead
-    if (!Array.isArray(page.events) || page.events.length > pageSize) throw new Error('Invalid account feed page')
-    for (const raw of page.events) {
-      const row = record(raw)
-      const next = position(row.event_position)
-      if (BigInt(next) !== BigInt(after) + 1n || BigInt(next) > BigInt(through))
-        throw new Error('Non-contiguous account feed page')
-      if (row.deleted === true && row.snapshot !== null) throw new Error('Deleted entity has a snapshot')
-      const change = parseAccountFeedChange(row, accountId)
-      const semantics = row.semantics === undefined ? undefined : parseSemantics(row.semantics, change)
-      events.push({ position: next, change, ...(semantics ? { semantics } : {}) })
-      after = next
-    }
-    if (after === through) return { kind: 'delta', accountId, from, through, head, events }
-    if (page.events.length !== pageSize) throw new Error('Incomplete account feed page')
+    const page = await readSyncEventPage(client, accountId, after, isActive, onRequest, bound, head)
+    if (page.kind !== 'delta') return page
+    events.push(...page.events)
+    if (!page.batchThrough) return { ...page, from: cursor!, events }
+    after = page.through
+    head = page.head
+    bound = page.batchThrough
   }
 }

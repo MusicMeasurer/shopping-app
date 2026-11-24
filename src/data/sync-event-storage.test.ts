@@ -67,6 +67,26 @@ describe('durable semantic synchronization', () => {
     expect((await storage.readAccountSemanticState(account))?.context?.listId).toBe(a)
     await storage.close()
   })
+  it('resumes at the last committed page and does not repeat its requests or publish a premature notice', async () => {
+    const { db, storage, rpc, api } = await setup()
+    const filler = Array.from({ length: 199 }, (_, i) => ({ event_position: String(12 + i),
+      entity: 'list', entity_id: c, list_id: c, deleted: false, snapshot: list(c) }))
+    rpc.mockResolvedValueOnce(page(211, [rem(11, a, b), ...filler]))
+      .mockRejectedValueOnce(new Error('Interrupted page'))
+    await expect(pullSemanticAccountFeed(api, storage, account, active)).rejects.toThrow('Interrupted page')
+    expect(await storage.readAccountFeedPosition(account)).toBe('210')
+    const partial = (await storage.readAccountSemanticState(account))!
+    expect(partial.batchThrough).toBe('211')
+    expect(partial.ready).toBe(false)
+    expect(partial.pending).toBeUndefined()
+    await storage.close()
+    const reopened = createStorage(db)
+    rpc.mockResolvedValueOnce(page(211, [rem(211, b, undefined, op2)]))
+    await pullSemanticAccountFeed(api, reopened, account, active)
+    expect(rpc.mock.calls.at(-1)?.[1]).toMatchObject({ p_after: '210', p_through: '211' })
+    expect((await reopened.readAccountSemanticState(account))?.pending?.fate.notice).toMatchObject({ sourceId: a, reason: 'deleted' })
+    await reopened.close()
+  })
   it('does not lose a saved notice when the server returns no more history', async () => {
     const { storage, rpc, api } = await setup()
     rpc.mockResolvedValueOnce(page(11, [rem(11, a, b)]))

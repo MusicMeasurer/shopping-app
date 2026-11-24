@@ -1899,7 +1899,7 @@ export function createStorage(name = 'shopping-app') {
       return next
     },
     async acknowledgeAccountSyncNotice(accountId: string, expectedKey: string | null) {
-      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountFeed', 'accountListMappings', 'accountItems'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountFeed', 'accountListMappings', 'accountItems', 'accountOperations', 'accountDraftLists'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) { await tx.done; return { kind: 'ignored' as const } }
       const states = tx.objectStore('accountSyncEvents')
       const previous = await states.get(accountId)
@@ -1907,9 +1907,16 @@ export function createStorage(name = 'shopping-app') {
       const mappings = await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)
       const remote = new Map(mappings.map(row => [row.localListId, row.remoteListId]))
       const cursor = await tx.objectStore('accountFeed').get(accountId)
+      const queued = await tx.objectStore('accountOperations').index('byAccount').getAll(accountId)
+      const drafts = await tx.objectStore('accountDraftLists').index('byAccount').getAll(accountId)
+      const localTimes = new Map<string, number>()
+      for (const { operation, queuedAt } of queued) if (queuedAt !== undefined && 'remoteListId' in operation)
+        localTimes.set(operation.remoteListId, Math.max(localTimes.get(operation.remoteListId) ?? -Infinity, queuedAt))
       const current: ReconciledSyncContext = {
         accountId, ready: !!cursor && cursor.position === previous.evidence?.position && semanticReady(previous, cursor.deferred),
-        lists: mappings.flatMap(row => row.metadata ? [{ id: row.remoteListId, ...row.metadata }] : []),
+        lists: [...mappings.flatMap(row => row.metadata ? [{ id: row.remoteListId, ...row.metadata,
+          updatedAt: Math.max(row.metadata.updatedAt ?? -Infinity, localTimes.get(row.remoteListId) ?? -Infinity) }] : []),
+          ...drafts.map(row => ({ id: row.id, name: row.name, updatedAt: row.createdAt }))],
         items: (await tx.objectStore('accountItems').index('byAccount').getAll(accountId)).map(({ item }) => ({
           id: item.id, listId: remote.get(item.listId) ?? item.listId,
         })), activity: previous.activity,
@@ -1926,7 +1933,7 @@ export function createStorage(name = 'shopping-app') {
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
       changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean, semanticBatch?: SemanticBatch): Promise<boolean> {
       const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountSyncEvents', 'accountListMappings', 'accountItems',
-        'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
+        'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
@@ -1944,7 +1951,7 @@ export function createStorage(name = 'shopping-app') {
         const states = tx.objectStore('accountSyncEvents')
         const semanticBefore = await states.get(accountId)
         if (!snapshot && !changes.length && !previous?.deferred.length && (!semanticBatch ||
-            (semanticBefore?.evidence?.position === position && semanticBefore.evidence.caughtUp && !semanticBefore.pending && !semanticBefore.presented))) {
+            (semanticBefore?.evidence?.position === position && semanticBefore.evidence.caughtUp && semanticBefore.ready && (semanticBatch.kind === 'snapshot' || !semanticBatch.batchThrough)))) {
           await done
           return true
         }
@@ -2045,6 +2052,7 @@ export function createStorage(name = 'shopping-app') {
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         if (semanticBatch) {
           let state = storeSemanticBatch(semanticBefore ?? newSemanticState(accountId), semanticBatch)
+          state = { ...state, ready: state.evidence?.caughtUp === true && semanticReady(state, deferred) }
           if (state.context || state.presented) {
             const localTimes = new Map<string, number>()
             for (const { operation, queuedAt } of operations) {
@@ -2056,10 +2064,11 @@ export function createStorage(name = 'shopping-app') {
               ...accountMappings.flatMap(row => row.pendingMerge ? [row.pendingMerge.operationId] : [])]
             const current: ReconciledSyncContext = {
               accountId, ready: semanticReady(state, deferred),
-              lists: [...byRemote.values()].flatMap(row => row.metadata ? [{
+              lists: [...[...byRemote.values()].flatMap(row => row.metadata ? [{
                 id: row.remoteListId, name: row.metadata.name,
                 updatedAt: Math.max(row.metadata.updatedAt ?? -Infinity, localTimes.get(row.remoteListId) ?? -Infinity),
-              }] : []),
+              }] : []), ...(await tx.objectStore('accountDraftLists').index('byAccount').getAll(accountId))
+                .map(row => ({ id: row.id, name: row.name, updatedAt: row.createdAt }))],
               items: state.context?.itemId || state.presented?.origin.itemId ?
                 (await items.index('byAccount').getAll(accountId)).map(({ item }) => ({
                   id: item.id, listId: remoteByLocal.get(item.listId) ?? item.listId,
@@ -2073,7 +2082,7 @@ export function createStorage(name = 'shopping-app') {
           await states.put(state)
         } else if (semanticBefore?.evidence) {
           // Legacy server fallback has no trustworthy semantic history.
-          await states.put({ ...semanticBefore, evidence: undefined })
+          await states.put({ ...semanticBefore, evidence: undefined, batchThrough: undefined, observedHead: undefined, ready: false })
         }
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })

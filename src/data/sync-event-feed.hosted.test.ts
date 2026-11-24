@@ -1,5 +1,8 @@
 // Real read-only RPC compatibility; only the pinned disposable lab.
+import 'fake-indexeddb/auto'
 import { describe, expect, it } from 'vitest'
+import { createStorage } from './storage'
+import { pullSemanticAccountFeed } from './sync-event-runtime'
 import { createClient } from '@supabase/supabase-js'
 import { readSyncEventBatch } from './sync-event-feed'
 import { accumulateSyncEvidence } from './sync-event-fate'
@@ -39,6 +42,18 @@ describe.skipIf(env.E3_LAB_URL === undefined)('real semantic feed RPC on disposa
       expect(rows.map(row => ({ position: String(row.event_position), change: parseAccountFeedChange(row, accountId) })))
         .toEqual(next.events.slice(0, rows.length).map(({ position, change }) => ({ position, change })))
       expect(accumulateSyncEvidence(undefined, next).position).toBe(next.through)
+      const storage = createStorage('semantic-hosted-' + crypto.randomUUID())
+      try {
+        await pullSemanticAccountFeed(a, storage, accountId, () => true)
+        const cached = await storage.readAccountFeedPosition(accountId)
+        expect(cached).toBeDefined()
+        const lists = await storage.readAccountFeedLists(accountId)
+        expect(lists.length).toBeGreaterThan(0)
+        await storage.recordAccountSyncContext(accountId, lists[0].id)
+        await pullSemanticAccountFeed(a, storage, accountId, () => true)
+        expect((await storage.readAccountSemanticState(accountId))?.evidence?.position).toBe(await storage.readAccountFeedPosition(accountId))
+        expect(await storage.readAccountSemanticState(foreignId)).toBeUndefined()
+      } finally { await storage.close() }
       await expect(readSyncEventBatch(a, foreignId, '0', () => true)).rejects.toMatchObject({ code: '42501' })
       const foreign = await readSyncEventBatch(b, foreignId, undefined, () => true)
       expect(foreign).toMatchObject({ kind: 'snapshot', accountId: foreignId })

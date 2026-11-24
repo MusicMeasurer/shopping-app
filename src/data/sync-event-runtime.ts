@@ -1,22 +1,27 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Storage } from './storage'
 import { pullAccountFeed } from './account-feed'
-import { readSyncEventBatch } from './sync-event-feed'
+import { readSyncEventPage } from './sync-event-feed'
 
 const unsupported = new WeakSet<object>()
-type FeedStorage = Pick<Storage, 'readAccountFeedPosition' | 'applyAccountFeed'>
+type FeedStorage = Pick<Storage, 'readAccountFeedPosition' | 'readAccountSemanticState' | 'applyAccountFeed'>
 
 /** Use one feed, never v1 and v2 together. Missing RPC is the only fallback.
  * At most two fixed batches per invocation; the existing scheduler handles
- * later batches. A partial batch must not advance the durable cursor. */
+ * later batches. A verified page advances the cursor with its evidence and
+ * saved boundary, but never presents an incomplete batch. */
 export async function pullSemanticAccountFeed(client: Pick<SupabaseClient, 'rpc'>,
   storage: FeedStorage, accountId: string, isActive: () => boolean, onRequest: () => void = () => {}): Promise<boolean> {
   if (unsupported.has(client)) return pullAccountFeed(client, storage, accountId, isActive, onRequest)
-  for (let count = 0; count < 2; count++) {
+  for (let count = 0; count < 2;) {
     const expected = await storage.readAccountFeedPosition(accountId)
-    const batch = await readSyncEventBatch(client, accountId, expected, isActive, onRequest)
+    const saved = await storage.readAccountSemanticState(accountId)
+    const bound = saved?.evidence?.position === expected ? saved?.batchThrough : undefined
+    const observedHead = bound ? saved?.observedHead : undefined
+    const batch = await readSyncEventPage(client, accountId, expected, isActive, onRequest, bound, observedHead)
     if (batch.kind === 'unsupported') {
       unsupported.add(client)
+      if (expected === undefined) return false
       return pullAccountFeed(client, storage, accountId, isActive, onRequest)
     }
     const next = batch.kind === 'snapshot' ? batch.position : batch.through
@@ -24,6 +29,7 @@ export async function pullSemanticAccountFeed(client: Pick<SupabaseClient, 'rpc'
     if (!isActive()) throw new Error('Account changed during feed synchronization')
     if (!await storage.applyAccountFeed(accountId, expected, next, changes, batch.kind === 'snapshot', isActive, batch)) return true
     if (batch.kind === 'snapshot' || batch.head === batch.through) return true
+    if (!batch.batchThrough) count++
   }
   return true
 }

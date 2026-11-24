@@ -10,6 +10,9 @@ export interface AccountSemanticState {
   activity: string[]
   context?: ActiveSyncContext
   evidence?: SyncEvidence
+  batchThrough?: string
+  observedHead?: string
+  ready?: boolean
   pending?: RecoveryCandidate
   presented?: RecoveryCandidate
   own: { id: string; at: number }[]
@@ -24,7 +27,7 @@ export function rememberContext(state: AccountSemanticState, context: ActiveSync
   if (context.accountId !== state.accountId) throw new Error('Foreign semantic context')
   // Existing UI may select a fallback automatically. Do not overwrite an
   // outstanding notice or the context of a partially received batch.
-  if (state.presented || state.pending?.fate.notice || state.evidence?.caughtUp === false) return state
+  if (state.presented || state.pending?.fate.notice || (state.evidence && (!state.evidence.caughtUp || state.ready === false))) return state
   const changed = context.listId !== state.context?.listId || context.itemId !== state.context?.itemId
   if (!changed && state.activity[0] === context.listId) return state
   const activity = context.listId === null ? state.activity :
@@ -57,23 +60,27 @@ export function storeSemanticBatch(state: AccountSemanticState, batch: SemanticB
   let evidence = accumulateSyncEvidence(before, batch)
   // A snapshot has no new causal history. Keep already received, unresolved
   // evidence; it is not reconstructed from the snapshot.
-  if (batch.kind === 'snapshot' && before && (state.pending || state.presented)) {
+  if (batch.kind === 'snapshot' && before && (state.context || state.pending || state.presented)) {
     evidence = { ...evidence, removals: before.removals }
   }
-  return { ...state, evidence: relevantEvidence(state, evidence) }
+  return { ...state, evidence: relevantEvidence(state, evidence),
+    batchThrough: batch.kind === 'delta' ? batch.batchThrough : undefined,
+    observedHead: batch.kind === 'delta' ? batch.head : undefined, ready: false }
 }
 
 export function evaluateSemanticState(state: AccountSemanticState, current: ReconciledSyncContext,
   ownPending: readonly string[] = [], now = Date.now()): AccountSemanticState {
   if (state.accountId !== current.accountId) throw new Error('Foreign semantic state')
   const own = state.own.filter(row => now - row.at < ownRetention)
-  if (!state.evidence || !current.ready || !state.evidence.caughtUp) return { ...state, own }
+  if (!state.evidence || !current.ready || !state.evidence.caughtUp) return { ...state, own, ready: false }
+  const evidence = state.evidence
+  state = { ...state, ready: true }
   const context = state.presented
     ? (state.presented.fate.kind === 'merge' && state.presented.fate.nextListId
       ? { accountId: state.accountId, listId: state.presented.fate.nextListId } : undefined)
     : state.context
   if (!context) return { ...state, own, pending: undefined }
-  const fate = resolveContextFate(context, { ...current, activity: state.activity }, state.evidence,
+  const fate = resolveContextFate(context, { ...current, activity: state.activity }, evidence,
     new Set([...own.map(row => row.id), ...ownPending]))
   if (fate.kind === 'wait') return { ...state, own }
   if (fate.kind === 'unchanged') return { ...state, own, pending: undefined }
@@ -87,7 +94,7 @@ export function noticeKey(candidate: RecoveryCandidate): string | undefined {
 }
 export function presentSemanticNotice(state: AccountSemanticState, expectedKey: string): AccountSemanticState {
   if (state.presented) return state
-  if (!state.pending || !expectedKey || noticeKey(state.pending) !== expectedKey || !state.evidence?.caughtUp) return state
+  if (!state.pending || !expectedKey || noticeKey(state.pending) !== expectedKey || !state.evidence?.caughtUp || !state.ready) return state
   return { ...state, presented: state.pending, pending: undefined }
 }
 
@@ -124,7 +131,8 @@ export function consumeSilentRecovery(state: AccountSemanticState, current: Reco
   const pending = state.pending
   if (state.presented || !pending || pending.fate.notice) return { state, result: { kind: 'ignored' } }
   if (!current.ready || !state.evidence?.caughtUp) return { state, result: { kind: 'wait' } }
-  const preferred = pending.fate.nextListId
+  const preferred = pending.fate.kind === 'merge' ? pending.fate.nextListId :
+    current.lists.some(row => row.id === pending.origin.listId) ? pending.origin.listId : null
   const nextListId = preferred && current.lists.some(row => row.id === preferred) ? preferred :
     chooseFallbackList(current.lists, state.activity)
   return { state: { ...state, pending: undefined, context: { accountId: state.accountId, listId: nextListId },
