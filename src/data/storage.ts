@@ -87,6 +87,7 @@ function completionItemSnapshot(items: Item[]): string {
 }
 interface ScopedCompletionIntent { key: string; accountId: string; intent: CloudCompletionIntent }
 export interface AccountDraftList extends ShoppingListRecord {
+  updatedAt?: number
   accountId: string
   operationId: string
   nameConflict?: boolean
@@ -94,6 +95,7 @@ export interface AccountDraftList extends ShoppingListRecord {
 interface ScopedDraftList extends AccountDraftList { key: string }
 type ListMetadata = Pick<CloudListMetadata, 'name' | 'kind' | 'position' | 'updatedAt'>
 export interface LocalListChange {
+  queuedAt?: number
   operationId: string
   sequence: number
   localListId: string
@@ -1564,7 +1566,7 @@ export function createStorage(name = 'shopping-app') {
           tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
         ])
         assertFreeListName([...drafts, ...bindings.flatMap(row => row.metadata ? [{ id: row.localListId, name: row.metadata.name }] : [])], list.id, name)
-        await store.put({ ...list, name, key, accountId, operationId: crypto.randomUUID(), nameConflict: undefined })
+        await store.put({ ...list, name, key, accountId, updatedAt: Date.now(), operationId: crypto.randomUUID(), nameConflict: undefined })
         await markListsChanged(registry, { accountId })
         await done
       } catch (error) {
@@ -1585,7 +1587,7 @@ export function createStorage(name = 'shopping-app') {
     async promoteAccountDraft(draft: AccountDraftList, remote: { id: string; ownerId: string; name: string; kind: ShoppingListRecord['kind']; position: number }): Promise<string | undefined> {
       if (remote.ownerId !== draft.accountId || remote.name !== draft.name || remote.kind !== draft.kind)
         throw new Error('Подтверждение создания не совпадает с локальным списком.')
-      const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountListMappings', 'accountItems', 'accountOperations', 'accountCompletionRequests'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountListMappings', 'accountItems', 'accountOperations', 'accountCompletionRequests', 'accountSyncEvents'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(draft.accountId)) throw new Error('Account data was deleted')
       const done = tx.done
       void done.catch(() => {})
@@ -1621,6 +1623,14 @@ export function createStorage(name = 'shopping-app') {
           await requests.add({ ...request, key: accountKey(accountId, remote.id), localListId, remoteListId: remote.id, name })
         }
         await drafts.delete(key)
+        const semantic = tx.objectStore('accountSyncEvents')
+        const state = await semantic.get(accountId)
+        if (state && draft.id !== remote.id) {
+          // Draft identity is local until the creation receipt binds it.
+          const translate = (id: string) => id === draft.id ? remote.id : id
+          await semantic.put({ ...state, activity: [...new Set(state.activity.map(translate))],
+            context: state.context?.listId === draft.id ? { ...state.context, listId: remote.id } : state.context })
+        }
         await done
         return localListId
       } catch (error) {
@@ -1633,7 +1643,8 @@ export function createStorage(name = 'shopping-app') {
       const tx = (await database).transaction(['accountDeletions', 'accountDraftLists', 'accountItems', 'accountCompletionRequests'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const key = accountKey(accountId, item.listId)
-      if (!await tx.objectStore('accountDraftLists').get(key)) { await tx.done; return false }
+      const draft = await tx.objectStore('accountDraftLists').get(key)
+      if (!draft) { await tx.done; return false }
       try {
         if (await tx.objectStore('accountCompletionRequests').get(key))
           throw new Error('Завершение ожидает синхронизации. Отмените его, чтобы изменить список.')
@@ -1644,6 +1655,7 @@ export function createStorage(name = 'shopping-app') {
           checkItemNames((await items.index('byAccount').getAll(accountId)).map(row => row.item), [item])
           await items.put({ key: rowKey, accountId, item })
         }
+        await tx.objectStore('accountDraftLists').put({ ...draft, updatedAt: Date.now() })
         await tx.done
         return true
       } catch (error) {
@@ -1870,14 +1882,15 @@ export function createStorage(name = 'shopping-app') {
       return state
     },
     async recordAccountSyncContext(accountId: string, localListId: string, itemId?: string): Promise<void> {
-      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountListMappings'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountListMappings', 'accountDraftLists'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) { await tx.done; return }
       const mapping = (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
         .find(row => row.metadata && (row.localListId === localListId || row.remoteListId === localListId))
-      if (mapping) {
+      const draft = mapping ? undefined : await tx.objectStore('accountDraftLists').get(accountKey(accountId, localListId))
+      if (mapping || draft) {
         const states = tx.objectStore('accountSyncEvents')
         const before = await states.get(accountId) ?? newSemanticState(accountId)
-        const next = rememberContext(before, { accountId, listId: mapping.remoteListId, ...(itemId ? { itemId } : {}) })
+        const next = rememberContext(before, { accountId, listId: mapping?.remoteListId ?? localListId, ...(itemId ? { itemId } : {}) })
         if (next !== before) await states.put(next)
       }
       await tx.done
@@ -1912,11 +1925,13 @@ export function createStorage(name = 'shopping-app') {
       const localTimes = new Map<string, number>()
       for (const { operation, queuedAt } of queued) if (queuedAt !== undefined && 'remoteListId' in operation)
         localTimes.set(operation.remoteListId, Math.max(localTimes.get(operation.remoteListId) ?? -Infinity, queuedAt))
+      for (const row of mappings) for (const change of row.pendingMetadata ?? []) if (change.queuedAt !== undefined)
+        localTimes.set(row.remoteListId, Math.max(localTimes.get(row.remoteListId) ?? -Infinity, change.queuedAt))
       const current: ReconciledSyncContext = {
         accountId, ready: !!cursor && cursor.position === previous.evidence?.position && semanticReady(previous, cursor.deferred),
         lists: [...mappings.flatMap(row => row.metadata ? [{ id: row.remoteListId, ...row.metadata,
           updatedAt: Math.max(row.metadata.updatedAt ?? -Infinity, localTimes.get(row.remoteListId) ?? -Infinity) }] : []),
-          ...drafts.map(row => ({ id: row.id, name: row.name, updatedAt: row.createdAt }))],
+          ...drafts.map(row => ({ id: row.id, name: row.name, updatedAt: row.updatedAt ?? row.createdAt }))],
         items: (await tx.objectStore('accountItems').index('byAccount').getAll(accountId)).map(({ item }) => ({
           id: item.id, listId: remote.get(item.listId) ?? item.listId,
         })), activity: previous.activity,
@@ -2059,6 +2074,8 @@ export function createStorage(name = 'shopping-app') {
               if (queuedAt !== undefined && 'remoteListId' in operation)
                 localTimes.set(operation.remoteListId, Math.max(localTimes.get(operation.remoteListId) ?? -Infinity, queuedAt))
             }
+            for (const row of accountMappings) for (const change of row.pendingMetadata ?? []) if (change.queuedAt !== undefined)
+              localTimes.set(row.remoteListId, Math.max(localTimes.get(row.remoteListId) ?? -Infinity, change.queuedAt))
             const ownPending = [...operations.map(row => row.operation.operationId),
               ...completions.map(row => row.intent.operationId), ...requests.map(row => row.operationId),
               ...accountMappings.flatMap(row => row.pendingMerge ? [row.pendingMerge.operationId] : [])]
@@ -2068,7 +2085,7 @@ export function createStorage(name = 'shopping-app') {
                 id: row.remoteListId, name: row.metadata.name,
                 updatedAt: Math.max(row.metadata.updatedAt ?? -Infinity, localTimes.get(row.remoteListId) ?? -Infinity),
               }] : []), ...(await tx.objectStore('accountDraftLists').index('byAccount').getAll(accountId))
-                .map(row => ({ id: row.id, name: row.name, updatedAt: row.createdAt }))],
+                .map(row => ({ id: row.id, name: row.name, updatedAt: row.updatedAt ?? row.createdAt }))],
               items: state.context?.itemId || state.presented?.origin.itemId ?
                 (await items.index('byAccount').getAll(accountId)).map(({ item }) => ({
                   id: item.id, listId: remoteByLocal.get(item.listId) ?? item.listId,
@@ -2347,7 +2364,7 @@ export function createStorage(name = 'shopping-app') {
         }
         const sequence = (orderedListChanges(mappings).at(-1)?.sequence ?? 0) + 1
         const operation = { localListId: id, remoteListId: mapping.remoteListId, operationId: crypto.randomUUID(),
-          before, change, sequence, targetId }
+          before, change, sequence, targetId, queuedAt: Date.now() }
         await store.put({ ...mapping, pendingMetadata: [...(mapping.pendingMetadata ?? []), operation] })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
@@ -2446,6 +2463,7 @@ export function createStorage(name = 'shopping-app') {
           throw new Error('Completion pending; list edits are temporarily locked')
         const itemStore = tx.objectStore('accountItems')
         checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
+        if (draft) await tx.objectStore('accountDraftLists').put({ ...draft, updatedAt: Date.now() })
         for (const item of items) {
           await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
           if (!mapping) continue

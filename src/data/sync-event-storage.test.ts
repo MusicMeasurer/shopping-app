@@ -110,6 +110,27 @@ describe('durable semantic synchronization', () => {
     expect(await storage.acknowledgeAccountSyncNotice(account, null)).toEqual({ kind: 'ignored' })
     await storage.close()
   })
+  it('uses latest pending list changes for fallback and records draft activity', async () => {
+    const { storage } = await setup()
+    await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    await storage.ensureVerifiedAccountProfile(account)
+    const draft = { id: uid(501), name: 'Draft', symbol: '🛒', kind: 'permanent' as const, createdAt: Date.parse('2026-11-01T00:00:00Z') }
+    await storage.saveAccountDraftList(account, draft)
+    await storage.recordAccountSyncContext(account, draft.id)
+    expect((await storage.readAccountSemanticState(account))?.activity[0]).toBe(draft.id)
+    await storage.promoteAccountDraft((await storage.readAccountDraftLists(account))[0], {
+      id: uid(502), ownerId: account, name: 'Draft', kind: 'permanent', position: 4,
+    })
+    expect((await storage.readAccountSemanticState(account))?.activity[0]).toBe(uid(502))
+    await storage.close()
+    const second = await setup()
+    await second.storage.queueLocalListChange(account, b, 'rename', 'B edited')
+    second.rpc.mockResolvedValueOnce(page(11, [rem(11, a)]))
+    await pullSemanticAccountFeed(second.api, second.storage, account, active)
+    expect((await second.storage.readAccountSemanticState(account))?.pending?.fate.nextListId).toBe(b)
+    await second.storage.close()
+  })
   it('suppresses an operation initiated on this device', async () => {
     const { storage, rpc, api } = await setup()
     await storage.rememberAccountSyncOperation(account, op)
