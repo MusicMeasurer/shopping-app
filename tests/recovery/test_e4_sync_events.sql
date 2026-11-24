@@ -56,13 +56,18 @@ begin
  or exists(select 1 from jsonb_array_elements(response->'events') e where e->>'list_id' in (s::text,t::text) and e->'snapshot'<>'null'::jsonb)
  then raise exception 'Removal reason or masking incorrect'; end if;
  if jsonb_array_length(response->'events')<>(select count(*) from public.pull_e4_account_changes(a,0,500)) then raise exception 'Legacy page count changed'; end if;
- if has_function_privilege('anon','public.pull_e4_account_changes_v2(uuid,bigint,integer,bigint)','EXECUTE')
- or has_function_privilege('authenticated','shoppingapp_internal.expire_e4_feed_semantics()','EXECUTE') then raise exception 'Unexpected grant'; end if;
+ if has_function_privilege('anon','public.pull_e4_account_changes_v2(uuid,bigint,integer,bigint)','EXECUTE') then raise exception 'Unexpected grant'; end if;
  begin
   perform public.pull_e4_account_changes_v2(b,0,500); raise exception 'Cross-account pull accepted';
  exception when insufficient_privilege then null; end;
 end $$;
 reset role;
+-- Resolve internal function names as administrator, without granting schema usage.
+do $ begin
+ if has_function_privilege('authenticated','shoppingapp_internal.expire_e4_feed_semantics()','EXECUTE')
+ or has_function_privilege('authenticated','shoppingapp_internal.annotate_e4_removals(uuid,bigint,uuid,uuid,text,uuid,uuid,text,uuid)','EXECUTE')
+ or has_schema_privilege('authenticated','shoppingapp_internal','USAGE') then raise exception 'Internal metadata exposed'; end if;
+end $;
 update shoppingapp_internal.account_feed_events set recorded_at=now()-interval '7 days'
  where account_id='41000000-0000-4000-8000-000000000001' and semantics is not null;
 set local role authenticated;
