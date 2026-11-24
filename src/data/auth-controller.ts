@@ -161,6 +161,13 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
         if (!valid()) return false
         if (generation !== startedAt) continue
         if (error) return false
+        if (accountIdFromSessionCandidate(data.session) !== expectedAccountId) {
+          // The old workspace must close, but its scope guard must not cancel
+          // the normal verification of a genuinely different saved session.
+          emit(transitionAuthView(view, { type: 'SESSION_INVALIDATED' }))
+          if (accountIdFromSessionCandidate(data.session)) void initialize()
+          return false
+        }
         const confirmed = await resolveSession(data.session, startedAt, valid)
         if (!valid()) return false
         if (generation !== startedAt) continue

@@ -171,7 +171,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     })
     return () => { active = false }
   }, [storage, workspaceAccount, workspaceRevision, pushState, pullState, listOperations, accountDialogOpen, syncQueueRevision])
-  useEffect(() => { setSyncError('') }, [currentAccount])
+  useEffect(() => { setSyncError(''); setRecoveryState(undefined) }, [currentAccount])
 
   useEffect(() => {
     if (currentAccount) { setAccountDialogOpen(false); setPassword('') }
@@ -336,7 +336,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   activeAccount.current = readyAccount === currentAccount ? currentAccount : null
   const automaticFlushRunning = useRef(new Map<string, Promise<void>>())
   const flushRequested = useRef(new Set<string>())
-  const onQueued = useCallback(() => {
+  const onQueued = useCallback((): Promise<void> | undefined => {
     setSyncQueueRevision(revision => revision + 1)
     if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
     const accountId = currentAccount
