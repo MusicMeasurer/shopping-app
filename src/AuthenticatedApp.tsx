@@ -33,6 +33,7 @@ import type { CloudCompletionRequest, Storage } from './data/storage'
 import { ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { ListOperationStatus } from './App'
 import { createAuthController } from './data/auth-controller'
+import { createSyncRecovery, shouldRecoverSync } from './data/sync-recovery'
 import { markAuthStage, exportAuthStages } from './data/auth-flow-diagnostics'
 import { createSignOutGuard } from './data/signout-guard'
 import { checkVerifiedAccountId, verifiedAccountId, verifySessionIdentity } from './data/verified-account'
@@ -81,8 +82,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [loadedArchive, setLoadedArchive] = useState<{ accountId: string; snapshots: CloudArchiveCompletion[] } | null>(null)
   const [cloudArchiveError, setCloudArchiveError] = useState('')
   const [cloudArchiveBusy, setCloudArchiveBusy] = useState(false)
-  const loadingArchiveFor = useRef<string | null>(null)
-  const archiveRefreshRequested = useRef<string | null>(null)
+  const archiveWorkers = useRef(new Map<string, Promise<void>>())
+  const archiveRefreshRequested = useRef(new Set<string>())
   const [completionNotice, setCompletionNotice] = useState<(ListActionMessage & { accountId: string })>()
   const [completionError, setCompletionError] = useState('')
   const [completionPreflight, setCompletionPreflight] = useState('')
@@ -95,7 +96,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [deletionReview, setDeletionReview] = useState<{ accountId: string; localListId: ListId; remoteListId: string; items: { id: string; name: string }[] } | null>(null)
   const [workspaceRevision, setWorkspaceRevision] = useState(0)
   const [cloudMappingRevision, setCloudMappingRevision] = useState(0)
-  const requestCloudRefresh = useRef<(() => void) | undefined>(undefined)
+  const requestCloudRefresh = useRef<(() => Promise<void> | undefined) | undefined>(undefined)
+  const pullRunningFor = useRef<string | null>(null)
+  const deferredCloudRefresh = useRef<string | null>(null)
+  const requestRecovery = useRef<((force: boolean) => void) | undefined>(undefined)
+  const [recoveryState, setRecoveryState] = useState<{ account: string; status: 'syncing' | 'done' | 'error' }>()
   const lastCloudCheck = useRef<{ accountId: string; at: number } | undefined>(undefined)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const [syncError, setSyncError] = useState('')
@@ -106,7 +111,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [pendingSync, setPendingSync] = useState<{ account: string; pending: boolean }>()
   const [syncQueueRevision, setSyncQueueRevision] = useState(0)
   const [dismissedSyncError, setDismissedSyncError] = useState(false)
-  const completionWorkers = useRef(new Set<string>())
+  const completionWorkers = useRef(new Map<string, Promise<void>>())
   const completionRequested = useRef(new Set<string>())
   const viewAccount = view.status === 'account' || view.status === 'offline-account' ? view.accountId : null
   const accountWasDeleted = !!viewAccount && deletion.deleted.has(viewAccount)
@@ -329,20 +334,20 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   // A verified session is not enough: the account workspace must have a
   // durable local profile before any background sync or refresh may run.
   activeAccount.current = readyAccount === currentAccount ? currentAccount : null
-  const automaticFlushRunning = useRef(new Set<string>())
+  const automaticFlushRunning = useRef(new Map<string, Promise<void>>())
   const flushRequested = useRef(new Set<string>())
   const onQueued = useCallback(() => {
     setSyncQueueRevision(revision => revision + 1)
     if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
     const accountId = currentAccount
-    if (automaticFlushRunning.current.has(accountId)) {
+    const running = automaticFlushRunning.current.get(accountId)
+    if (running) {
       flushRequested.current.add(accountId)
-      return
+      return running
     }
-    automaticFlushRunning.current.add(accountId)
     setPushState({ account: accountId, status: 'syncing' })
     setDismissedSyncError(false)
-    void (async () => {
+    const task = (async () => {
       try {
         if (activeAccount.current !== accountId) return
         if ((await storage.readGuestImports(accountId)).some(batch => batch.archiveOnly)) {
@@ -358,7 +363,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           setSyncError('')
         }
         if (!(await storage.readAccountPending(accountId)).length) {
-          if (activeAccount.current === accountId) setPushState({ account: accountId, status: 'done' })
+          if (activeAccount.current === accountId) {
+            setSyncError('')
+            setPushState({ account: accountId, status: 'done' })
+          }
           return
         }
         if (await verifiedAccountId(client) !== accountId) throw new Error('Account could not be verified')
@@ -396,12 +404,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           setSyncError('Не удалось отправить изменения. Повторите синхронизацию.')
           setPushState({ account: accountId, status: 'error' })
         }
-      } finally {
-        automaticFlushRunning.current.delete(accountId)
-        const requested = flushRequested.current.delete(accountId)
-        if (requested && activeAccount.current === accountId) onQueued()
       }
-    })()
+    })().finally((): void | Promise<void> => {
+      automaticFlushRunning.current.delete(accountId)
+      const requested = flushRequested.current.delete(accountId)
+      if (requested && activeAccount.current === accountId) return onQueued()
+    })
+    automaticFlushRunning.current.set(accountId, task)
+    return task
   }, [client, currentAccount, readyAccount, storage])
 
   // A browser restart can leave durable operations queued without a new edit.
@@ -410,14 +420,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   useEffect(() => {
     if (currentAccount && readyAccount === currentAccount && client) onQueued()
   }, [currentAccount, readyAccount, client, onQueued])
-
-  // Retry durable account edits when connectivity returns; never sync guest data.
-  useEffect(() => {
-    if (!currentAccount || readyAccount !== currentAccount || !client) return
-    const retry = () => onQueued()
-    window.addEventListener('online', retry)
-    return () => window.removeEventListener('online', retry)
-  }, [client, currentAccount, readyAccount, onQueued])
 
   // Subscriptions are effects, not render-time side effects. React StrictMode
   // may mount, dispose and mount again during development.
@@ -460,23 +462,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     }
   }, [client, storage, checkDeletedAccount])
 
-  useEffect(() => {
-    if (!controller) return
-    const recheck = () => { if (navigator.onLine) void controller.initialize() }
-    const onVisible = () => {
-      if (document.visibilityState !== 'visible') return
-      const last = lastCloudCheck.current
-      if (last && last.accountId === signedInAccount && performance.now() - last.at < 30_000) return
-      recheck()
-    }
-    window.addEventListener('online', recheck)
-    document.addEventListener('visibilitychange', onVisible)
-    return () => {
-      window.removeEventListener('online', recheck)
-      document.removeEventListener('visibilitychange', onVisible)
-    }
-  }, [controller, signedInAccount])
-
   // Clear transient controls on identity change; startup publishes verified
   // metadata and bindings together after the snapshot has been restored.
   useEffect(() => {
@@ -508,26 +493,24 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (!client || !currentAccount || readyAccount !== currentAccount) return
     const accountId = currentAccount
     let disposed = false
-    let running = false
+    let running: Promise<void> | undefined
     let queued: 'all' | 'changed' | undefined
     const pulledRevisions = new Map<string, number>()
-    const resumeIntervalMs = 30_000
-    let lastSuccess: number | undefined
     let pullFailed = false
-    let refreshOnReturn = false
-    async function refresh(mode: 'all' | 'changed' = 'all') {
+    function refresh(mode: 'all' | 'changed' = 'all'): Promise<void> | undefined {
       if (!client || disposed || !navigator.onLine) return
       if (document.visibilityState === 'hidden') {
-        refreshOnReturn = true
+        deferredCloudRefresh.current = accountId
         return
       }
-      refreshOnReturn = false
+      deferredCloudRefresh.current = null
       if (running) {
         if (mode === 'all' || !queued) queued = mode
-        return
+        return running
       }
-      running = true
       queued = undefined
+      pullRunningFor.current = accountId
+      const task = (async () => {
       let imported = 0
       let failed = false
       let pulling = false
@@ -622,8 +605,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (!disposed && activeAccount.current === accountId) {
           if (failed) lastCloudCheck.current = undefined
           else {
-            lastSuccess = performance.now()
-            lastCloudCheck.current = { accountId, at: lastSuccess }
+            lastCloudCheck.current = { accountId, at: Date.now() }
           }
         }
         if (!disposed && activeAccount.current === accountId && (pulling || failed || pullFailed || mode === 'all')) {
@@ -635,26 +617,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             : 'Не удалось обновить некоторые списки. Повторите синхронизацию.')
           else setCloudRefreshStatus(imported > 0 ? 'Обновлено покупок из облака: ' + imported : '')
         }
-        running = false
-        if (queued) void refresh(queued)
       }
+      })().finally((): void | Promise<void> => {
+        running = undefined
+        if (disposed) return
+        if (pullRunningFor.current === accountId) pullRunningFor.current = null
+        if (queued) return refresh(queued)
+      })
+      running = task
+      return task
     }
-    const onVisible = () => {
-      if (!running && document.visibilityState === 'visible' &&
-          (refreshOnReturn || pullFailed || lastSuccess === undefined || performance.now() - lastSuccess >= resumeIntervalMs)) void refresh('changed')
-    }
-    const onOnline = () => void refresh('changed')
-    requestCloudRefresh.current = onOnline
-    document.addEventListener('visibilitychange', onVisible)
-    window.addEventListener('online', onOnline)
+    requestCloudRefresh.current = () => refresh('changed')
     const stopWatching = watchCloudListChanges(client, accountId, () => void refresh('changed'))
     void refresh()
     return () => {
       disposed = true
       requestCloudRefresh.current = undefined
+      if (pullRunningFor.current === accountId) pullRunningFor.current = null
+      if (deferredCloudRefresh.current === accountId) deferredCloudRefresh.current = null
       stopWatching()
-      document.removeEventListener('visibilitychange', onVisible)
-      window.removeEventListener('online', onOnline)
     }
   }, [client, currentAccount, readyAccount, storage])
 
@@ -1222,14 +1203,15 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     return true
   }
 
-  async function processListOperations(accountId: string) {
+  function processListOperations(accountId: string): Promise<void> | undefined {
     if (!client || activeAccount.current !== accountId || !navigator.onLine) return
     completionRequested.current.add(accountId)
-    if (completionWorkers.current.has(accountId)) return
-    completionWorkers.current.add(accountId)
+    const running = completionWorkers.current.get(accountId)
+    if (running) return running
     setCompletionBusy(true)
     const stillActive = () => activeAccount.current === accountId
     let createdDrafts = false
+    const task = (async () => {
     try {
       setCompletionError('')
       const coordinator = createCloudCompletionCoordinator(storage, client, accountId, stillActive)
@@ -1347,14 +1329,18 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       } while (completionRequested.current.has(accountId) && stillActive())
     } catch {
       if (stillActive()) setCompletionError('Не удалось синхронизировать операции со списками. Повторите синхронизацию.')
-    } finally {
+    }
+    })().finally((): void | Promise<void> => {
       completionWorkers.current.delete(accountId)
-      completionRequested.current.delete(accountId)
+      const requested = completionRequested.current.delete(accountId)
       if (stillActive()) {
         setCompletionBusy(false)
-        if (createdDrafts) onQueued()
+        if (createdDrafts) void onQueued()
+        if (requested && navigator.onLine) return processListOperations(accountId)
       }
-    }
+    })
+    completionWorkers.current.set(accountId, task)
+    return task
   }
   useEffect(() => {
     if (!workspaceAccount || workspaceAccount !== readyAccount) return
@@ -1401,15 +1387,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   async function recoverCloudCompletions() {
     if (currentAccount) await processListOperations(currentAccount)
   }
-  async function loadCloudArchive(refresh = false) {
-    if (!client || !currentAccount) return
-    if (loadingArchiveFor.current === currentAccount) {
-      if (refresh) archiveRefreshRequested.current = currentAccount
-      return
+  function loadCloudArchive(refresh = false): Promise<void> | undefined {
+    if (!client || !currentAccount || activeAccount.current !== currentAccount) return
+    const accountId = currentAccount
+    const running = archiveWorkers.current.get(accountId)
+    if (running) {
+      if (refresh) archiveRefreshRequested.current.add(accountId)
+      return running
     }
-    loadingArchiveFor.current = currentAccount
     setCloudArchiveBusy(true)
     setCloudArchiveError('')
+    const task = (async () => {
     try {
       // Verify the active identity; never show snapshots from an old account.
       const { data: { user }, error: identityError } = await client.auth.getUser()
@@ -1423,19 +1411,21 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     } catch (err) {
       if (activeAccount.current === currentAccount)
         setCloudArchiveError(err instanceof Error ? err.message : 'Не удалось загрузить архив')
-    } finally {
-      if (loadingArchiveFor.current === currentAccount) {
-        loadingArchiveFor.current = null
-        setCloudArchiveBusy(false)
-        if (archiveRefreshRequested.current === currentAccount && activeAccount.current === currentAccount) {
-          archiveRefreshRequested.current = null
-          void loadCloudArchive()
-        }
-      }
     }
+    })().finally((): void | Promise<void> => {
+      archiveWorkers.current.delete(accountId)
+      const requested = archiveRefreshRequested.current.delete(accountId)
+      if (activeAccount.current === accountId) {
+        setCloudArchiveBusy(false)
+        if (requested) return loadCloudArchive()
+      }
+    })
+    archiveWorkers.current.set(accountId, task)
+    return task
   }
   useEffect(() => {
     setLoadedArchive(null)
+    setCloudArchiveBusy(false)
     setCloudArchiveError('')
     setCompletionPreflight('')
     setCompletionError('')
@@ -1458,6 +1448,107 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     // Refresh once when this account's workspace is ready.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentAccount, readyAccount])
+
+  // One recovery owner for resume, reconnect and explicit retry. Existing
+  // workers keep their own account-scoped serialization and durable receipts.
+  // Use the latest render's callbacks/state without reinstalling listeners
+  // or abandoning an in-flight recovery on every status update.
+  const recoveryContext = {
+    currentAccount, readyAccount, sessionAccount, workspaceAccount, busy,
+    pendingSync, pushState, pullState, recoveryState, cloudArchiveError, cloudArchiveBusy,
+    cloudArchives, completionError, listOperations,
+    onQueued, processListOperations, loadCloudArchive,
+  }
+  const latestRecovery = useRef(recoveryContext)
+  latestRecovery.current = recoveryContext
+  useEffect(() => {
+    if (!controller) return
+    const account = currentAccount
+    let disposed = false
+    const stillCurrent = () => !disposed && !!account && activeAccount.current === account &&
+      latestRecovery.current.currentAccount === account && latestRecovery.current.readyAccount === account &&
+      !latestRecovery.current.busy
+    const runner = createSyncRecovery(async (force, isCurrent) => {
+      if (!account || !stillCurrent() || !navigator.onLine || document.visibilityState !== 'visible') return
+      const valid = () => isCurrent() && stillCurrent()
+      setRecoveryState({ account, status: 'syncing' })
+      setDismissedSyncError(false)
+      try {
+        if (!await controller.recheckSession(account, valid)) {
+          if (valid()) setRecoveryState({ account, status: 'error' })
+          return
+        }
+        if (!valid()) return
+        if (!navigator.onLine || document.visibilityState !== 'visible') {
+          deferredCloudRefresh.current = account
+          setRecoveryState({ account, status: 'done' })
+          return
+        }
+        await latestRecovery.current.onQueued()
+        if (!valid()) return
+        await latestRecovery.current.processListOperations(account)
+        if (!valid()) return
+        // A list-operation worker can create additional pending item writes.
+        const push = automaticFlushRunning.current.get(account)
+        if (push) await push
+        if (!valid()) return
+        if (!navigator.onLine || document.visibilityState !== 'visible') {
+          deferredCloudRefresh.current = account
+          setRecoveryState({ account, status: 'done' })
+          return
+        }
+        await requestCloudRefresh.current?.()
+        if (!valid()) return
+        const state = latestRecovery.current
+        if (force || state.cloudArchiveError || state.cloudArchiveBusy || state.cloudArchives === null)
+          await state.loadCloudArchive(true)
+        if (valid()) setRecoveryState({ account, status: 'done' })
+      } catch {
+        if (valid()) setRecoveryState({ account, status: 'error' })
+      }
+    })
+    const request = (force: boolean) => {
+      if (disposed || !navigator.onLine || document.visibilityState !== 'visible') return
+      if (latestRecovery.current.busy) return
+      if (!account || !stillCurrent()) {
+        // Restore an offline/locally browsed session through the existing
+        // controller; a new ready cloud workspace starts its usual workers.
+        if (!account) void controller.initialize()
+        return
+      }
+      const state = latestRecovery.current
+      const last = lastCloudCheck.current
+      const pending = state.pendingSync?.account !== account || state.pendingSync.pending !== false
+      const unhealthy = state.pushState?.account !== account || state.pushState.status !== 'done' ||
+        state.pullState?.account !== account || state.pullState.status !== 'done' ||
+        (state.recoveryState?.account === account && state.recoveryState.status !== 'done') ||
+        !!state.cloudArchiveError || !!state.completionError ||
+        state.listOperations.some(row => row.accountId === account && (row.phase !== 'error' || !!row.retry))
+      if (shouldRecoverSync({
+        force, unhealthy, pending,
+        working: runner.running() || automaticFlushRunning.current.has(account) || completionWorkers.current.has(account) ||
+          pullRunningFor.current === account || archiveWorkers.current.has(account),
+        deferred: deferredCloudRefresh.current === account,
+        lastSuccess: last?.accountId === account ? last.at : undefined,
+        now: Date.now(),
+      })) runner.request(force)
+    }
+    requestRecovery.current = request
+    const onVisible = () => request(false)
+    const onOnline = () => request(true)
+    const onPageShow = (event: PageTransitionEvent) => { if (event.persisted) request(false) }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('pageshow', onPageShow)
+    return () => {
+      disposed = true
+      runner.dispose()
+      if (requestRecovery.current === request) requestRecovery.current = undefined
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('pageshow', onPageShow)
+    }
+  }, [controller, currentAccount, readyAccount, sessionAccount])
 
   async function signOut() {
     if (!controller || busy) return
@@ -1570,20 +1661,19 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const pendingWork = pendingSync && pendingSync.account === workspaceAccount ? pendingSync.pending : undefined
   const ownPush = pushState?.account === currentAccount ? pushState?.status : undefined
   const ownPull = pullState?.account === currentAccount ? pullState?.status : undefined
-  const syncFailed = ownPush === 'error' || ownPull === 'error'
+  const ownRecovery = recoveryState?.account === currentAccount ? recoveryState?.status : undefined
+  const syncFailed = ownPush === 'error' || ownPull === 'error' || ownRecovery === 'error' || !!(currentAccount && cloudArchiveError)
   const activeOperations = listOperations.filter(row => row.accountId === workspaceAccount)
   const listSyncFailed = !!completionError || activeOperations.some(row => row.phase === 'error' && row.retry)
   const syncState: ProfileSyncState | undefined = !workspaceAccount ? undefined
     : !syncOnline || !!offlineAccount ? (pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting' : 'offline')
-    : ownPush === 'syncing' || ownPull === 'syncing' || activeOperations.some(row => row.phase === 'running') ? 'syncing'
+    : ownRecovery === 'syncing' || ownPush === 'syncing' || ownPull === 'syncing' || activeOperations.some(row => row.phase === 'running') ? 'syncing'
     : syncFailed || listSyncFailed ? 'error'
     : pendingWork || activeOperations.some(row => row.phase !== 'error' || row.retry) ? 'waiting'
     : ownPush === 'done' && ownPull === 'done' && pendingWork === false ? 'synced' : 'waiting'
   function retrySync() {
     setDismissedSyncError(false)
-    if (currentAccount && listSyncFailed) void processListOperations(currentAccount)
-    onQueued()
-    setCloudMappingRevision(value => value + 1)
+    requestRecovery.current?.(true)
   }
   return <>
     {localCopyRemovalError && <p role="alert">{localCopyRemovalError}
@@ -1718,7 +1808,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       } : undefined} />
     {currentAccount && transferError && <p role="status">{transferError}</p>}
     {currentAccount && syncOnline && syncFailed && !dismissedSyncError && <section className="sync-error" aria-label="Ошибка синхронизации">
-      <p role="alert">{syncError || cloudRefreshStatus || 'Не удалось синхронизировать данные.'}</p>
+      <p role="alert">{ownRecovery === 'error' ? 'Не удалось проверить подключение к аккаунту. Повторите синхронизацию.'
+        : syncError || cloudRefreshStatus || cloudArchiveError || 'Не удалось синхронизировать данные.'}</p>
       <button type="button" onClick={retrySync}>Повторить</button>
       <button type="button" onClick={() => setDismissedSyncError(true)}>Продолжить без синхронизации</button>
     </section>}

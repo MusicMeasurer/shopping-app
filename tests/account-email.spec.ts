@@ -671,3 +671,49 @@ for (const failLogout of [false, true]) test(`removing the authorized local copy
   expect(logoutObserved).toBe(true)
   expect(calls.filter(call => call.path === '/rest/v1/rpc/request_account_deletion')).toHaveLength(0)
 })
+
+
+test('recovers archive identity failure through common retry and resume without reload', async ({ page }) => {
+  const calls = await mockCloud(page)
+  await page.goto('/shopping-app/')
+  const profile = page.locator('.profile-menu-trigger')
+  await profile.click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  const archive = page.getByRole('button', { name: /^Архив,/ })
+  await archive.click()
+  const load = page.getByRole('button', { name: 'Показать завершённые покупки', exact: true })
+  await expect(load).toBeEnabled()
+  await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
+  let fail = true
+  await page.route(`**${fixturePath}/auth/v1/user**`, async route => {
+    if (fail) await route.abort('failed')
+    else await route.fallback()
+  })
+  // A temporary client-side failure must not be treated as sign-out.
+  await load.click()
+  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
+  await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'error')
+  fail = false
+  const start = calls.length
+  await page.getByRole('region', { name: 'Ошибка синхронизации' }).getByRole('button', { name: 'Повторить', exact: true }).click()
+  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
+  await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
+  expect(calls.slice(start).some(call => call.path === '/auth/v1/user')).toBe(true)
+  expect(calls.slice(start).some(call => call.path === '/rest/v1/e4_archive_completions')).toBe(true)
+  await expect(load).toBeVisible()
+  // Reproduce another temporary error within the healthy 30s interval;
+  // visibility alone must trigger the same recovery, without online/reload.
+  fail = true
+  await load.click()
+  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
+  fail = false
+  await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
+  await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
+  await expect(load).toBeVisible()
+  expect(calls.filter(call => call.path === '/auth/v1/logout')).toHaveLength(0)
+})

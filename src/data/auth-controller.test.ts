@@ -445,3 +445,52 @@ it('recovers a transient first verification failure with a normal retry, no page
   expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
   controller.dispose()
 })
+
+
+describe('active session recovery', () => {
+  it('does not authorize work on a retained view after a transient failure, then rechecks successfully', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const verify = vi.fn<() => Promise<string | null>>().mockResolvedValue(id)
+    const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+    await controller.initialize()
+    verify.mockRejectedValueOnce(new Error('temporary network failure'))
+    expect(await controller.recheckSession(id)).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+    expect(await controller.recheckSession(id)).toBe(true)
+    verify.mockResolvedValueOnce(null)
+    expect(await controller.recheckSession(id)).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    controller.dispose()
+  })
+  it('bounds a stalled check and ignores its late result after a successful retry', async () => {
+    vi.useFakeTimers()
+    try {
+      const fake = fakeClient(session)
+      const views: AuthView[] = []
+      let finish!: (value: string | null) => void
+      const verify = vi.fn<() => Promise<string | null>>().mockResolvedValue(id)
+      const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+      await controller.initialize()
+      verify.mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+      const stalled = controller.recheckSession(id)
+      await vi.advanceTimersByTimeAsync(20_000)
+      expect(await stalled).toBe(false)
+      expect(await controller.recheckSession(id)).toBe(true)
+      finish(null)
+      await Promise.resolve()
+      expect(views.at(-1)).toEqual({ status: 'account', accountId: id })
+      controller.dispose()
+    } finally { vi.useRealTimers() }
+  })
+  it('does not authorize the old account if the session changed during recovery', async () => {
+    const fake = fakeClient(session)
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, view => views.push(view), undefined, async candidate => candidate.user.id)
+    await controller.initialize()
+    fake.client.getSession = vi.fn(async () => ({ data: { session: { ...session, user: { id: secondId } } }, error: null }))
+    expect(await controller.recheckSession(id)).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'account', accountId: secondId })
+    controller.dispose()
+  })
+})

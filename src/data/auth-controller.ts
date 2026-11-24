@@ -29,9 +29,9 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     view = next
     onChange(next)
   }
-  async function resolveSession(session: SessionCandidate | null, startedAt: number) {
+  async function resolveSession(session: SessionCandidate | null, startedAt: number, stillCurrent: () => boolean = () => true): Promise<string | undefined> {
     markAuthStage('identity_check')
-    if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+    if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
     if (!session || !verifyIdentity) {
       emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
       return
@@ -41,28 +41,29 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     if (!sameAccount) emit({ status: 'checking' })
     try {
       const verifiedId = await verifyIdentity(session)
-      if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+      if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
       if (verifiedId && verifiedId === accountIdFromSessionCandidate(session)) {
         markAuthStage('identity_verified')
         emit(transitionAuthView(view, { type: 'SESSION_RESOLVED', session }))
+        return verifiedId
       } else {
         markAuthStage('identity_rejected')
         if (restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
           const offlineId = await restoreOffline(session).catch(() => null)
-          if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+          if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
           emit(offlineId && offlineId === accountIdFromSessionCandidate(session)
             ? { status: 'offline-account', accountId: offlineId } : { status: 'guest' })
         } else emit({ status: 'guest' })
       }
     } catch (cause) {
       markAuthStage('identity_unavailable', cause)
-      if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+      if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
       // Keep the already verified workspace mounted during a transient failure.
       // Cloud operations still verify identity before syncing.
       if (sameAccount) return
       if (session && restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
         const offlineId = await restoreOffline(session).catch(() => null)
-        if (!active || signingOut || guard?.isPending() || generation !== startedAt) return
+        if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
         emit(offlineId && offlineId === accountIdFromSessionCandidate(session)
           ? { status: 'offline-account', accountId: offlineId } : { status: 'guest' })
       } else emit({ status: 'guest' })
@@ -145,9 +146,45 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     throw new Error('Сессия изменилась во время входа. Повторите вход.')
   }
 
+  // Unlike initialize(), a recovery caller needs proof that THIS attempt
+  // verified the expected account. A retained workspace is not that proof.
+  // Bound the whole check, including SDK storage-lock waits; late results
+  // cannot publish a view or authorize queue processing.
+  async function recheckSession(expectedAccountId: string, isCurrent: () => boolean = () => true): Promise<boolean> {
+    let expired = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+    const valid = () => !expired && active && !signingOut && !guard?.isPending() && isCurrent()
+    const verify = async () => {
+      for (let attempt = 0; attempt < 3 && valid(); attempt++) {
+        const startedAt = generation
+        const { data, error } = await client.getSession()
+        if (!valid()) return false
+        if (generation !== startedAt) continue
+        if (error) return false
+        const confirmed = await resolveSession(data.session, startedAt, valid)
+        if (!valid()) return false
+        if (generation !== startedAt) continue
+        return confirmed === expectedAccountId
+      }
+      return false
+    }
+    try {
+      return await Promise.race([
+        verify(),
+        new Promise<boolean>(resolve => { timeout = setTimeout(() => { expired = true; resolve(false) }, 20_000) }),
+      ])
+    } catch {
+      return false
+    } finally {
+      expired = true
+      clearTimeout(timeout)
+    }
+  }
+
   return {
     initialize,
     confirmSession,
+    recheckSession,
     async signIn(email: string, password: string) {
       markAuthStage('credentials_requested')
       const { error } = await client.signInWithPassword({ email, password })
