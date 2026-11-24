@@ -33,7 +33,7 @@ function parseSemantics(raw: unknown, change: AccountFeedChange): SyncSemantics 
   if (reason !== 'deleted' && reason !== 'merged' && reason !== 'completed' && reason !== 'archived')
     throw new Error('Unknown semantic reason')
   if (change.entity === 'list' && reason === 'archived') throw new Error('Invalid list archive reason')
-  const common = { operationId: id(row.operation_id), reason, sourceName: name(row.source_name) }
+  const common: SyncSemantics = { operationId: id(row.operation_id), reason, sourceName: name(row.source_name) }
   if (reason === 'merged') {
     const targetListId = id(row.target_list_id)
     if (change.entity === 'list' && targetListId === change.listId) throw new Error('Self merge')

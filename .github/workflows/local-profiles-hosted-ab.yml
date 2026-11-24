@@ -64,6 +64,8 @@ jobs:
       - run: npm ci
       - name: Real Supabase RPC to IndexedDB receipts and conflict recovery
         run: npx vitest run src/e3-local-cloud.integration.test.ts
+      - name: Verify read-only SYNC-EVENTS v2 client on hosted lab
+        run: npx vitest run src/data/sync-event-feed.hosted.test.ts
       - name: Build PWA against pinned disposable lab
         env:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
