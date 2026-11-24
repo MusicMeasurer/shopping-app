@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { syncNoticeText, localSyncListId } from './sync-notice-ui'
+import { syncNoticeText, localSyncListId, lostSyncListId, relatedItemText } from './sync-notice-ui'
 import type { SyncNotice } from '../data/sync-event-fate'
 const base: SyncNotice = { position: '1', operationId: 'op', entity: 'list', sourceId: 'a', sourceName: 'Продукты', reason: 'deleted' }
 describe('sync context notice UI contract', () => {
@@ -22,5 +22,17 @@ describe('sync context notice UI contract', () => {
     expect(localSyncListId('draft', bindings, [{ id: 'draft' }])).toBe('draft')
     expect(localSyncListId('deleted', bindings, [{ id: 'local' }])).toBeNull()
     expect(localSyncListId(null, bindings, [{ id: 'local' }])).toBeNull()
+  })
+  it('hides only a lost list, never the surviving list of a removed item', () => {
+    const origin = { accountId: 'account', listId: 'a', itemId: 'item' }
+    expect(lostSyncListId({ origin, fate: { kind: 'recover', nextListId: 'a', resetViewport: true } })).toBeNull()
+    expect(lostSyncListId({ origin, fate: { kind: 'recover', nextListId: 'b', resetViewport: true } })).toBe('a')
+    expect(lostSyncListId(undefined)).toBeNull()
+  })
+  it('includes the independently confirmed fate of an edited item in a lost list', () => {
+    const item = { ...base, entity: 'item' as const, sourceId: 'item', sourceName: 'Чай', reason: 'archived' as const }
+    expect(relatedItemText(base, item)).toBe('Товар «Чай» перемещён в архив на другом устройстве.')
+    expect(relatedItemText(item, item)).toBeUndefined()
+    expect(relatedItemText(base)).toBeUndefined()
   })
 })

@@ -212,8 +212,8 @@ test.describe('queued cloud list operations', () => {
   })
 })
 
-test('remote active-list deletion is acknowledged once and survives restart', async ({ page }) => {
-  test.setTimeout(120000)
+test('remote item archival and active-list deletion are acknowledged once and survive restart', async ({ page }) => {
+  test.setTimeout(180000)
   const client = createClient(url, key, { auth: { persistSession: false } })
   const { data: auth, error } = await client.auth.signInWithPassword({ email, password })
   expect(error).toBeNull()
@@ -239,22 +239,28 @@ test('remote active-list deletion is acknowledged once and survives restart', as
     })
     if (response.error) throw response.error
   }
-  async function captured() {
-    return page.evaluate(async account => new Promise<string | null>((resolve, reject) => {
+  async function captured(field: 'listId' | 'itemId' = 'listId') {
+    return page.evaluate(async ({ account, field }) => new Promise<string | null>((resolve, reject) => {
       const open = indexedDB.open('shopping-app')
       open.onerror = () => reject(open.error)
       open.onsuccess = () => {
         const db = open.result
         const tx = db.transaction('accountSyncEvents', 'readonly')
         const request = tx.objectStore('accountSyncEvents').get(account)
-        request.onsuccess = () => resolve(request.result?.context?.listId ?? null)
+        request.onsuccess = () => resolve(request.result?.context?.[field] ?? null)
         request.onerror = () => reject(request.error)
         tx.oncomplete = () => db.close()
       }
-    }), accountId)
+    }), { account: accountId, field })
   }
   try {
     const keepId = await create(keepName), lostId = await create(lostName)
+    const itemId = crypto.randomUUID(), itemName = 'SYNC_UI_ITEM_' + suffix
+    const seed = await client.rpc('apply_e4_item_change', {
+      p_operation: crypto.randomUUID(), p_list: lostId, p_action: 'add', p_item: itemId,
+      p_name: itemName, p_purchased: true, p_expected_version: null, p_quantity: null, p_unit: null,
+    })
+    expect(seed.error).toBeNull()
     await page.goto('/shopping-app/')
     await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
     await page.getByLabel('Email').fill(email)
@@ -264,9 +270,28 @@ test('remote active-list deletion is acknowledged once and survives restart', as
     await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
     if (await decline.isVisible()) await decline.click()
     await page.getByRole('button', { name: keepName, exact: true }).click()
-    await expect.poll(captured).toBe(keepId)
+    await expect.poll(() => captured()).toBe(keepId)
     await page.getByRole('button', { name: lostName, exact: true }).click()
-    await expect.poll(captured).toBe(lostId)
+    await expect.poll(() => captured()).toBe(lostId)
+    await page.getByRole('button', { name: 'Изменить ' + itemName, exact: true }).click()
+    const editor = page.getByRole('dialog', { name: 'Редактирование товара' })
+    await editor.getByLabel('Название').fill('Несохранённый черновик')
+    await expect.poll(() => captured('itemId')).toBe(itemId)
+    const current = await client.from('shopping_lists').select('revision').eq('id', lostId).single()
+    expect(current.error).toBeNull()
+    const archive = await client.rpc('complete_e4_list', {
+      p_operation: crypto.randomUUID(), p_list: lostId, p_expected_revision: current.data!.revision, p_mode: 'archive_purchased',
+    })
+    expect(archive.error).toBeNull()
+    const itemNotice = page.getByRole('dialog', { name: 'Товар в архиве' })
+    await expect(itemNotice).toBeVisible({ timeout: 45000 })
+    await expect(itemNotice).toContainText('Товар «' + itemName + '» перемещён в архив на другом устройстве.')
+    await expect(editor).toHaveCount(0)
+    await itemNotice.getByRole('button', { name: 'Понятно', exact: true }).click()
+    await expect(itemNotice).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: lostName, exact: true })).toBeVisible()
+    await expect(page.getByRole('checkbox', { name: itemName, exact: true })).toHaveCount(0)
+    await expect.poll(() => captured()).toBe(lostId)
     await remove(lostId)
     const notice = page.getByRole('dialog', { name: 'Список удалён' })
     await expect(notice).toBeVisible({ timeout: 45000 })

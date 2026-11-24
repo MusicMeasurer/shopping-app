@@ -1,4 +1,5 @@
 import type { SyncNotice } from '../data/sync-event-fate'
+import type { RecoveryCandidate } from '../data/sync-event-state'
 
 export function syncNoticeText(notice: SyncNotice): { title: string; message: string } {
   const subject = (notice.entity === 'list' ? 'Список' : 'Товар') + ' «' + notice.sourceName + '»'
@@ -20,4 +21,15 @@ export function localSyncListId(id: string | null, bindings: Readonly<Record<str
   available: readonly { id: string }[]): string | null {
   if (id === null) return null
   return available.find(row => (bindings[row.id] ?? row.id) === id)?.id ?? null
+}
+
+/** A lost item in a surviving list must not hide the list itself. */
+export function lostSyncListId(candidate: RecoveryCandidate | undefined): string | null {
+  if (!candidate?.origin.listId) return null
+  return candidate.fate.nextListId !== candidate.origin.listId ? candidate.origin.listId : null
+}
+
+export function relatedItemText(notice: SyncNotice, itemRemoval?: SyncNotice): string | undefined {
+  return notice.entity === 'list' && itemRemoval?.entity === 'item'
+    ? syncNoticeText(itemRemoval).message : undefined
 }

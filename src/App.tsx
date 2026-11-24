@@ -1,6 +1,6 @@
 import { workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
 import { noticeKey, type AccountSemanticState, type Acknowledgement } from './data/sync-event-state'
-import { localSyncListId } from './domain/sync-notice-ui'
+import { localSyncListId, lostSyncListId } from './domain/sync-notice-ui'
 import { SyncContextNotice } from './SyncContextNotice'
 import { ListMergeDialog } from './ListMergeDialog'
 import type { ListMergeActions } from './domain/list-merge'
@@ -674,11 +674,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const mergedSources = new Set(queuedMerges.map(row => row.source.localListId))
   const mergedLists = new Set(queuedMerges.flatMap(row => [row.source.localListId, row.target.localListId]))
   const pendingCompletions = new Map((localCompletions ?? []).map(row => [row.localListId, row]))
-  const visibleLists = (accountId === null && localLists !== null ? localLists : (accountId !== null ? [...accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })), ...drafts] : lists.map(row => ({ ...row, kind: 'permanent' as const })))).filter(row => {
-    if (localCopy && mergedSources.has(row.id)) return false
-    const queued = pendingCompletions.get(row.id)
-    return !queued || (queued.mode !== 'delete_list' && (row.kind !== 'oneoff' || queued.mode === 'archive_purchased'))
-  })
   const semanticEnabled = workspaceSemanticFeedEnabled && accountId !== null
   const [semanticRefresh, setSemanticRefresh] = useState(0)
   const [semanticRead, setSemanticRead] = useState<{
@@ -687,6 +682,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }>()
   const [semanticBusy, setSemanticBusy] = useState(false)
   const [semanticError, setSemanticError] = useState('')
+  const [semanticNavigation, setSemanticNavigation] = useState<Extract<Acknowledgement, { kind: 'navigate' }>>()
+  const [resetSemanticViewport, setResetSemanticViewport] = useState(0)
+  const [deferredAck, setDeferredAck] = useState<string>()
   const semanticRunning = useRef(false)
   const semanticAttempt = useRef('')
   const semanticLifetime = useRef(0)
@@ -694,6 +692,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     semanticLifetime.current++
     semanticRunning.current = false
     semanticAttempt.current = ''
+    setSemanticBusy(false); setSemanticError(''); setDeferredAck(undefined); setSemanticNavigation(undefined); setResetSemanticViewport(0)
     return () => { semanticLifetime.current++ }
   }, [accountId])
   const semanticLoaded = !semanticEnabled || (!!semanticRead && semanticRead.accountId === accountId &&
@@ -704,6 +703,13 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const semanticPresented = semanticState?.presented
   const semanticNotice = semanticPresented?.fate.notice
   const semanticNoticeKey = semanticPresented ? noticeKey(semanticPresented) : undefined
+  const lostListIds = new Set([lostSyncListId(semanticPresented), lostSyncListId(semanticPending)])
+  const visibleLists = (accountId === null && localLists !== null ? localLists : (accountId !== null ? [...accountCloudLists.map(row => ({ ...row, symbol: accountSymbols[row.id] ?? defaultListSymbol })), ...drafts] : lists.map(row => ({ ...row, kind: 'permanent' as const })))).filter(row => {
+    if (lostListIds.has(cloudBoundLists[row.id] ?? row.id)) return false
+    if (localCopy && mergedSources.has(row.id)) return false
+    const queued = pendingCompletions.get(row.id)
+    return !queued || (queued.mode !== 'delete_list' && (row.kind !== 'oneoff' || queued.mode === 'archive_purchased'))
+  })
   useEffect(() => {
     if (!semanticEnabled || !accountId || semanticRunning.current) return
     let cancelled = false
@@ -711,6 +717,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       if (!cancelled && !semanticRunning.current) {
         setSemanticRead({ accountId, revision: refreshRevision, lists: accountCloudLists,
           draftRevision, refresh: semanticRefresh, state })
+        setSemanticError(current => current === 'Не удалось прочитать сохранённое состояние синхронизации.' ? '' : current)
       }
     }).catch(() => {
       if (!cancelled) setSemanticError('Не удалось прочитать сохранённое состояние синхронизации.')
@@ -892,9 +899,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     (accountId === null || !!cloudBoundLists[row.id]))
   // Only recovery changes this selection. General scroll/editor preservation
   // and synchronization indicators are separate UI tasks.
-  const [semanticNavigation, setSemanticNavigation] = useState<Extract<Acknowledgement, { kind: 'navigate' }>>()
-  const [resetSemanticViewport, setResetSemanticViewport] = useState(0)
-  const [deferredAck, setDeferredAck] = useState<string>()
   const latestBindings = useRef(cloudBoundLists)
   latestBindings.current = cloudBoundLists
   const latestVisible = useRef(visibleLists)
@@ -903,10 +907,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   latestActive.current = active
   const semanticOrigin = semanticPresented?.origin ?? semanticPending?.origin
   const hasLostContext = !!semanticOrigin && (semanticOrigin.listId === (cloudBoundLists[active] ?? active) ||
-    semanticOrigin.itemId === editingId && editingId !== null)
+    semanticOrigin.itemId === editingId && editingId !== null ||
+    semanticOrigin.listId !== null && !visibleLists.some(row => row.id === active))
   const clearLostEditor = useCallback(() => {
     setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
-    setMenuTarget(null); setRenaming(null); setDraftRename(undefined)
+    setMenuTarget(null); setRenaming(null); setDraftRename(undefined); setMergeSourceId(undefined)
     setDeleteListId(null); setCompletionListId(null); setPurchaseArchive(null)
     setConflictId(undefined); setNameConflict(undefined)
   }, [])
@@ -977,6 +982,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     semanticNoticeKey, deferredAck, accountId, refreshRevision, draftRevision, runSemanticAction])
   useEffect(() => {
     if (!semanticNavigation || !semanticLoaded || semanticPending || semanticPresented) return
+    if (semanticState?.ready && semanticState.context?.listId !== semanticNavigation.nextListId) {
+      setSemanticNavigation(undefined)
+      return
+    }
     const target = localSyncListId(semanticNavigation.nextListId, cloudBoundLists, visibleLists)
     if (semanticNavigation.nextListId !== null && target === null) return
     if (semanticNavigation.nextListId === null && visibleLists.length) {
@@ -992,7 +1001,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     }
     if (semanticNavigation.resetViewport) setResetSemanticViewport(value => value + 1)
     setSemanticNavigation(undefined)
-  }, [semanticNavigation, semanticLoaded, semanticPending, semanticPresented, cloudBoundLists, visibleLists])
+  }, [semanticNavigation, semanticLoaded, semanticPending, semanticPresented, semanticState, cloudBoundLists, visibleLists])
   useLayoutEffect(() => {
     if (!resetSemanticViewport) return
     window.scrollTo(0, 0)
@@ -1296,9 +1305,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {listError && !renaming && !draftRename && !(newListDialog && localCopy) && <p role="alert" className="error">{listError}</p>}
     {!showArchive && localCopy && queuedMerges.some(row => row.target.localListId === active) &&
       <p role="status">Объединение будет отправлено при синхронизации аккаунта.</p>}
-    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <PurchaseHistory snapshots={archives} /> : visibleLists.length === 0 ? <section aria-labelledby="list-title">
+    {showArchive && accountId !== null && cloudArchive ? cloudArchive : showArchive && accountId === null ? <PurchaseHistory snapshots={archives} /> : visibleLists.length === 0 || (semanticEnabled && !list) ? <section aria-labelledby="list-title">
       <h2 id="list-title">Списки покупок</h2>
-      <p>Чтобы добавить товары, создайте список.</p>
+      <p>{visibleLists.length ? 'Выберите список.' : 'Чтобы добавить товары, создайте список.'}</p>
     </section> : <section aria-labelledby="list-title">
       <ListHeading name={list?.name ?? 'Списки покупок'} remaining={remaining}
         indicators={list && <ListIndicators kind={list.kind} cloudStatus={cloudStatus}/>}
@@ -1417,9 +1426,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}
       </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     {semanticNotice && semanticNoticeKey && <SyncContextNotice key={semanticNoticeKey} notice={semanticNotice}
-      busy={semanticBusy || !semanticLoaded} error={semanticError}
+      itemRemoval={semanticPresented?.fate.itemRemoval}
+      busy={semanticBusy || (!semanticLoaded && !semanticError)} error={semanticError}
       onAcknowledge={() => void runSemanticAction('ack', semanticNoticeKey)} />}
-    {!semanticNotice && semanticError && <p role="alert" className="error">{semanticError}</p>}
+    {!semanticNotice && semanticError && <p role="alert" className="error">{semanticError}<button type="button"
+      onClick={() => { semanticAttempt.current = ''; setSemanticError(''); setSemanticRefresh(value => value + 1) }}>Повторить</button></p>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
   </main>
 }
