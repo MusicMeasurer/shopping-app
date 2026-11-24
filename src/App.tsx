@@ -37,7 +37,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null; checkLocalProfile?: (account: string) => Promise<boolean>; hiddenAccountIds?: ReadonlySet<string> }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null; removeAuthorizedLocalCopy?: (profileId: string, accountId: string) => Promise<void>; checkLocalProfile?: (account: string) => Promise<boolean>; hiddenAccountIds?: ReadonlySet<string> }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -207,12 +207,16 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   async function removeGuestProfile(id: string, name: string, linked: boolean) {
     if (profileBusy || accountMenu?.busy || !registry || (accountId === null && !guestProfile)) return
     const source = registry.profiles.find(row => row.id === id)
-    // Never purge the local cache of a still-authorized account.
-    if (!source || (source.cloudAccountId && (source.cloudAccountId === accountId || source.cloudAccountId === accountMenu?.sessionAccount))) return
+    if (!source || !!source.cloudAccountId !== linked) return
     setProfileActionError('')
-    if (linked) {
-      if (window.confirm(`Удалить локальную копию «${name}» с устройства? Данные в облаке сохранятся.`))
-        await confirmProfileDeletion(id)
+    if (source.cloudAccountId) {
+      const authorized = source.cloudAccountId === accountId || source.cloudAccountId === accountMenu?.sessionAccount
+      if (authorized && !accountMenu?.removeAuthorizedLocalCopy) return
+      const message = `Удалить локальную копию «${name}» с устройства? ` +
+        (authorized ? 'Сначала будет выполнен выход из аккаунта. ' : '') + 'Данные в облаке сохранятся.'
+      if (!window.confirm(message)) return
+      if (authorized) await accountMenu!.removeAuthorizedLocalCopy!(id, source.cloudAccountId)
+      else await confirmProfileDeletion(id)
       return
     }
     setProfileBusy(true)
@@ -238,8 +242,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   useEffect(() => {
     if (!registry) return
     let cancelled = false
-    const linked = registry.profiles.filter(row => row.cloudAccountId && row.cloudAccountId !== accountId &&
-      row.cloudAccountId !== accountMenu?.sessionAccount)
+    const linked = registry.profiles.filter(row => row.cloudAccountId)
     void Promise.all(linked.map(async row => {
       const pending = await storage.hasAccountSyncWork(row.cloudAccountId!)
       return pending ? row.id : null
@@ -265,20 +268,22 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
     setMenuError('')
     setProfileActionError('')
   }
+  const displayedProfile = accountId ? registry?.profiles.find(row => row.cloudAccountId === accountId) : profile
   const canDeleteProfile = (row: LocalProfile) => !row.cloudAccountId ||
-    (row.cloudAccountId !== accountId && row.cloudAccountId !== accountMenu?.sessionAccount)
+    (row.cloudAccountId !== accountId && row.cloudAccountId !== accountMenu?.sessionAccount) ||
+    !!accountMenu?.removeAuthorizedLocalCopy
   const deleteProfileButton = (id: string, label: string, linked: boolean) =>
     <DeleteProfileButton name={label} disabled={actionsBusy || pendingProfiles.has(id)}
       onDelete={() => void removeGuestProfile(id, label, linked)} />
   const profileMenu = <ProfileMenu name={name} mode={mode} open={menuOpen}
     syncState={accountMenu?.syncState ?? (profile && pendingProfiles.has(profile.id) ? 'waiting' : mode === 'offline' ? 'offline' : 'local')}
     onToggle={() => menuOpen ? closeMenu() : setMenuOpen(true)} onClose={closeMenu}
-    deleteCurrent={accountId === null && profile && canDeleteProfile(profile) ? deleteProfileButton(profile.id, name, !!profile.cloudAccountId) : undefined}
+    deleteCurrent={displayedProfile && canDeleteProfile(displayedProfile) ? deleteProfileButton(displayedProfile.id, name, !!displayedProfile.cloudAccountId) : undefined}
     onRename={mode === 'local' && profile && !actionsBusy ? () => {
       setProfileActionError('')
       setProfileRename(name)
     } : undefined}>
-    {accountId === null && profile && pendingProfiles.has(profile.id) &&
+    {displayedProfile && pendingProfiles.has(displayedProfile.id) &&
       <p className="profile-delete-hint">Для удаления копии сначала синхронизируйте изменения.</p>}
     {accountMenu?.content(profile)}
     {accountMenu && accountId === null && profile && !profile.cloudAccountId &&

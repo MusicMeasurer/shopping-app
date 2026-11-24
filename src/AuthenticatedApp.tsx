@@ -69,6 +69,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [signOutError, setSignOutError] = useState('')
+  const [removingLocalCopy, setRemovingLocalCopy] = useState(false)
+  const [localCopyRemovalError, setLocalCopyRemovalError] = useState('')
   const deletedSignOutAccount = useRef<string | null>(null)
   const [accountEmailMode, setAccountEmailMode] = useState<AccountEmailMode | null>(null)
   const [accountEmailNotice, setAccountEmailNotice] = useState('')
@@ -1483,6 +1485,49 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setBusy(false)
     }
   }
+  // This operation belongs to the auth owner, not App: its cloud workspace
+  // unmounts as soon as signOut enters checking. Do not expose a new workspace
+  // until the exact confirmed local copy has been removed or safely retained.
+  async function removeAuthorizedLocalCopy(profileId: string, accountId: string) {
+    if (!controller || busy || removingLocalCopy || accountId !== sessionAccount) return
+    setBusy(true)
+    setRemovingLocalCopy(true)
+    setLocalCopyRemovalError('')
+    setSignOutError('')
+    let logoutStarted = false
+    let signedOut = false
+    try {
+      const registry = await storage.readLocalProfiles()
+      if (!registry?.profiles.some(row => row.id === profileId && row.cloudAccountId === accountId))
+        throw new Error('Profile changed')
+      if (await storage.hasAccountSyncWork(accountId)) throw new Error('Profile has unsynced operations')
+      logoutStarted = true
+      // Use the same scope as ordinary sign-out, never account deletion.
+      // A timed-out or rejected request cannot authorize purging the copy.
+      let confirmed = false
+      await controller.signOut(undefined, () => { confirmed = true })
+      if (!confirmed) throw new Error('Sign-out not confirmed')
+      signedOut = true
+      setAccountDialogOpen(false)
+      selectLocalBrowsing(false)
+      setVerifiedEmail('')
+      // The storage transaction rechecks pending work before clearing data.
+      await storage.deleteLocalProfile(profileId, profileId)
+    } catch (cause) {
+      const pending = cause instanceof Error && cause.message.includes('unsynced operations')
+      const message = pending
+        ? 'Есть неотправленные изменения. Локальная копия сохранена. Сначала завершите синхронизацию.'
+        : logoutStarted && !signedOut
+          ? 'Не удалось завершить выход. Локальная копия не удалена.'
+          : 'Не удалось удалить локальную копию. Данные сохранены.'
+      setLocalCopyRemovalError(message)
+      if (logoutStarted && !signedOut) setSignOutError(message)
+    } finally {
+      setRemovingLocalCopy(false)
+      setBusy(false)
+    }
+  }
+  if (removingLocalCopy) return <main><p role="status">Выходим из аккаунта и удаляем локальную копию…</p></main>
   if (deletion.booting) return <main><p role="status">Проверяем сохранённые профили…</p></main>
   if (workspaceAccount && (readyAccount !== workspaceAccount || profileError)) return <main>
     {transferPrompt && <WorkspaceDialog label={transferPrompt.phase === 'consent' ? 'Синхронизация локального профиля' : 'Совпадают названия списков'} className="e4-create profile-transfer-dialog"
@@ -1541,6 +1586,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCloudMappingRevision(value => value + 1)
   }
   return <>
+    {localCopyRemovalError && <p role="alert">{localCopyRemovalError}
+      <button type="button" onClick={() => setLocalCopyRemovalError('')}>Закрыть сообщение</button>
+    </p>}
     {deletionApi && deleteDialogAccount === currentAccount && currentAccount && <AccountDeletionDialog
       api={deletionApi} email={verifiedEmail} account={currentAccount} onClose={() => setDeleteDialogAccount(null)}
       onDeleted={account => {
@@ -1624,7 +1672,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         open: accountDialogOpen,
         setOpen: open => { setAccountDialogOpen(open); setError(''); if (!open) setPassword('') },
         busy, name: verifiedEmail || undefined, syncState,
-        onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount,
+        onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount, removeAuthorizedLocalCopy,
         hiddenAccountIds: deletion.deleted,
         checkLocalProfile: deletionApi ? async account => {
           const removed = await checkDeletedAccount(account, true)

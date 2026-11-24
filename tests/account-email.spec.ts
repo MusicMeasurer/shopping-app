@@ -218,7 +218,7 @@ test('reopens the signed-in account by its profile row with several empty local 
   await expect(menu).toHaveAttribute('data-profile-mode', 'cloud')
   await menu.click()
   await expect(page.getByRole('button', { name: 'Удалить локальный профиль «Мои покупки»', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: `Удалить локальный профиль «${email}»`, exact: true })).toHaveCount(0)
+  await expect(page.getByRole('button', { name: `Удалить локальный профиль «${email}»`, exact: true })).toBeVisible()
   for (let i = 0; i < 2; i++) {
     if (i > 0) await menu.click()
     await page.getByRole('button', { name: 'Добавить профиль', exact: true }).click()
@@ -610,4 +610,64 @@ test('deletes a separate local profile from the cloud menu without changing the 
   await profile.click()
   await expect(remove).toHaveCount(0)
   expect(calls.filter(call => call.path === '/auth/v1/logout')).toHaveLength(0)
+})
+
+
+for (const failLogout of [false, true]) test(`removing the authorized local copy requires confirmed logout (failure=${failLogout})`, async ({ page }) => {
+  const calls = await mockCloud(page)
+  await page.goto('/shopping-app/')
+  const profile = page.locator('.profile-menu-trigger')
+  await profile.click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  await profile.click()
+  const remove = page.getByRole('button', { name: `Удалить локальный профиль «${email}»`, exact: true })
+  await expect(remove).toBeEnabled()
+  const readProfiles = () => page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('shopping-app')
+      request.onsuccess = () => resolve(request.result)
+      request.onerror = () => reject(request.error)
+    })
+    try {
+      return await new Promise<{ cloudAccountId: string | null }[]>((resolve, reject) => {
+        const request = db.transaction('localProfileRegistry').objectStore('localProfileRegistry').get('device')
+        request.onsuccess = () => resolve(request.result.registry.profiles)
+        request.onerror = () => reject(request.error)
+      })
+    } finally { db.close() }
+  })
+  page.once('dialog', dialog => void dialog.dismiss())
+  await remove.click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  expect(calls.filter(call => call.path === '/auth/v1/logout')).toHaveLength(0)
+  expect((await readProfiles()).some(row => row.cloudAccountId === accountId)).toBe(true)
+  let logoutObserved = false
+  await page.route(`**${fixturePath}/auth/v1/logout**`, async route => {
+    // Confirm that the local copy still exists when the logout request arrives.
+    expect((await readProfiles()).some(row => row.cloudAccountId === accountId)).toBe(true)
+    logoutObserved = true
+    if (failLogout) await route.fulfill({ status: 400, json: { code: 'unexpected_failure', msg: 'Test logout failure' } })
+    else await route.fallback()
+  })
+  page.once('dialog', dialog => void dialog.accept())
+  await remove.click()
+  if (failLogout) {
+    await expect(page.getByRole('alert')).toContainText('Локальная копия не удалена')
+    await expect(page.getByRole('button', { name: 'Повторить выход' })).toBeVisible()
+    expect((await readProfiles()).some(row => row.cloudAccountId === accountId)).toBe(true)
+  } else {
+    await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+    await expect(profile).toContainText('Мои покупки')
+    expect((await readProfiles()).some(row => row.cloudAccountId === accountId)).toBe(false)
+    await page.reload()
+    await expect(profile).toHaveAttribute('data-profile-mode', 'local')
+    await profile.click()
+    await expect(remove).toHaveCount(0)
+  }
+  expect(logoutObserved).toBe(true)
+  expect(calls.filter(call => call.path === '/rest/v1/rpc/request_account_deletion')).toHaveLength(0)
 })
