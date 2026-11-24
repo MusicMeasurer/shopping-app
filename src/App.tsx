@@ -875,6 +875,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const completionDisabled = listMutationBusy || !canComplete(active)
   function requestCompletion(id: ListId) {
     if (listMutationBusy || !canComplete(id)) return
+    setMenuTarget(null)
     if (!itemsForList(visibleItems, id).length) {
       window.alert('Список пуст. Его нельзя поместить в архив.')
       return
@@ -891,6 +892,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   function requestDeletion(id: ListId) {
     if (listMutationBusy || !canDelete(id)) return
+    setMenuTarget(null)
     if (accountId === null && !itemsForList(visibleItems, id).some(item => item.purchased)) {
       void deleteLocalList(false, id)
       return
@@ -1219,7 +1221,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           </svg>
           Завершить покупки
         </button>
-        <button type="button" role="menuitem" onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>
+        <button type="button" role="menuitem" disabled={listMutationBusy || !canComplete(menuList.id)}
+          onClick={() => requestCompletion(menuList.id)}>
           <svg aria-hidden="true" className="completion-icon" viewBox="0 0 24 24">
             <path d="M8 4H5v18h14V4h-3M8 2h8v5H8zM8 14l3 3 5-6" />
           </svg>
@@ -1247,9 +1250,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             (accountId !== null && !cloudBoundLists[menuList.id])}
           onClick={() => { setMergeSourceId(menuList.id); setMenuTarget(null) }}>Объединить со списком</button>}
         <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem"
-          onClick={() => { setMenuTarget(null); requestCompletion(menuList.id) }}>✓ Завершить список</button>
+          onClick={() => requestCompletion(menuList.id)}>✓ Завершить список</button>
         <button disabled={listMutationBusy || !canDelete(menuList.id)} role="menuitem" className="danger"
-          onClick={() => { setMenuTarget(null); requestDeletion(menuList.id) }}>▤ Удалить список</button>
+          onClick={() => requestDeletion(menuList.id)}>▤ Удалить список</button>
       </div>}
     </>, document.body)}
     {!showArchive && drafts.map(draft => draft.nameConflict ? <div className="list-operation-statuses" key={draft.id}>

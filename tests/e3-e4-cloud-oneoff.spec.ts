@@ -13,6 +13,7 @@ test.beforeAll(() => {
 
 test('account E3/E4: oneoff list can be created, completed and archived without remaining active', async ({ page }) => {
   test.setTimeout(180000)
+  page.setDefaultTimeout(12000)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
   page.on('pageerror', error => console.log('[browser pageerror]', error.message))
@@ -94,8 +95,24 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     return count ?? 0
   }, { timeout: 30000 }).toBe(2)
   tracePhase('completing list')
-  await page.getByRole('button', { name: 'Завершить список', exact: true }).click()
-  await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
+  const completeTrigger = page.getByRole('button', { name: 'Завершить список', exact: true })
+  const completeMenu = page.getByRole('menu', { name: 'Завершение' })
+  try {
+    await completeTrigger.click()
+    await expect(completeMenu).toBeVisible()
+    await completeMenu.getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
+  } catch (error) {
+    console.log('[completion menu diagnostic]', await page.evaluate(() => {
+      const trigger = document.querySelector<HTMLButtonElement>('.list-toolbar button[aria-label="Завершить список"]')
+      return { activeCards: document.querySelectorAll('.list-select[aria-pressed="true"]').length,
+        triggerExists: !!trigger, disabled: trigger?.disabled, expanded: trigger?.getAttribute('aria-expanded'),
+        menuExists: !!document.querySelector('[role="menu"][aria-label="Завершение"]'),
+        itemRows: document.querySelectorAll('main li:has(input[type="checkbox"])').length,
+        loading: !!Array.from(document.querySelectorAll('[role="status"]')).find(node => node.textContent === 'Загружаем покупки…'),
+        dialogs: document.querySelectorAll('dialog[open], [role="dialog"]').length }
+    }))
+    throw error
+  }
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
   await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: 20000 })
