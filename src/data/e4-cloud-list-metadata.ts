@@ -8,6 +8,8 @@ export interface CloudListMetadata {
   kind: 'permanent' | 'oneoff'
   position: number
   revision: number
+  /** Existing server revision timestamp, when supplied by a feed snapshot. */
+  updatedAt?: number
 }
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
@@ -28,7 +30,8 @@ export function parseCloudListMetadata(rows: unknown, accountId: string): CloudL
       throw new Error('Invalid or unauthorized cloud list metadata')
     }
     ids.add(row.id)
-    return { id: row.id, ownerId: accountId, name: row.name,
+    const updatedAt = typeof row.updated_at === 'string' ? Date.parse(row.updated_at) : NaN
+    return { ...(Number.isFinite(updatedAt) ? { updatedAt } : {}), id: row.id, ownerId: accountId, name: row.name,
       kind: row.kind, position: row.position as number, revision: row.revision as number }
   })
 }
