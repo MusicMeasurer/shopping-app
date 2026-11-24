@@ -1,4 +1,6 @@
 import type { AccountFeedChange } from './account-feed'
+import { newSemanticState, rememberContext, rememberOwnOperation, storeSemanticBatch, evaluateSemanticState, semanticReady, presentSemanticNotice, acknowledgeSemanticNotice, consumeSilentRecovery, type AccountSemanticState, type SemanticBatch } from './sync-event-state'
+import type { ReconciledSyncContext } from './sync-event-fate'
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema, type IDBPObjectStore } from 'idb'
 import { MAX_LOCAL_PROFILES, profileName, addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
@@ -90,7 +92,7 @@ export interface AccountDraftList extends ShoppingListRecord {
   nameConflict?: boolean
 }
 interface ScopedDraftList extends AccountDraftList { key: string }
-type ListMetadata = Pick<CloudListMetadata, 'name' | 'kind' | 'position'>
+type ListMetadata = Pick<CloudListMetadata, 'name' | 'kind' | 'position' | 'updatedAt'>
 export interface LocalListChange {
   operationId: string
   sequence: number
@@ -155,6 +157,7 @@ interface ScopedOperation {
   key: string
   accountId: string
   operation: PendingItemOperation
+  queuedAt?: number
   neverDispatched?: boolean
   conflict?: ItemDeletionConflict
   deferred?: boolean
@@ -218,6 +221,7 @@ interface ShoppingDB extends DBSchema {
   accountCompletions: { key: string; value: ScopedCompletionIntent; indexes: { byAccount: string } }
   accountListMappings: { key: string; value: ScopedListMapping; indexes: { byAccount: string } }
   accountFeed: { key: string; value: { accountId: string; position: string; deferred: AccountFeedChange[] } }
+  accountSyncEvents: { key: string; value: AccountSemanticState }
   accountItemVersions: { key: string; value: ScopedVersion; indexes: { byAccount: string } }
 }
 function accountKey(accountId: string, operationId: string): string {
@@ -227,11 +231,12 @@ function accountKey(accountId: string, operationId: string): string {
 export function createStorage(name = 'shopping-app') {
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 18, {
+  const database = openDB<ShoppingDB>(name, 19, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('installationIdentity')) db.createObjectStore('installationIdentity')
       if (!db.objectStoreNames.contains('accountDeletions')) db.createObjectStore('accountDeletions', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('accountFeed')) db.createObjectStore('accountFeed', { keyPath: 'accountId' })
+      if (!db.objectStoreNames.contains('accountSyncEvents')) db.createObjectStore('accountSyncEvents', { keyPath: 'accountId' })
       if (!db.objectStoreNames.contains('guestImports')) db.createObjectStore('guestImports', { keyPath: 'key' })
       if (!db.objectStoreNames.contains('items')) db.createObjectStore('items', { keyPath: 'id' })
       if (!db.objectStoreNames.contains('pendingOperations')) db.createObjectStore('pendingOperations', { keyPath: 'operationId' })
@@ -392,7 +397,7 @@ export function createStorage(name = 'shopping-app') {
         const editTimes = pending.kind === 'cloud-update'
           ? { editTimes: recordEditTimes(pending.item, operation.item, pending.editTimes) }
           : {}
-        await operations.put({ ...row, operation: { ...pending, item: operation.item, ...editTimes } })
+        await operations.put({ ...row, queuedAt: Date.now(), operation: { ...pending, item: operation.item, ...editTimes } })
         await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
         await tx.done
         return true
@@ -425,7 +430,7 @@ export function createStorage(name = 'shopping-app') {
     } else {
       await items.put({ key: itemKey, accountId, item: operation.item })
     }
-    await operations.add({ key, accountId, operation, neverDispatched: true })
+    await operations.add({ key, accountId, operation, queuedAt: Date.now(), neverDispatched: true })
     await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
     await tx.done
     return true
@@ -712,7 +717,7 @@ export function createStorage(name = 'shopping-app') {
         'accountListMappings', 'accountItemVersions', 'accountDraftLists'] as const
       const profileIndexed = ['profileLists', 'profileItems', 'profileArchives', 'profilePendingOperations'] as const
       const tx = (await database).transaction(['accountDeletions', 'localProfileRegistry', 'profileMigrations',
-        'profileCutover', 'accountArchiveCache', 'accountFeed', 'guestImports', 'lists', 'items', 'archives', 'pendingOperations', ...accountIndexed, ...profileIndexed], 'readwrite')
+        'profileCutover', 'accountArchiveCache', 'accountFeed', 'accountSyncEvents', 'guestImports', 'lists', 'items', 'archives', 'pendingOperations', ...accountIndexed, ...profileIndexed], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
       try {
@@ -725,6 +730,7 @@ export function createStorage(name = 'shopping-app') {
           }
           await tx.objectStore('accountArchiveCache').delete(accountId)
           await tx.objectStore('accountFeed').delete(accountId)
+          await tx.objectStore('accountSyncEvents').delete(accountId)
           await tx.objectStore('profileMigrations').delete('restore-account:' + accountId)
           const imports = tx.objectStore('guestImports')
           const legacyOwner = (await tx.objectStore('profileMigrations').get('legacy-guest-v1'))?.profileId
@@ -951,7 +957,7 @@ export function createStorage(name = 'shopping-app') {
         'localProfileRegistry', 'profileCutover', 'profileLists', 'profileItems',
         'profileArchives', 'profilePendingOperations', 'guestImports', 'profileMigrations', 'accountDeletions',
         'lists', 'items', 'archives', 'pendingOperations',
-        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists', 'accountFeed',
+        'accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountListMappings', 'accountItemVersions', 'accountArchiveCache', 'accountDraftLists', 'accountFeed', 'accountSyncEvents',
       ], 'readwrite')
       const done = tx.done
       void done.catch(() => {})
@@ -989,6 +995,7 @@ export function createStorage(name = 'shopping-app') {
           })
           await tx.objectStore('accountArchiveCache').delete(accountId)
           await tx.objectStore('accountFeed').delete(accountId)
+          await tx.objectStore('accountSyncEvents').delete(accountId)
           for (const storeName of ['accountItems', 'accountListMappings', 'accountItemVersions'] as const) {
             const store = tx.objectStore(storeName)
             for (const key of await store.index('byAccount').getAllKeys(accountId)) await store.delete(key)
@@ -1605,7 +1612,7 @@ export function createStorage(name = 'shopping-app') {
           await items.put({ ...row, item })
           const operation: CloudPendingOperation = { kind: 'cloud-add', operationId: crypto.randomUUID(),
             localListId, remoteListId: remote.id, itemId: item.id, item, preserveCreatedAt: true }
-          await operations.add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
+          await operations.add({ key: accountKey(accountId, operation.operationId), accountId, operation, queuedAt: Date.now(), neverDispatched: true })
         }
         const requests = tx.objectStore('accountCompletionRequests')
         const request = await requests.get(key)
@@ -1795,7 +1802,7 @@ export function createStorage(name = 'shopping-app') {
           tombstones.some(row => !intent.itemIds.includes(row.id) || !Number.isSafeInteger(row.version) || row.version < 1))
         throw new Error('Invalid confirmed completion tombstones')
       const db = await database
-      const tx = db.transaction(['accountDeletions', 'localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountArchiveCache'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'localProfileRegistry', 'accountCompletions', 'accountCompletionRequests', 'accountItems', 'accountItemVersions', 'accountOperations', 'accountListMappings', 'accountArchiveCache', 'accountSyncEvents'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(intent.accountId)) throw new Error('Account data was deleted')
       try {
         const key = accountKey(intent.accountId, intent.operationId)
@@ -1848,16 +1855,77 @@ export function createStorage(name = 'shopping-app') {
           }
           await requests.delete(requestKey)
         }
+        const semantic = tx.objectStore('accountSyncEvents')
+        await semantic.put(rememberOwnOperation(await semantic.get(intent.accountId) ?? newSemanticState(intent.accountId), intent.operationId))
         await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId: intent.accountId })
         await tx.done
       } catch (error) { try { tx.abort() } catch { /* already closed */ }; await tx.done.catch(() => {}); throw error }
+    },
+    /** Private data-only semantic state. Never expose data after a deletion marker. */
+    async readAccountSemanticState(accountId: string): Promise<AccountSemanticState | undefined> {
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents'])
+      const deleted = await tx.objectStore('accountDeletions').get(accountId)
+      const state = deleted ? undefined : await tx.objectStore('accountSyncEvents').get(accountId)
+      await tx.done
+      return state
+    },
+    async recordAccountSyncContext(accountId: string, localListId: string, itemId?: string): Promise<void> {
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountListMappings'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) { await tx.done; return }
+      const mapping = (await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId))
+        .find(row => row.metadata && (row.localListId === localListId || row.remoteListId === localListId))
+      if (mapping) {
+        const states = tx.objectStore('accountSyncEvents')
+        const before = await states.get(accountId) ?? newSemanticState(accountId)
+        const next = rememberContext(before, { accountId, listId: mapping.remoteListId, ...(itemId ? { itemId } : {}) })
+        if (next !== before) await states.put(next)
+      }
+      await tx.done
+    },
+    async rememberAccountSyncOperation(accountId: string, operationId: string): Promise<void> {
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
+      const states = tx.objectStore('accountSyncEvents')
+      await states.put(rememberOwnOperation(await states.get(accountId) ?? newSemanticState(accountId), operationId))
+      await tx.done
+    },
+    async presentAccountSyncNotice(accountId: string, expectedKey: string): Promise<AccountSemanticState | undefined> {
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents'], 'readwrite')
+      const states = tx.objectStore('accountSyncEvents')
+      const previous = await tx.objectStore('accountDeletions').get(accountId) ? undefined : await states.get(accountId)
+      const next = previous ? presentSemanticNotice(previous, expectedKey) : undefined
+      if (next && next !== previous) await states.put(next)
+      await tx.done
+      return next
+    },
+    async acknowledgeAccountSyncNotice(accountId: string, expectedKey: string | null) {
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountFeed', 'accountListMappings', 'accountItems'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) { await tx.done; return { kind: 'ignored' as const } }
+      const states = tx.objectStore('accountSyncEvents')
+      const previous = await states.get(accountId)
+      if (!previous) { await tx.done; return { kind: 'ignored' as const } }
+      const mappings = await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)
+      const remote = new Map(mappings.map(row => [row.localListId, row.remoteListId]))
+      const cursor = await tx.objectStore('accountFeed').get(accountId)
+      const current: ReconciledSyncContext = {
+        accountId, ready: !!cursor && cursor.position === previous.evidence?.position && semanticReady(previous, cursor.deferred),
+        lists: mappings.flatMap(row => row.metadata ? [{ id: row.remoteListId, ...row.metadata }] : []),
+        items: (await tx.objectStore('accountItems').index('byAccount').getAll(accountId)).map(({ item }) => ({
+          id: item.id, listId: remote.get(item.listId) ?? item.listId,
+        })), activity: previous.activity,
+      }
+      const result = expectedKey === null ? consumeSilentRecovery(previous, current)
+        : acknowledgeSemanticNotice(previous, expectedKey, current)
+      if (result.state !== previous) await states.put(result.state)
+      await tx.done
+      return result.result
     },
     async readAccountFeedPosition(accountId: string): Promise<string | undefined> {
       return (await (await database).get('accountFeed', accountId))?.position
     },
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
-      changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean): Promise<boolean> {
-      const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountListMappings', 'accountItems',
+      changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean, semanticBatch?: SemanticBatch): Promise<boolean> {
+      const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountSyncEvents', 'accountListMappings', 'accountItems',
         'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const done = tx.done
@@ -1870,7 +1938,13 @@ export function createStorage(name = 'shopping-app') {
           await done
           return false
         }
-        if (!snapshot && !changes.length && !previous?.deferred.length) {
+        if (semanticBatch && (semanticBatch.accountId !== accountId ||
+            (semanticBatch.kind === 'delta' ? semanticBatch.from !== expected || semanticBatch.through !== position : semanticBatch.position !== position)))
+          throw new Error('Semantic batch does not match feed cursor')
+        const states = tx.objectStore('accountSyncEvents')
+        const semanticBefore = await states.get(accountId)
+        if (!snapshot && !changes.length && !previous?.deferred.length && (!semanticBatch ||
+            (semanticBefore?.evidence?.position === position && semanticBefore.evidence.caughtUp && !semanticBefore.pending && !semanticBefore.presented))) {
           await done
           return true
         }
@@ -1926,11 +2000,11 @@ export function createStorage(name = 'shopping-app') {
             continue
           }
           if (change.metadata) {
-            const { name, kind, position, revision } = change.metadata
+            const { name, kind, position, revision, updatedAt } = change.metadata
             if (change.metadata.ownerId !== accountId) throw new Error('Foreign feed list')
             if (!snapshot && current?.cloudRevision !== undefined && current.cloudRevision > revision) continue
             const mapping = { ...(current ?? { key: accountKey(accountId, change.listId), accountId,
-              localListId: change.listId, remoteListId: change.listId }), metadata: { name, kind, position }, cloudRevision: revision }
+              localListId: change.listId, remoteListId: change.listId }), metadata: { name, kind, position, ...(updatedAt !== undefined ? { updatedAt } : current?.metadata?.updatedAt !== undefined ? { updatedAt: current.metadata.updatedAt } : {}) }, cloudRevision: revision }
             if (!current) await mappings.add(mapping)
             else await mappings.put(mapping)
             byRemote.set(change.listId, mapping)
@@ -1967,6 +2041,39 @@ export function createStorage(name = 'shopping-app') {
           await items.put({ key, accountId, item: { id, listId: mapping.localListId, name, purchased, quantity, unit,
             createdAt: Date.parse(createdAt) } })
           await versions.put({ key, accountId, itemId: id, remoteListId: change.listId, version })
+        }
+        if (!isActive()) throw new Error('Account changed during feed synchronization')
+        if (semanticBatch) {
+          let state = storeSemanticBatch(semanticBefore ?? newSemanticState(accountId), semanticBatch)
+          if (state.context || state.presented) {
+            const localTimes = new Map<string, number>()
+            for (const { operation, queuedAt } of operations) {
+              if (queuedAt !== undefined && 'remoteListId' in operation)
+                localTimes.set(operation.remoteListId, Math.max(localTimes.get(operation.remoteListId) ?? -Infinity, queuedAt))
+            }
+            const ownPending = [...operations.map(row => row.operation.operationId),
+              ...completions.map(row => row.intent.operationId), ...requests.map(row => row.operationId),
+              ...accountMappings.flatMap(row => row.pendingMerge ? [row.pendingMerge.operationId] : [])]
+            const current: ReconciledSyncContext = {
+              accountId, ready: semanticReady(state, deferred),
+              lists: [...byRemote.values()].flatMap(row => row.metadata ? [{
+                id: row.remoteListId, name: row.metadata.name,
+                updatedAt: Math.max(row.metadata.updatedAt ?? -Infinity, localTimes.get(row.remoteListId) ?? -Infinity),
+              }] : []),
+              items: state.context?.itemId || state.presented?.origin.itemId ?
+                (await items.index('byAccount').getAll(accountId)).map(({ item }) => ({
+                  id: item.id, listId: remoteByLocal.get(item.listId) ?? item.listId,
+                })) : [],
+              activity: state.activity,
+            }
+            state = evaluateSemanticState(state, current, ownPending)
+            const live = new Set(current.lists.map(row => row.id))
+            state = { ...state, activity: state.activity.filter(id => live.has(id)) }
+          }
+          await states.put(state)
+        } else if (semanticBefore?.evidence) {
+          // Legacy server fallback has no trustworthy semantic history.
+          await states.put({ ...semanticBefore, evidence: undefined })
         }
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })
@@ -2150,7 +2257,8 @@ export function createStorage(name = 'shopping-app') {
       return prepared
     },
     async finishQueuedListMerge(accountId: string, merge: QueuedListMerge, confirmed?: { item: Item; version: number }[]) {
-      const tx = (await database).transaction(['accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry'], 'readwrite')
+      const tx = (await database).transaction(['accountDeletions', 'accountSyncEvents', 'accountListMappings', 'accountItems', 'accountItemVersions', 'localProfileRegistry'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const mappings = tx.objectStore('accountListMappings')
         const source = await mappings.get(accountKey(accountId, merge.source.localListId))
@@ -2177,6 +2285,8 @@ export function createStorage(name = 'shopping-app') {
             await versions.put({ key, accountId, itemId: item.id, remoteListId: target.remoteListId, version })
           }
           await mappings.delete(source.key)
+          const semantic = tx.objectStore('accountSyncEvents')
+          await semantic.put(rememberOwnOperation(await semantic.get(accountId) ?? newSemanticState(accountId), merge.operationId))
           await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
         }
         await tx.done
@@ -2257,7 +2367,7 @@ export function createStorage(name = 'shopping-app') {
       await tx.done
     },
     async cacheAccountListMetadata(accountId: string, rows: readonly {
-      id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number; revision?: number
+      id: string; ownerId: string; name: string; kind: 'permanent' | 'oneoff'; position: number; revision?: number; updatedAt?: number
     }[], { partial = false } = {}): Promise<void> {
       if (rows.some(row => row.ownerId !== accountId)) throw new Error('Foreign list metadata')
       const byId = new Map(rows.map(row => [row.id, row]))
@@ -2265,8 +2375,8 @@ export function createStorage(name = 'shopping-app') {
       for (const mapping of await tx.store.index('byAccount').getAll(accountId)) {
         const row = byId.get(mapping.remoteListId)
         if (row) {
-          const { name, kind, position } = row
-          await tx.store.put({ ...mapping, metadata: { name, kind, position }, cloudRevision: row.revision ?? mapping.cloudRevision })
+          const { name, kind, position, updatedAt } = row
+          await tx.store.put({ ...mapping, metadata: { name, kind, position, ...(updatedAt !== undefined ? { updatedAt } : mapping.metadata?.updatedAt !== undefined ? { updatedAt: mapping.metadata.updatedAt } : {}) }, cloudRevision: row.revision ?? mapping.cloudRevision })
         } else if (!partial && mapping.metadata) {
           const { metadata: _metadata, ...withoutMetadata } = mapping
           await tx.store.put(withoutMetadata)
@@ -2334,7 +2444,7 @@ export function createStorage(name = 'shopping-app') {
             kind: 'cloud-add', operationId: crypto.randomUUID(), localListId: listId,
             remoteListId: mapping.remoteListId, itemId: item.id, item, preserveCreatedAt: true,
           }
-          await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, neverDispatched: true })
+          await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, queuedAt: Date.now(), neverDispatched: true })
         }
         await tx.done
       } catch (error) {
@@ -2359,7 +2469,8 @@ export function createStorage(name = 'shopping-app') {
           !Number.isSafeInteger(version) || version < 0) throw new Error('Invalid server receipt')
       const key = accountKey(accountId, operationId)
       const db = await database
-      const tx = db.transaction(['accountOperations', 'accountItemVersions'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountSyncEvents', 'accountOperations', 'accountItemVersions'], 'readwrite')
+      if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       const pending = await tx.objectStore('accountOperations').get(key)
       if (!pending || pending.operation.kind === 'upsert' || pending.operation.kind === 'delete' ||
           pending.operation.itemId !== itemId || pending.operation.remoteListId !== remoteListId) {
@@ -2376,6 +2487,10 @@ export function createStorage(name = 'shopping-app') {
         throw new Error('Server version regression or list mismatch')
       }
       await versions.put({ key: versionKey, accountId, remoteListId, itemId, version })
+      if (pending.operation.kind === 'cloud-delete') {
+        const semantic = tx.objectStore('accountSyncEvents')
+        await semantic.put(rememberOwnOperation(await semantic.get(accountId) ?? newSemanticState(accountId), operationId))
+      }
       await tx.objectStore('accountOperations').delete(key)
       await tx.done
     },

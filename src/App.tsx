@@ -1,3 +1,4 @@
+import { workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
 import { ListMergeDialog } from './ListMergeDialog'
 import type { ListMergeActions } from './domain/list-merge'
 import { PurchaseHistory } from './PurchaseHistory'
@@ -702,6 +703,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const [itemNotice, setItemNotice] = useState('')
   const [itemInputError, setItemInputError] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Data-only capture; current selection and editor rendering are unchanged.
+  useEffect(() => {
+    if (workspaceSemanticFeedEnabled && accountId && active && !showArchive)
+      void storage.recordAccountSyncContext(accountId, active, editingId ?? undefined).catch(() => {})
+  }, [storage, accountId, active, editingId, showArchive, cloudBoundLists[active]])
   const [editingName, setEditingName] = useState('')
   const [editingQuantity, setEditingQuantity] = useState('')
   const [editingUnit, setEditingUnit] = useState('')
