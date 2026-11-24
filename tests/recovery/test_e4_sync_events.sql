@@ -47,12 +47,14 @@ begin
  perform public.complete_e4_list(gen_random_uuid(),l,0,'archive_purchased');
  perform public.apply_item_change(gen_random_uuid(),l,'delete','41000000-0000-4000-8000-000000000203',null,null,1);
  perform public.complete_e4_list(gen_random_uuid(),c,0,'none_purchased');
+ perform public.apply_e4_list_metadata(gen_random_uuid(),t,(select revision from public.shopping_lists where id=t),'Renamed target');
  perform public.complete_e4_list(gen_random_uuid(),t,(select revision from public.shopping_lists where id=t),'delete_list');
  response:=public.pull_e4_account_changes_v2(a,0,500);
  if not exists(select 1 from jsonb_array_elements(response->'events') e where e->>'entity_id'='41000000-0000-4000-8000-000000000202' and e->'semantics'->>'event_reason'='archived')
  or not exists(select 1 from jsonb_array_elements(response->'events') e where e->>'entity_id'='41000000-0000-4000-8000-000000000203' and e->'semantics'->>'event_reason'='deleted')
  or not exists(select 1 from jsonb_array_elements(response->'events') e where e->>'entity_id'='41000000-0000-4000-8000-000000000204' and e->'semantics'->>'event_reason'='completed')
  or not exists(select 1 from jsonb_array_elements(response->'events') e where e->>'entity_id'=t::text and e->'semantics'->>'event_reason'='deleted')
+ or not exists(select 1 from jsonb_array_elements(response->'events') e where e->>'entity_id'=s::text and e->'semantics'->>'target_list_name'='Renamed target')
  or exists(select 1 from jsonb_array_elements(response->'events') e where e->>'list_id' in (s::text,t::text) and e->'snapshot'<>'null'::jsonb)
  then raise exception 'Removal reason or masking incorrect'; end if;
  if jsonb_array_length(response->'events')<>(select count(*) from public.pull_e4_account_changes(a,0,500)) then raise exception 'Legacy page count changed'; end if;
@@ -63,11 +65,11 @@ begin
 end $$;
 reset role;
 -- Resolve internal function names as administrator, without granting schema usage.
-do $ begin
+do $$ begin
  if has_function_privilege('authenticated','shoppingapp_internal.expire_e4_feed_semantics()','EXECUTE')
  or has_function_privilege('authenticated','shoppingapp_internal.annotate_e4_removals(uuid,bigint,uuid,uuid,text,uuid,uuid,text,uuid)','EXECUTE')
  or has_schema_privilege('authenticated','shoppingapp_internal','USAGE') then raise exception 'Internal metadata exposed'; end if;
-end $;
+end $$;
 update shoppingapp_internal.account_feed_events set recorded_at=now()-interval '7 days'
  where account_id='41000000-0000-4000-8000-000000000001' and semantics is not null;
 set local role authenticated;
