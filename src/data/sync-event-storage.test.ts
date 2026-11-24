@@ -106,6 +106,9 @@ describe('durable semantic synchronization', () => {
     expect((await storage.readAccountSemanticState(account))?.pending?.fate).toEqual({
       kind: 'recover', nextListId: c, resetViewport: true,
     })
+    // A temporary selection (or an app restart) cannot discard silent recovery.
+    await storage.recordAccountSyncContext(account, b)
+    expect((await storage.readAccountSemanticState(account))?.pending?.origin.listId).toBe(a)
     expect(await storage.acknowledgeAccountSyncNotice(account, null)).toEqual({ kind: 'navigate', nextListId: c, resetViewport: true })
     expect(await storage.acknowledgeAccountSyncNotice(account, null)).toEqual({ kind: 'ignored' })
     await storage.close()

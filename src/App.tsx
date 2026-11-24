@@ -1,4 +1,7 @@
 import { workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
+import { noticeKey, type AccountSemanticState, type Acknowledgement } from './data/sync-event-state'
+import { localSyncListId } from './domain/sync-notice-ui'
+import { SyncContextNotice } from './SyncContextNotice'
 import { ListMergeDialog } from './ListMergeDialog'
 import type { ListMergeActions } from './domain/list-merge'
 import { PurchaseHistory } from './PurchaseHistory'
@@ -676,10 +679,54 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     const queued = pendingCompletions.get(row.id)
     return !queued || (queued.mode !== 'delete_list' && (row.kind !== 'oneoff' || queued.mode === 'archive_purchased'))
   })
+  const semanticEnabled = workspaceSemanticFeedEnabled && accountId !== null
+  const [semanticRefresh, setSemanticRefresh] = useState(0)
+  const [semanticRead, setSemanticRead] = useState<{
+    accountId: string; revision: number; lists: typeof accountCloudLists; draftRevision: number; refresh: number
+    state: AccountSemanticState | undefined
+  }>()
+  const [semanticBusy, setSemanticBusy] = useState(false)
+  const [semanticError, setSemanticError] = useState('')
+  const semanticRunning = useRef(false)
+  const semanticAttempt = useRef('')
+  const semanticLifetime = useRef(0)
+  useLayoutEffect(() => {
+    semanticLifetime.current++
+    semanticRunning.current = false
+    semanticAttempt.current = ''
+    return () => { semanticLifetime.current++ }
+  }, [accountId])
+  const semanticLoaded = !semanticEnabled || (!!semanticRead && semanticRead.accountId === accountId &&
+    semanticRead.revision === refreshRevision && semanticRead.lists === accountCloudLists &&
+    semanticRead.draftRevision === draftRevision && semanticRead.refresh === semanticRefresh)
+  const semanticState = semanticEnabled && semanticRead?.accountId === accountId ? semanticRead?.state : undefined
+  const semanticPending = semanticState?.pending
+  const semanticPresented = semanticState?.presented
+  const semanticNotice = semanticPresented?.fate.notice
+  const semanticNoticeKey = semanticPresented ? noticeKey(semanticPresented) : undefined
+  useEffect(() => {
+    if (!semanticEnabled || !accountId || semanticRunning.current) return
+    let cancelled = false
+    void storage.readAccountSemanticState(accountId).then(state => {
+      if (!cancelled && !semanticRunning.current) {
+        setSemanticRead({ accountId, revision: refreshRevision, lists: accountCloudLists,
+          draftRevision, refresh: semanticRefresh, state })
+      }
+    }).catch(() => {
+      if (!cancelled) setSemanticError('Не удалось прочитать сохранённое состояние синхронизации.')
+    })
+    return () => { cancelled = true }
+  }, [storage, accountId, semanticEnabled, refreshRevision, accountCloudLists, draftRevision, semanticRefresh, semanticBusy])
+  // Do not let the ordinary first-card fallback overwrite a durable recovery.
   useEffect(() => {
     if (accountId === null && localLists === null) return
-    if (visibleLists.length && !visibleLists.some(list => list.id === active)) setActive(visibleLists[0].id)
-  }, [visibleLists, active, accountId, localLists])
+    if (visibleLists.some(list => list.id === active)) return
+    if (semanticEnabled && (!semanticLoaded || semanticPending || semanticPresented ||
+      (semanticState?.evidence && (!semanticState.evidence.caughtUp || semanticState.ready === false)))) return
+    const remembered = semanticState?.context?.listId
+      ? localSyncListId(semanticState.context.listId, cloudBoundLists, visibleLists) : null
+    if (visibleLists.length) setActive(remembered ?? visibleLists[0].id)
+  }, [visibleLists, active, accountId, localLists, semanticEnabled, semanticLoaded, semanticPending, semanticPresented, semanticState, cloudBoundLists])
   async function createLocalList(event: FormEvent) {
     event.preventDefault()
     if (accountId !== null || !localLists || creatingList) return
@@ -703,11 +750,13 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const [itemNotice, setItemNotice] = useState('')
   const [itemInputError, setItemInputError] = useState('')
   const [editingId, setEditingId] = useState<string | null>(null)
-  // Data-only capture; current selection and editor rendering are unchanged.
+  // Capture real selections, never the temporary recovery state.
   useEffect(() => {
-    if (workspaceSemanticFeedEnabled && accountId && active && !showArchive)
+    if (semanticEnabled && accountId && active && !showArchive && semanticLoaded &&
+      !semanticPending && !semanticPresented && visibleLists.some(row => row.id === active))
       void storage.recordAccountSyncContext(accountId, active, editingId ?? undefined).catch(() => {})
-  }, [storage, accountId, active, editingId, showArchive, cloudBoundLists[active]])
+  }, [storage, accountId, active, editingId, showArchive, cloudBoundLists[active], semanticEnabled,
+    semanticLoaded, !!semanticPending, !!semanticPresented])
   const [editingName, setEditingName] = useState('')
   const [editingQuantity, setEditingQuantity] = useState('')
   const [editingUnit, setEditingUnit] = useState('')
@@ -754,7 +803,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     : undefined
   const hiddenIds = new Set([...listConflicts.map(conflict => conflict.item.id),
     ...activeNameConflicts.flatMap(group => group.map(item => item.id))])
-  const rows = sortShoppingItems(visibleItems.filter(item => item.listId === active && !hiddenIds.has(item.id)), sort)
+  const rows = sortShoppingItems(visibleItems.filter(item => item.listId === active && !hiddenIds.has(item.id) &&
+    (!semanticEnabled || visibleLists.some(row => row.id === active)) &&
+    (!semanticEnabled || item.id !== (semanticPresented?.origin.itemId ?? semanticPending?.origin.itemId))), sort)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
   const [completionListId, setCompletionListId] = useState<ListId | null>(null)
   const [purchaseArchive, setPurchaseArchive] = useState<{ listId: ListId; itemIds: string[] } | null>(null)
@@ -839,6 +890,114 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   } : cloudMerge
   const mergeTargets = (from: ListId) => visibleLists.filter(row => row.id !== from && !listLocked(row.id) &&
     (accountId === null || !!cloudBoundLists[row.id]))
+  // Only recovery changes this selection. General scroll/editor preservation
+  // and synchronization indicators are separate UI tasks.
+  const [semanticNavigation, setSemanticNavigation] = useState<Extract<Acknowledgement, { kind: 'navigate' }>>()
+  const [resetSemanticViewport, setResetSemanticViewport] = useState(0)
+  const [deferredAck, setDeferredAck] = useState<string>()
+  const latestBindings = useRef(cloudBoundLists)
+  latestBindings.current = cloudBoundLists
+  const latestVisible = useRef(visibleLists)
+  latestVisible.current = visibleLists
+  const latestActive = useRef(active)
+  latestActive.current = active
+  const semanticOrigin = semanticPresented?.origin ?? semanticPending?.origin
+  const hasLostContext = !!semanticOrigin && (semanticOrigin.listId === (cloudBoundLists[active] ?? active) ||
+    semanticOrigin.itemId === editingId && editingId !== null)
+  const clearLostEditor = useCallback(() => {
+    setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
+    setMenuTarget(null); setRenaming(null); setDraftRename(undefined)
+    setDeleteListId(null); setCompletionListId(null); setPurchaseArchive(null)
+    setConflictId(undefined); setNameConflict(undefined)
+  }, [])
+  useEffect(() => {
+    if (semanticEnabled && semanticLoaded && hasLostContext && (semanticPresented || semanticPending))
+      clearLostEditor()
+  }, [semanticEnabled, semanticLoaded, hasLostContext, semanticPresented, semanticPending, clearLostEditor])
+  const runSemanticAction = useCallback(async (action: 'present' | 'ack' | 'silent', key: string | null,
+    originListId?: string | null) => {
+    if (!accountId || semanticRunning.current) return
+    const lifetime = semanticLifetime.current
+    const alive = () => lifetime === semanticLifetime.current
+    semanticRunning.current = true
+    setSemanticBusy(true)
+    setSemanticError('')
+    try {
+      if (action === 'present' && key) await storage.presentAccountSyncNotice(accountId, key)
+      else {
+        const result = await storage.acknowledgeAccountSyncNotice(accountId, action === 'silent' ? null : key)
+        if (!alive()) return
+        if (result.kind === 'wait' && action === 'ack' && key) {
+          setDeferredAck(key)
+          setSemanticError('Сообщение сохранено. Данные ещё уточняются.')
+        } else if (result.kind === 'navigate') {
+          setDeferredAck(undefined)
+          // A new list may have been explicitly selected/created during a silent
+          // recovery. Preserve that valid choice rather than overriding it.
+          const current = latestActive.current
+          if (action === 'silent' && latestVisible.current.some(row => row.id === current) &&
+            originListId !== (latestBindings.current[current] ?? current)) return
+          clearLostEditor()
+          const id = localSyncListId(result.nextListId, latestBindings.current, latestVisible.current)
+          if (id !== null) {
+            setActive(id)
+            try { localStorage.setItem(workspaceKey + ':list', id) } catch { /* durable context is already stored */ }
+          }
+          setSemanticNavigation(result)
+        } else if (result.kind === 'next-notice') {
+          setDeferredAck(undefined)
+          const current = await storage.readAccountSemanticState(accountId)
+          const nextKey = current?.pending && noticeKey(current.pending)
+          if (alive() && nextKey) await storage.presentAccountSyncNotice(accountId, nextKey)
+        } else if (action === 'ack') setDeferredAck(undefined)
+      }
+    } catch {
+      if (alive()) setSemanticError('Не удалось сохранить состояние сообщения. Попробуйте ещё раз.')
+    } finally {
+      if (alive()) {
+        semanticRunning.current = false
+        setSemanticRefresh(value => value + 1)
+        setSemanticBusy(false)
+      }
+    }
+  }, [storage, accountId, workspaceKey, clearLostEditor])
+  useEffect(() => {
+    if (!semanticEnabled || !semanticLoaded || semanticBusy || showArchive || !semanticState?.ready ||
+      !semanticState.evidence?.caughtUp) return
+    const key = semanticPresented ? semanticNoticeKey : semanticPending ? noticeKey(semanticPending) : undefined
+    const action = semanticPresented && key === deferredAck ? 'ack' : !semanticPresented && semanticPending
+      ? key ? 'present' : 'silent' : undefined
+    if (!action) return
+    const attempt = JSON.stringify([accountId, refreshRevision, draftRevision, semanticState.evidence.position,
+      action, key, semanticPending?.origin, semanticPending?.fate.nextListId])
+    if (semanticAttempt.current === attempt) return
+    semanticAttempt.current = attempt
+    void runSemanticAction(action, key ?? null, semanticPending?.origin.listId)
+  }, [semanticEnabled, semanticLoaded, semanticBusy, showArchive, semanticState, semanticPresented, semanticPending,
+    semanticNoticeKey, deferredAck, accountId, refreshRevision, draftRevision, runSemanticAction])
+  useEffect(() => {
+    if (!semanticNavigation || !semanticLoaded || semanticPending || semanticPresented) return
+    const target = localSyncListId(semanticNavigation.nextListId, cloudBoundLists, visibleLists)
+    if (semanticNavigation.nextListId !== null && target === null) return
+    if (semanticNavigation.nextListId === null && visibleLists.length) {
+      // A later update may already have created a live list. Never recreate deleted data.
+      setSemanticNavigation(undefined)
+      return
+    }
+    setActive(target ?? '')
+    setName(''); setItemNotice(''); setItemInputError('')
+    if (target === null) {
+      setNewListName(''); setNewListKind('permanent'); setNewListSymbol(defaultListSymbol)
+      setNewListDialog(true)
+    }
+    if (semanticNavigation.resetViewport) setResetSemanticViewport(value => value + 1)
+    setSemanticNavigation(undefined)
+  }, [semanticNavigation, semanticLoaded, semanticPending, semanticPresented, cloudBoundLists, visibleLists])
+  useLayoutEffect(() => {
+    if (!resetSemanticViewport) return
+    window.scrollTo(0, 0)
+    if (listRail.current) listRail.current.scrollLeft = 0
+  }, [resetSemanticViewport])
   const editingItem = rows.find(item => item.id === editingId)
   const deletionItems = deleteListId ? itemsForList(visibleItems, deleteListId) : []
   const hasMarkedItems = deletionItems.some(item => item.purchased)
@@ -1257,6 +1416,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         {['шт.', 'уп.'].map(unit => <button type="button" key={unit} aria-pressed={editingUnit === unit}
           disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}
       </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
+    {semanticNotice && semanticNoticeKey && <SyncContextNotice key={semanticNoticeKey} notice={semanticNotice}
+      busy={semanticBusy || !semanticLoaded} error={semanticError}
+      onAcknowledge={() => void runSemanticAction('ack', semanticNoticeKey)} />}
+    {!semanticNotice && semanticError && <p role="alert" className="error">{semanticError}</p>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
   </main>
 }

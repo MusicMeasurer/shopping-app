@@ -27,7 +27,7 @@ export function rememberContext(state: AccountSemanticState, context: ActiveSync
   if (context.accountId !== state.accountId) throw new Error('Foreign semantic context')
   // Existing UI may select a fallback automatically. Do not overwrite an
   // outstanding notice or the context of a partially received batch.
-  if (state.presented || state.pending?.fate.notice || (state.evidence && (!state.evidence.caughtUp || state.ready === false))) return state
+  if (state.presented || state.pending || (state.evidence && (!state.evidence.caughtUp || state.ready === false))) return state
   const changed = context.listId !== state.context?.listId || context.itemId !== state.context?.itemId
   if (!changed && state.activity[0] === context.listId) return state
   const activity = context.listId === null ? state.activity :

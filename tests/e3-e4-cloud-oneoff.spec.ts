@@ -211,3 +211,79 @@ test.describe('queued cloud list operations', () => {
     await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: 30000 })
   })
 })
+
+test('remote active-list deletion is acknowledged once and survives restart', async ({ page }) => {
+  test.setTimeout(120000)
+  const client = createClient(url, key, { auth: { persistSession: false } })
+  const { data: auth, error } = await client.auth.signInWithPassword({ email, password })
+  expect(error).toBeNull()
+  const accountId = auth.user!.id
+  const suffix = crypto.randomUUID()
+  const keepName = 'SYNC_UI_KEEP_' + suffix, lostName = 'SYNC_UI_LOST_' + suffix
+  const ids: string[] = []
+  async function create(name: string) {
+    const { data, error } = await client.rpc('create_e4_list', {
+      p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent',
+    })
+    if (error) throw error
+    const id = data.list_id as string
+    ids.push(id)
+    return id
+  }
+  async function remove(id: string) {
+    const { data, error } = await client.from('shopping_lists').select('revision,deleted_at').eq('id', id).maybeSingle()
+    if (error) throw error
+    if (!data || data.deleted_at) return
+    const response = await client.rpc('complete_e4_list', {
+      p_operation: crypto.randomUUID(), p_list: id, p_expected_revision: data.revision, p_mode: 'delete_list',
+    })
+    if (response.error) throw response.error
+  }
+  async function captured() {
+    return page.evaluate(async account => new Promise<string | null>((resolve, reject) => {
+      const open = indexedDB.open('shopping-app')
+      open.onerror = () => reject(open.error)
+      open.onsuccess = () => {
+        const db = open.result
+        const tx = db.transaction('accountSyncEvents', 'readonly')
+        const request = tx.objectStore('accountSyncEvents').get(account)
+        request.onsuccess = () => resolve(request.result?.context?.listId ?? null)
+        request.onerror = () => reject(request.error)
+        tx.oncomplete = () => db.close()
+      }
+    }), accountId)
+  }
+  try {
+    const keepId = await create(keepName), lostId = await create(lostName)
+    await page.goto('/shopping-app/')
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Пароль').fill(password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    if (await decline.isVisible()) await decline.click()
+    await page.getByRole('button', { name: keepName, exact: true }).click()
+    await expect.poll(captured).toBe(keepId)
+    await page.getByRole('button', { name: lostName, exact: true }).click()
+    await expect.poll(captured).toBe(lostId)
+    await remove(lostId)
+    const notice = page.getByRole('dialog', { name: 'Список удалён' })
+    await expect(notice).toBeVisible({ timeout: 45000 })
+    await expect(notice).toContainText('Список «' + lostName + '» удалён на другом устройстве.')
+    await expect(page.locator('.list-select').filter({ hasText: lostName })).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(notice).toBeVisible()
+    await page.reload()
+    await expect(notice).toBeVisible({ timeout: 30000 })
+    await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
+    await expect(notice).toHaveCount(0)
+    await expect(page.getByRole('button', { name: keepName, exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await page.reload()
+    await expect(page.getByRole('heading', { name: keepName, exact: true })).toBeVisible({ timeout: 30000 })
+    await expect(notice).toHaveCount(0)
+  } finally {
+    for (const id of ids) await remove(id)
+    await client.auth.signOut({ scope: 'local' })
+  }
+})
