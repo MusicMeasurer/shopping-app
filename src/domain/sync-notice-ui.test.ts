@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { syncNoticeText, localSyncListId, lostSyncListId, relatedItemText } from './sync-notice-ui'
+import { syncNoticeText, localSyncListId, lostSyncListId, relatedItemText, deferListFallback, cachedFallbackList } from './sync-notice-ui'
+import { newSemanticState, type AccountSemanticState } from '../data/sync-event-state'
 import type { SyncNotice } from '../data/sync-event-fate'
 const base: SyncNotice = { position: '1', operationId: 'op', entity: 'list', sourceId: 'a', sourceName: 'Продукты', reason: 'deleted' }
 describe('sync context notice UI contract', () => {
@@ -34,5 +35,34 @@ describe('sync context notice UI contract', () => {
     expect(relatedItemText(base, item)).toBe('Товар «Чай» перемещён в архив на другом устройстве.')
     expect(relatedItemText(item, item)).toBeUndefined()
     expect(relatedItemText(base)).toBeUndefined()
+  })
+
+  it('does not strand a signed-out or offline workspace behind an incomplete server batch', () => {
+    const state: AccountSemanticState = { ...newSemanticState('account'), ready: false,
+      evidence: { accountId: 'account', position: '3', caughtUp: false, removals: [] } }
+    expect(deferListFallback(true, true, state, false, false)).toBe(true)
+    expect(deferListFallback(true, true, state, false, true)).toBe(false)
+    expect(deferListFallback(true, false, state, false, true)).toBe(true)
+    expect(deferListFallback(true, true, state, true, true)).toBe(true)
+    expect(deferListFallback(false, false, state, false, false)).toBe(false)
+  })
+  it('preserves known pending and presented notices when disconnected', () => {
+    const origin = { accountId: 'account', listId: 'a' }
+    const candidate = { origin, fate: { kind: 'recover' as const, nextListId: 'b', resetViewport: true, notice: base } }
+    const state = newSemanticState('account')
+    expect(deferListFallback(true, true, { ...state, pending: candidate }, false, true)).toBe(true)
+    expect(deferListFallback(true, true, { ...state, presented: candidate }, false, true)).toBe(true)
+    const silent = { ...candidate, fate: { ...candidate.fate, notice: undefined } }
+    expect(deferListFallback(true, true, { ...state, pending: silent }, false, true)).toBe(false)
+    expect(deferListFallback(true, true, { ...state, pending: silent }, false, false)).toBe(true)
+  })
+  it('chooses a still available cached target by identity and activity', () => {
+    const state: AccountSemanticState = { ...newSemanticState('account'), activity: ['gone', 'remote'],
+      context: { accountId: 'account', listId: 'gone' } }
+    const available = [{ id: 'unrelated' }, { id: 'local' }]
+    expect(cachedFallbackList(state, { local: 'remote' }, available)).toBe('local')
+    expect(cachedFallbackList(state, { local: 'remote' }, [])).toBeNull()
+    expect(cachedFallbackList({ ...state, pending: { origin: state.context!,
+      fate: { kind: 'recover', nextListId: 'unrelated', resetViewport: true } } }, { local: 'remote' }, available)).toBe('unrelated')
   })
 })

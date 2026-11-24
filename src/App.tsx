@@ -1,6 +1,6 @@
 import { workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
 import { noticeKey, type AccountSemanticState, type Acknowledgement } from './data/sync-event-state'
-import { localSyncListId, lostSyncListId } from './domain/sync-notice-ui'
+import { cachedFallbackList, deferListFallback, localSyncListId, lostSyncListId } from './domain/sync-notice-ui'
 import { SyncContextNotice } from './SyncContextNotice'
 import { ListMergeDialog } from './ListMergeDialog'
 import type { ListMergeActions } from './domain/list-merge'
@@ -748,12 +748,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   useEffect(() => {
     if (accountId === null && localLists === null) return
     if (visibleLists.some(list => list.id === active)) return
-    if (semanticEnabled && (!semanticLoaded || semanticPending || semanticPresented || semanticNavigation ||
-      (semanticState?.evidence && (!semanticState.evidence.caughtUp || semanticState.ready === false)))) return
-    const remembered = semanticState?.context?.listId
-      ? localSyncListId(semanticState.context.listId, cloudBoundLists, visibleLists) : null
-    if (visibleLists.length) setActive(remembered ?? visibleLists[0].id)
-  }, [visibleLists, active, accountId, localLists, semanticEnabled, semanticLoaded, semanticPending, semanticPresented, semanticNavigation, semanticState, cloudBoundLists])
+    if (deferListFallback(semanticEnabled, semanticLoaded, semanticState, !!semanticNavigation,
+      cloudStatus === 'signed-out' || cloudStatus === 'paused')) return
+    const next = cachedFallbackList(semanticState, cloudBoundLists, visibleLists)
+    if (next !== null) setActive(next)
+  }, [visibleLists, active, accountId, localLists, semanticEnabled, semanticLoaded, semanticNavigation, semanticState, cloudBoundLists, cloudStatus])
   async function createLocalList(event: FormEvent) {
     event.preventDefault()
     if (accountId !== null || !localLists || creatingList) return

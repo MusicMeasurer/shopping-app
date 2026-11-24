@@ -1,5 +1,5 @@
 import type { SyncNotice } from '../data/sync-event-fate'
-import type { RecoveryCandidate } from '../data/sync-event-state'
+import type { AccountSemanticState, RecoveryCandidate } from '../data/sync-event-state'
 
 export function syncNoticeText(notice: SyncNotice): { title: string; message: string } {
   const subject = (notice.entity === 'list' ? 'Список' : 'Товар') + ' «' + notice.sourceName + '»'
@@ -32,4 +32,24 @@ export function lostSyncListId(candidate: RecoveryCandidate | undefined): string
 export function relatedItemText(notice: SyncNotice, itemRemoval?: SyncNotice): string | undefined {
   return notice.entity === 'list' && itemRemoval?.entity === 'item'
     ? syncNoticeText(itemRemoval).message : undefined
+}
+
+/** A disconnected workspace cannot finish a server batch. Its already
+ * available local lists remain usable, without consuming any durable notice. */
+export function deferListFallback(enabled: boolean, loaded: boolean,
+  state: AccountSemanticState | undefined, navigating: boolean, disconnected: boolean): boolean {
+  if (!enabled) return false
+  if (!loaded || state?.presented || state?.pending?.fate.notice || navigating) return true
+  if (disconnected) return false
+  return !!(state?.pending || (state?.evidence && (!state.evidence.caughtUp || state.ready === false)))
+}
+
+export function cachedFallbackList(state: AccountSemanticState | undefined,
+  bindings: Readonly<Record<string, string>>, available: readonly { id: string }[]): string | null {
+  const candidates = [state?.pending?.fate.nextListId, state?.context?.listId, ...(state?.activity ?? [])]
+  for (const id of candidates) {
+    const local = localSyncListId(id ?? null, bindings, available)
+    if (local !== null) return local
+  }
+  return available[0]?.id ?? null
 }

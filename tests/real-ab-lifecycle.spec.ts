@@ -235,7 +235,33 @@ test('real A → B → A isolates local purchases and preserves original guest a
   }
   await signOut(page)
   if (integrated) {
-    await expect(page.getByRole('button', { name: 'Действия со списком', exact: true })).toBeVisible()
+    // The cached profile must select a surviving card without another server pull.
+    // Keep the original menu assertion; log the local evidence if it fails.
+    try {
+      await expect(page.locator('.list-select[aria-pressed="true"]')).toHaveCount(1)
+      await expect(page.getByRole('button', { name: 'Действия со списком', exact: true })).toBeVisible()
+    } catch (error) {
+      console.log('Signed-out recovery diagnostics', await page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open('shopping-app')
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error)
+        })
+        try {
+          const states = await new Promise<any[]>((resolve, reject) => {
+            const request = db.transaction('accountSyncEvents').objectStore('accountSyncEvents').getAll()
+            request.onsuccess = () => resolve(request.result)
+            request.onerror = () => reject(request.error)
+          })
+          return { cards: document.querySelectorAll('.list-select').length,
+            selected: document.querySelectorAll('.list-select[aria-pressed="true"]').length,
+            recovery: states.map(state => ({ ready: state.ready, caughtUp: state.evidence?.caughtUp,
+              pending: !!state.pending, presented: !!state.presented, knownReason: !!state.pending?.fate?.notice,
+              hasContext: !!state.context?.listId })) }
+        } finally { db.close() }
+      }))
+      throw error
+    }
     await expect(page.getByRole('button', { name: 'Новый список' })).toBeEnabled()
     await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
     await expect(page.getByRole('menuitem', { name: /Удалить список/ })).toBeEnabled()
