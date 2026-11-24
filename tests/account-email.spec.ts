@@ -695,12 +695,12 @@ test('recovers archive identity failure through common retry and resume without 
   })
   // A temporary client-side failure must not be treated as sign-out.
   await load.click()
-  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
   await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'error')
   fail = false
   const start = calls.length
   await page.getByRole('region', { name: 'Ошибка синхронизации' }).getByRole('button', { name: 'Повторить', exact: true }).click()
-  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
   await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
   expect(calls.slice(start).some(call => call.path === '/auth/v1/user')).toBe(true)
   expect(calls.slice(start).some(call => call.path === '/rest/v1/e4_archive_completions')).toBe(true)
@@ -709,10 +709,10 @@ test('recovers archive identity failure through common retry and resume without 
   // visibility alone must trigger the same recovery, without online/reload.
   fail = true
   await load.click()
-  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText('Аккаунт не подтверждён', { exact: true })).toBeVisible()
   fail = false
   await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
-  await expect(page.getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText('Аккаунт не подтверждён', { exact: true })).toHaveCount(0)
   await expect(profile.locator('[data-sync]')).toHaveAttribute('data-sync', 'synced')
   await expect(load).toBeVisible()
   expect(calls.filter(call => call.path === '/auth/v1/logout')).toHaveLength(0)
