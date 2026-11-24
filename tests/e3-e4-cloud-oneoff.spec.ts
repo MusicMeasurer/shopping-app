@@ -474,12 +474,16 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
   async function change(list: string, id: string, action: 'update' | 'delete', name: string) {
     const current = await client.from('shopping_items').select('version').eq('id', id).single()
     if (current.error) throw current.error
-    const r = await client.rpc('apply_e4_item_change', {
+    // The attribute RPC accepts add/update only. Deletion uses the
+    // versioned base RPC, exactly as applyRemoteMutation does in the app.
+    const args = {
       p_operation: crypto.randomUUID(), p_list: list, p_action: action, p_item: id,
-      p_name: name, p_purchased: action === 'update', p_expected_version: current.data.version,
-      p_quantity: action === 'update' ? 3 : null, p_unit: action === 'update' ? 'л' : null,
-    })
-    if (r.error) throw r.error
+      p_name: action === 'delete' ? null : name,
+      p_purchased: action === 'delete' ? null : true, p_expected_version: current.data.version,
+    }
+    const r = action === 'delete' ? await client.rpc('apply_item_change', args) :
+      await client.rpc('apply_e4_item_change', { ...args, p_quantity: 3, p_unit: 'л' })
+    if (r.error) throw new Error('SYNC-UI-03 remote ' + action + ': ' + r.error.code + ' ' + r.error.message)
   }
   async function caret(locator: ReturnType<typeof page.locator>, value: string) {
     await locator.fill(value)
@@ -531,6 +535,7 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
     await expect.poll(railLeft).toBeLessThan(10)
     await expect.poll(railLeft).toBeGreaterThanOrEqual(-2)
     const left = await railLeft()
+    console.log('[SYNC-UI-03] horizontal anchor after remote deletion')
     // Delete a different card before the visible anchor. Do not select it.
     await remove(ids[0])
     await expect(page.getByRole('button', { name: names[0], exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
@@ -550,6 +555,7 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
     expect(vertical.y).toBeGreaterThan(100)
     const anchor = page.locator('[data-item-id="' + vertical.id + '"]')
     const top = () => anchor.evaluate(node => node.getBoundingClientRect().top)
+    console.log('[SYNC-UI-03] vertical anchor after remote insertion/deletion')
     const insertedName = 'Айсберг'
     const inserted = await seed(activeId, insertedName)
     await expect(page.getByRole('checkbox', { name: insertedName, exact: true })).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
@@ -557,6 +563,7 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
     await change(activeId, inserted, 'delete', insertedName)
     await expect(page.getByRole('checkbox', { name: insertedName, exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
     await expect.poll(async () => Math.abs(await top() - vertical.top)).toBeLessThanOrEqual(4)
+    console.log('[SYNC-UI-03] add draft and caret')
     // The add field remains the same element with the same unsaved selection.
     const input = page.locator('#item-name')
     await caret(input, 'Несохранённая покупка')
@@ -565,6 +572,7 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
     await expectCaret(input, 'Несохранённая покупка')
     // A remote change of the very item being edited must update its saved
     // data, not the editor draft. Its native dialog must not be recreated.
+    console.log('[SYNC-UI-03] editor and caret after remote field changes')
     const item = items[8]
     await page.getByRole('button', { name: 'Изменить ' + item.name, exact: true }).click()
     const editor = page.getByRole('dialog', { name: 'Редактирование товара' })
