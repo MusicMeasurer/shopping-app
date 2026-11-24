@@ -1,3 +1,4 @@
+import { AUTH_TIMEOUT, UI_TIMEOUT } from './test-timeouts'
 import { expect, test, type Page } from '@playwright/test'
 
 const project = 'account-email-test.supabase.co'
@@ -456,7 +457,8 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   // to the surviving local workspace. Never leave the device stuck checking.
   const retry = page.getByRole('button', { name: 'Повторить выход', exact: true })
   const localItem = page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })
-  await expect(retry.or(localItem)).toBeVisible({ timeout: 15000 })
+  await expect(page.getByRole('alert').filter({ hasText: 'Не удалось завершить выход' }).or(localItem)).toBeVisible({ timeout: AUTH_TIMEOUT })
+  await expect(retry.or(localItem)).toBeVisible({ timeout: UI_TIMEOUT })
   if (await retry.isVisible()) {
     await expect(page.getByRole('alert')).toContainText('Не удалось завершить выход')
     await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
@@ -582,7 +584,7 @@ test('reopens a signed-out linked account on the first restart after offline loc
   await expect(page.locator('.account-full-email')).toHaveText(email)
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 15000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await expect(profile).toContainText(email)
   await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toHaveCount(0)
 })

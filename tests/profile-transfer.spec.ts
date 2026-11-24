@@ -1,8 +1,10 @@
+import { UI_TIMEOUT, LOCAL_SAVE_TIMEOUT, AUTH_TIMEOUT, SERVER_WRITE_TIMEOUT, INITIAL_SYNC_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice, expectCloudProfile, expectLocalProfile } from './auth-test-phases'
 import { test, expect, type Page } from '@playwright/test'
 
 // Keep RPC fault injection observable; PWA offline/restart is covered separately.
 // Requests forwarded by a service worker bypass page.route.
-test.use({ actionTimeout: 15000, serviceWorkers: 'block' })
+test.use({ actionTimeout: UI_TIMEOUT, serviceWorkers: 'block' })
 
 const email = process.env.E3_USER_A_EMAIL!
 const password = process.env.E3_USER_A_PASSWORD!
@@ -16,18 +18,19 @@ async function login(page: Page) {
   await page.getByLabel('Email', { exact: true }).fill(email)
   await page.getByLabel('Пароль', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await waitForAuthChoice(page)
 }
 async function logout(page: Page) {
   await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   await page.getByRole('button', { name: 'Выйти', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectLocalProfile(page)
 }
 async function createList(page: Page, name: string) {
   await page.getByRole('button', { name: 'Новый список', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Создать список' })
   await dialog.getByLabel('Название списка', { exact: true }).fill(name)
   await dialog.getByRole('button', { name: 'Создать', exact: true }).click()
-  await expect(dialog).toBeHidden({ timeout: 30000 })
+  await expect(dialog).toBeHidden({ timeout: (await page.locator('.profile-menu-trigger').getAttribute('data-profile-mode')) === 'cloud' ? SERVER_WRITE_TIMEOUT : LOCAL_SAVE_TIMEOUT })
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
 }
@@ -36,7 +39,7 @@ async function add(page: Page, name: string) {
   await input.fill(name)
   await expect(input).toHaveValue(name)
   const addButton = page.getByRole('button', { name: 'Добавить товар' })
-  await expect(addButton).toBeEnabled({ timeout: 15000 })
+  await expect(addButton).toBeEnabled({ timeout: UI_TIMEOUT })
   await addButton.click()
   await expect(page.getByRole('checkbox', { name, exact: true })).toBeVisible()
 }
@@ -64,7 +67,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   console.log('[transfer]', mode, 'decline first transfer')
   await login(page)
   await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
   console.log('[transfer]', mode, 'prepare cloud collision')
   await createList(page, name)
   await add(page, cloudItem)
@@ -73,7 +76,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
     const db = await new Promise<IDBDatabase>(resolve => { const r = indexedDB.open('shopping-app'); r.onsuccess = () => resolve(r.result) })
     const count = await new Promise<number>(resolve => { const r = db.transaction('accountOperations').objectStore('accountOperations').count(); r.onsuccess = () => resolve(r.result) })
     db.close(); return count
-  }), { timeout: 30000 }).toBe(0)
+  }), { timeout: SERVER_WRITE_TIMEOUT }).toBe(0)
   if (mode === 'separate') await createList(page, name + ' (2)')
   console.log('[transfer]', mode, 'inspect local login name')
   await logout(page)
@@ -109,7 +112,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   await expect.poll(() => collision.evaluate(element => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1)
   await collision.getByRole('button', { name: mode === 'merge' ? 'Объединить товары' : 'Создать отдельные списки с постфиксом (2)', exact: true }).click()
   try {
-    await expect(page.getByText('Перенос локального профиля не завершён.', { exact: false })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByText('Перенос локального профиля не завершён.', { exact: false })).toBeVisible({ timeout: SERVER_WRITE_TIMEOUT })
   } catch (error) {
     console.log('[transfer state]', mode, { interrupted,
       alerts: await page.getByRole('alert').allTextContents(),
@@ -119,7 +122,7 @@ for (const mode of ['separate', 'merge'] as const) test(`explicit profile ${mode
   }
   console.log('[transfer]', mode, 'resume committed import after dropped response')
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
   await expect(page.getByRole('dialog', { name: 'Синхронизация локального профиля' })).toHaveCount(0)
   const resultName = mode === 'merge' ? name : name + ' (3)'
   await expect(page.getByRole('button', { name: resultName, exact: true })).toHaveCount(1)
@@ -144,7 +147,7 @@ test('keeps a deleted local profile archive offline and imports it into the sele
   await page.goto('/shopping-app/')
   await login(page)
   await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
   await logout(page)
   await openSettings(page)
   await page.getByRole('button', { name: 'Локальный профиль Мои покупки', exact: true }).click()
@@ -175,9 +178,9 @@ test('keeps a deleted local profile archive offline and imports it into the sele
   await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
   await page.getByLabel('Пароль', { exact: true }).fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
   await archive.click()
-  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: 30000 })
+  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: INITIAL_SYNC_TIMEOUT })
   await expect(purchases.getByText('Ожидает синхронизации')).toHaveCount(0)
   await page.getByRole('button', { name: 'Основные списки' }).click()
   await expect(page.getByRole('button', { name: list, exact: true })).toHaveCount(0)
@@ -202,7 +205,7 @@ test('moves an independent profile archive into the open cloud account without s
   await login(page)
   await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   const profile = page.locator('.profile-menu-trigger')
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await profile.click()
   await page.getByRole('button', { name: 'Удалить локальный профиль «Мои покупки»', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Удаление профиля' })
@@ -216,12 +219,12 @@ test('moves an independent profile archive into the open cloud account without s
   const archive = page.getByRole('button', { name: /^Архив,/ })
   await archive.click()
   const purchases = page.getByRole('region', { name: 'Архив покупок' })
-  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: 30000 })
+  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: INITIAL_SYNC_TIMEOUT })
   await expect(purchases.getByText('Ожидает синхронизации')).toHaveCount(0)
   await page.reload()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await archive.click()
-  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: 30000 })
+  await expect(purchases.getByText(item, { exact: false })).toHaveCount(1, { timeout: INITIAL_SYNC_TIMEOUT })
   await page.getByRole('button', { name: 'Основные списки' }).click()
   await expect(page.getByRole('button', { name: list, exact: true })).toHaveCount(0)
 })

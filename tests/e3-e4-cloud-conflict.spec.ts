@@ -1,3 +1,5 @@
+import { UI_TIMEOUT, SERVER_WRITE_TIMEOUT, REMOTE_UPDATE_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice } from './auth-test-phases'
 import { devices, expect, test, type Page } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
@@ -16,7 +18,8 @@ async function openList(page: Page, listName: string) {
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   const refuse = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
   const account = page.getByRole('button', { name: 'Открыть аккаунт' })
-  await expect(refuse.or(account)).toBeVisible({ timeout: 30000 })
+  await waitForAuthChoice(page)
+  await expect(refuse.or(account)).toBeVisible({ timeout: UI_TIMEOUT })
   if (await refuse.isVisible()) await refuse.click()
   await page.getByRole('button', { name: listName, exact: true }).click()
   await expect(page.getByRole('heading', { name: listName, exact: true })).toBeVisible()
@@ -32,7 +35,7 @@ async function editAmount(page: Page, item: string, amount: number) {
 
 test('two WebKit sessions retain a newer offline amount and a later cloud purchase mark', async ({ page: offlinePage, context, browser }) => {
   test.setTimeout(180000)
-  const syncTimeout = 30000
+  const syncTimeout = SERVER_WRITE_TIMEOUT
   if (url !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' || !key || !email || !password)
     throw new Error('Refusing to run outside the established isolated E3 lab')
 
@@ -106,8 +109,8 @@ test('two WebKit sessions retain a newer offline amount and a later cloud purcha
         timeout: syncTimeout,
         message: 'Reconnect must preserve the offline quantity and the online purchase mark together',
       }).toMatchObject({ quantity: 2, purchased: true })
-      await expect(checkbox(offlinePage, 2)).toBeChecked({ timeout: syncTimeout })
-      await expect(checkbox(onlinePage, 2)).toBeChecked({ timeout: syncTimeout })
+      await expect(checkbox(offlinePage, 2)).toBeChecked({ timeout: REMOTE_UPDATE_TIMEOUT })
+      await expect(checkbox(onlinePage, 2)).toBeChecked({ timeout: REMOTE_UPDATE_TIMEOUT })
     } finally {
       await otherContext.close()
     }

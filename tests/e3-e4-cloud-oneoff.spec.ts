@@ -1,3 +1,5 @@
+import { UI_TIMEOUT, AUTH_TIMEOUT, SERVER_WRITE_TIMEOUT, REMOTE_UPDATE_TIMEOUT, INITIAL_SYNC_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice } from './auth-test-phases'
 import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
@@ -13,7 +15,7 @@ test.beforeAll(() => {
 
 test('account E3/E4: oneoff list can be created, completed and archived without remaining active', async ({ page }) => {
   test.setTimeout(180000)
-  page.setDefaultTimeout(12000)
+  page.setDefaultTimeout(UI_TIMEOUT)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
   page.on('pageerror', error => console.log('[browser pageerror]', error.message))
@@ -40,9 +42,10 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   // Explicitly retain independent guest data in this regression.
-  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  await waitForAuthChoice(page)
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
   if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Новый список' }),
@@ -53,7 +56,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   await expect(page.getByRole('region', { name: 'Облачный архив', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   const account = page.getByRole('dialog', { name: 'Мой аккаунт' })
-  await expect(account.locator('.profile-status')).toHaveText(/Синхронизировано/, { timeout: 60000 })
+  await expect(account.locator('.profile-status')).toHaveText(/Синхронизировано/, { timeout: INITIAL_SYNC_TIMEOUT })
   await expect(account.getByRole('button', { name: 'Повторить синхронизацию' })).toHaveCount(0)
   await account.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
   await page.getByRole('button', { name: 'Новый список' }).click()
@@ -82,7 +85,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   const secondItem = 'E4_SECOND_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill('E4_TEST_ITEM_' + crypto.randomUUID() + '\n' + secondItem + ' 2 л')
   // Keep the editor focused and use a normal pointer click to verify hit testing.
-  await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
+  await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: UI_TIMEOUT })
   await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
@@ -93,7 +96,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
     const { count } = await client.from('shopping_items').select('id', { count: 'exact', head: true })
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
-  }, { timeout: 30000 }).toBe(2)
+  }, { timeout: SERVER_WRITE_TIMEOUT }).toBe(2)
   tracePhase('completing list')
   const completeTrigger = page.getByRole('button', { name: 'Завершить список', exact: true })
   const completeMenu = page.getByRole('menu', { name: 'Завершение' })
@@ -115,7 +118,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   }
   page.once('dialog', dialog => void dialog.accept())
   await page.getByRole('button', { name: 'Завершить: всё куплено' }).click()
-  await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: 20000 })
+  await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: SERVER_WRITE_TIMEOUT })
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off must disappear from active lists').toHaveCount(0)
   await page.getByRole('button', { name: /^Архив,/ }).click()
@@ -125,7 +128,7 @@ test('account E3/E4: oneoff list can be created, completed and archived without 
   // Acceptance must survive a fresh application boot, not only React state.
   tracePhase('reloading app')
   await page.reload()
-  await expect(e4Archive.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: 30000 })
+  await expect(e4Archive.getByRole('heading', { name, exact: true })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
   await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
   await expect(page.getByRole('button', { name, exact: true }),
     'Completed one-off reappeared after reload').toHaveCount(0)
@@ -143,7 +146,8 @@ test.describe('queued cloud list operations', () => {
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     const declineImport = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
-    await expect(declineImport.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    await waitForAuthChoice(page)
+    await expect(declineImport.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
     if (await declineImport.isVisible()) await declineImport.click()
 
     const first = 'QUEUE_A_' + crypto.randomUUID()
@@ -185,7 +189,7 @@ test.describe('queued cloud list operations', () => {
     try {
       await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
       await merge.getByRole('button', { name: second, exact: true }).click()
-      await expect(merge.getByText(/исчезнет из активных списков/)).toBeVisible({ timeout: 15000 })
+      await expect(merge.getByText(/исчезнет из активных списков/)).toBeVisible({ timeout: SERVER_WRITE_TIMEOUT })
       expect(checks).toBeGreaterThan(1)
       await merge.getByRole('button', { name: 'Отмена', exact: true }).click()
     } finally {
@@ -222,10 +226,10 @@ test.describe('queued cloud list operations', () => {
     await expect(queue.getByRole('alert')).toContainText('Не удалось подтвердить удаление')
     await expect(page.getByRole('button', { name: second, exact: true })).toHaveCount(0)
     await page.reload()
-    await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
-    await expect(queue).toHaveCount(0, { timeout: 30000 })
+    await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
+    await expect(queue).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
     await expect(page.getByRole('button', { name: first, exact: true })).toHaveCount(0)
-    await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: 30000 })
+    await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
   })
 })
 
@@ -284,7 +288,8 @@ test('remote item archival and active-list deletion are acknowledged once and su
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
-    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    await waitForAuthChoice(page)
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
     if (await decline.isVisible()) await decline.click()
     await page.getByRole('button', { name: keepName, exact: true }).click()
     await expect.poll(() => captured()).toBe(keepId)
@@ -301,7 +306,7 @@ test('remote item archival and active-list deletion are acknowledged once and su
     })
     expect(archive.error).toBeNull()
     const itemNotice = page.getByRole('dialog', { name: 'Товар в архиве' })
-    await expect(itemNotice).toBeVisible({ timeout: 45000 })
+    await expect(itemNotice).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
     await expect(itemNotice).toContainText('Товар «' + itemName + '» перемещён в архив на другом устройстве.')
     await expect(editor).toHaveCount(0)
     await itemNotice.getByRole('button', { name: 'Понятно', exact: true }).click()
@@ -311,18 +316,18 @@ test('remote item archival and active-list deletion are acknowledged once and su
     await expect.poll(() => captured()).toBe(lostId)
     await remove(lostId)
     const notice = page.getByRole('dialog', { name: 'Список удалён' })
-    await expect(notice).toBeVisible({ timeout: 45000 })
+    await expect(notice).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
     await expect(notice).toContainText('Список «' + lostName + '» удалён на другом устройстве.')
     await expect(page.locator('.list-select').filter({ hasText: lostName })).toHaveCount(0)
     await page.keyboard.press('Escape')
     await expect(notice).toBeVisible()
     await page.reload()
-    await expect(notice).toBeVisible({ timeout: 30000 })
+    await expect(notice).toBeVisible({ timeout: AUTH_TIMEOUT })
     await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
     await expect(notice).toHaveCount(0)
     await expect(page.getByRole('button', { name: keepName, exact: true })).toHaveAttribute('aria-pressed', 'true')
     await page.reload()
-    await expect(page.getByRole('heading', { name: keepName, exact: true })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByRole('heading', { name: keepName, exact: true })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
     await expect(notice).toHaveCount(0)
   } finally {
     for (const id of ids) await remove(id)
@@ -393,7 +398,8 @@ test('remote merge restores the recipient and keeps an already shown notice befo
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
     const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
-    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+    await waitForAuthChoice(page)
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
     if (await decline.isVisible()) await decline.click()
     await select(fallbackName, fallback)
     await select(firstName, first)
@@ -402,7 +408,7 @@ test('remote merge restores the recipient and keeps an already shown notice befo
     await expect.poll(() => rail.evaluate(el => el.scrollLeft)).toBeGreaterThan(0)
     await merge(first, target)
     const merged = page.getByRole('dialog', { name: 'Списки объединены' })
-    await expect(merged).toBeVisible({ timeout: 45000 })
+    await expect(merged).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
     await expect(merged).toContainText('Список «' + firstName + '» объединён со списком «' + targetName + '» на другом устройстве.')
     await merged.getByRole('button', { name: 'Понятно' }).click()
     await expect(merged).toHaveCount(0)
@@ -413,11 +419,11 @@ test('remote merge restores the recipient and keeps an already shown notice befo
     await select(fallbackName, fallback)
     await select(secondName, second)
     await merge(second, target)
-    await expect(merged).toBeVisible({ timeout: 45000 })
+    await expect(merged).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
     const firstText = 'Список «' + secondName + '» объединён со списком «' + targetName + '» на другом устройстве.'
     await expect(merged).toContainText(firstText)
     await remove(target)
-    await expect(page.locator('.list-select').filter({ hasText: targetName })).toHaveCount(0, { timeout: 45000 })
+    await expect(page.locator('.list-select').filter({ hasText: targetName })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
     await expect(merged).toContainText(firstText)
     await merged.getByRole('button', { name: 'Понятно' }).click()
     const removed = page.getByRole('dialog', { name: 'Список удалён' })

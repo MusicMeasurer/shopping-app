@@ -1,3 +1,5 @@
+import { UI_TIMEOUT, SERVER_WRITE_TIMEOUT, REMOTE_UPDATE_TIMEOUT, INITIAL_SYNC_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice } from './auth-test-phases'
 import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
@@ -15,7 +17,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   test.setTimeout(300000)
   // The overall limit covers multiple real shopping cycles, not a missing
   // menu. Individual browser actions must fail promptly with their locator.
-  page.setDefaultTimeout(12000)
+  page.setDefaultTimeout(UI_TIMEOUT)
   const tracePhase = (name: string) => console.log('[E4 acceptance phase]', name)
   page.on('console', message => { if (message.type() === 'error') console.log('[browser console]', message.text()) })
   page.on('pageerror', error => console.log('[browser pageerror]', error.message))
@@ -42,16 +44,17 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   // Explicitly retain independent guest data in this regression.
-  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  await waitForAuthChoice(page)
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
   if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
+  await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
 
   // Required E4 account capability. Do not fabricate a default-list substitution.
   await expect(page.getByRole('button', { name: 'Новый список' }),
     'E4 list creation is absent in authenticated mode').toBeVisible()
   // Establish the initial account snapshot before triggering a second-device update.
   await expect(page.locator('.profile-menu-trigger .profile-status'))
-    .toHaveText(/Синхронизировано/, { timeout: 60000 })
+    .toHaveText(/Синхронизировано/, { timeout: INITIAL_SYNC_TIMEOUT })
   tracePhase('creating a list from a second client while the app is open')
   const createExternal = async (listName: string) => {
     const { error } = await client.rpc('create_e4_list', {
@@ -64,7 +67,15 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   const previousId = await previouslySelected.locator('..').getAttribute('data-list-id')
   await createExternal(name)
   await page.evaluate(() => window.dispatchEvent(new Event('online')))
-  await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: 60000 })
+  await expect.poll(() => page.evaluate(async ({ account, listName }) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => { const request = indexedDB.open('shopping-app'); request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error) })
+    try { return await new Promise<boolean>((resolve, reject) => {
+      const request = db.transaction('accountListMappings').objectStore('accountListMappings').index('byAccount').getAll(account)
+      request.onsuccess = () => resolve(request.result.some(row => row.metadata?.name === listName))
+      request.onerror = () => reject(request.error)
+    }) } finally { db.close() }
+  }, { account: auth.user!.id, listName: name }), { timeout: REMOTE_UPDATE_TIMEOUT }).toBe(true)
+  await expect(page.getByRole('button', { name, exact: true })).toBeVisible({ timeout: UI_TIMEOUT })
   await expect(previouslySelected.locator('..')).toHaveAttribute('data-list-id', previousId!)
   await expect(page.getByRole('button', { name, exact: true })).toHaveAttribute('aria-pressed', 'false')
   // Discover and bind the existing server-owned list before allowing writes.
@@ -77,7 +88,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   const firstItem = 'E4_FIRST_CYCLE_' + crypto.randomUUID()
   await page.getByLabel('Что нужно купить?').fill(firstItem)
   await page.getByLabel('Что нужно купить?').blur()
-  await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: 12000 })
+  await page.getByRole('button', { name: 'Добавить товар' }).click({ timeout: UI_TIMEOUT })
   await expect(page.getByRole('button', { name: 'Завершить список', exact: true })).toBeVisible()
   await expect(page.getByRole('listitem').filter({ has: page.getByRole('checkbox') }).first()).toBeVisible()
   // The account sync must confirm the queued item before completion.
@@ -88,7 +99,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     const { count } = await client.from('shopping_items').select('id', { count: 'exact', head: true })
       .eq('list_id', data.id).is('deleted_at', null)
     return count ?? 0
-  }, { timeout: 30000 }).toBe(1)
+  }, { timeout: SERVER_WRITE_TIMEOUT }).toBe(1)
   // This diagnostic covers operations on a confirmed item. A visible server
   // row alone does not prove that its local version receipt survived a reload.
   // The separate offline/recovery suites exercise intentionally pending writes.
@@ -120,7 +131,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
           pending: queued.some(row => (row.operation.itemId ?? row.operation.item?.id) === itemId) }
       } finally { db.close() }
     }, { account: auth.user!.id, listId: list!.id, itemId: item!.id, version: item!.version }),
-    { timeout: 30000, message: 'Server item must have its confirmed local version and no pending item operation' })
+    { timeout: SERVER_WRITE_TIMEOUT, message: 'Server item must have its confirmed local version and no pending item operation' })
       .toEqual({ versionConfirmed: true, pending: false })
   }
   await waitForItemReceipt(firstItem)
@@ -129,7 +140,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     await page.getByRole('menu', { name: 'Завершение' }).getByRole('menuitem', { name: 'Завершить список', exact: true }).click()
     page.once('dialog', dialog => void dialog.accept())
     await page.getByRole('button', { name: buttonName, exact: true }).click()
-    await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: 20000 })
+    await expect(page.locator('.list-action-notice')).toHaveText('Список завершён.', { timeout: SERVER_WRITE_TIMEOUT })
   }
 
   tracePhase('editing item attributes before archiving')
@@ -164,7 +175,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
         .eq('list_id', editedList!.id).is('deleted_at', null)
       if (error) throw error
       return data
-    }, { timeout: 30000 }).toEqual([{ name: editedItem, quantity, unit }])
+    }, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([{ name: editedItem, quantity, unit }])
     await waitForItemReceipt(editedItem)
   }
   await page.reload()
@@ -185,7 +196,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   // A permanent list survives completion, but its completed purchase is archived.
   await expect(page.getByRole('button', { name, exact: true }),
     'Permanent list must remain active after completion').toBeVisible()
-  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await page.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   const archive = page.getByRole('region', { name: 'Облачный архив' })
   const archivedCycles = archive.getByRole('status').locator(':scope > ul > li').filter({
     has: page.locator('strong').filter({ hasText: name }),
@@ -217,7 +228,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
         .eq('list_id', owned.id).is('deleted_at', null)
       if (error) throw error
       return Object.fromEntries((data ?? []).map(item => [item.name, item.purchased]))
-    }, { timeout: 30000 }).toEqual({ [nextItem]: purchased, [unmarkedItem]: false })
+    }, { timeout: SERVER_WRITE_TIMEOUT }).toEqual({ [nextItem]: purchased, [unmarkedItem]: false })
   }
 
   // Measure the fixed user-requested delay from the target item's visibility.
@@ -232,7 +243,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(marked).toBeChecked()
   await expect(unmarked).toBeVisible()
   await expect(unmarked).not.toBeChecked()
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   await expect(archivedCycles).toHaveCount(1)
   await expect(archivedCycles.getByRole('listitem')).toHaveText([archivedEditedItem])
 
@@ -244,7 +255,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByRole('button', { name: completeMarked, exact: true }).click()
   await expect(marked).toBeChecked()
   await expect(unmarked).toBeVisible()
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   await expect(archivedCycles).toHaveCount(1)
 
   tracePhase('completing second cycle with marked items only')
@@ -255,7 +266,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   await expect(marked).toHaveCount(0)
   await expect(unmarked).toHaveCount(0)
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
 
   await expect(archivedCycles).toHaveCount(2)
   const firstCycle = archivedCycles.filter({ has: page.getByText(archivedEditedItem, { exact: true }) })
@@ -284,16 +295,16 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     return data
   }
 
-  await expect.poll(readActiveItems, { timeout: 30000 })
+  await expect.poll(readActiveItems, { timeout: SERVER_WRITE_TIMEOUT })
     .toEqual([{ name: noPurchaseItem, purchased: false }])
   await completeList('Завершить: ничего не куплено')
-  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([])
+  await expect.poll(readActiveItems, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([])
 
   await page.reload()
   await page.getByRole('button', { name, exact: true }).click()
   await expect(page.getByRole('heading', { name, exact: true })).toBeVisible()
   await expect(noPurchase).toHaveCount(0)
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   await expect(archivedCycles).toHaveCount(2)
   await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
@@ -303,7 +314,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByRole('button', { name: 'Добавить товар' }).click()
   const discarded = page.getByRole('checkbox', { name: discardedItem, exact: true })
   await expect(discarded).toBeVisible()
-  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: false }])
+  await expect.poll(readActiveItems, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([{ name: discardedItem, purchased: false }])
 
   tracePhase('renaming, changing type and reordering cloud list')
   const otherList = 'E4_ORDER_' + crypto.randomUUID()
@@ -364,8 +375,8 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(metadataRow(renamed).getByRole('button', { name: 'Сделать постоянным' })).toBeVisible()
   await page.getByRole('button', { name: renamed, exact: true }).click()
   await expect(discarded).toBeVisible()
-  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: false }])
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await expect.poll(readActiveItems, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([{ name: discardedItem, purchased: false }])
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   await expect(archivedCycles).toHaveCount(2)
   await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
@@ -373,7 +384,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   tracePhase('deleting cloud list with marked purchases')
   await discarded.click()
   await expect(discarded).toBeChecked()
-  await expect.poll(readActiveItems, { timeout: 30000 }).toEqual([{ name: discardedItem, purchased: true }])
+  await expect.poll(readActiveItems, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([{ name: discardedItem, purchased: true }])
 
   const deletion = page.getByRole('dialog', { name: 'Удалить список?' })
   const warning = deletion.getByText('Отмеченные товары не попадут в историю покупок и будут удалены без записи в архив.', { exact: false })
@@ -388,7 +399,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await expect(discarded).toBeChecked()
   await openDeletion()
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
-  await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0, { timeout: 20000 })
+  await expect(page.getByRole('button', { name: renamed, exact: true })).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
   await expect(page.locator('.list-action-notice')).toHaveText('Список удалён.')
   await page.reload()
   await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible()
@@ -396,7 +407,7 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
   await page.getByRole('button', { name: /^Архив,/ }).click()
   await expect(page.getByRole('region', { name: 'Архив покупок' }).getByText(archivedEditedItem, { exact: true })).toBeVisible()
   await page.getByRole('button', { name: 'Основные списки', exact: true }).click()
-  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: 30000 })
+  await archive.getByRole('button', { name: 'Показать завершённые покупки' }).click({ timeout: UI_TIMEOUT })
   await expect(archivedCycles).toHaveCount(2)
   await expect(firstCycle.getByRole('listitem')).toHaveText([archivedEditedItem])
   await expect(secondCycle.getByRole('listitem')).toHaveText([nextItem])
@@ -418,13 +429,13 @@ test('account E3/E4: permanent list archives all or marked purchases and skips a
     const { data, error } = await client.from('shopping_items').select('purchased').eq('name', uncheckedName).is('deleted_at', null)
     if (error) throw error
     return data
-  }, { timeout: 30000 }).toEqual([{ purchased: false }])
+  }, { timeout: SERVER_WRITE_TIMEOUT }).toEqual([{ purchased: false }])
   await openDeletion()
   await expect(deletion).toBeVisible()
   await expect(warning).toHaveCount(0)
   await expect(deletion.getByRole('button', { name: 'Завершить отмеченные' })).toHaveCount(0)
   await deletion.getByRole('button', { name: 'Удалить', exact: true }).click()
-  await expect(page.getByRole('button', { name: unmarkedListName, exact: true })).toHaveCount(0, { timeout: 20000 })
+  await expect(page.getByRole('button', { name: unmarkedListName, exact: true })).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
   await expect(page.locator('.list-action-notice')).toHaveText('Список удалён.')
   await client.auth.signOut({ scope: 'local' })
 })

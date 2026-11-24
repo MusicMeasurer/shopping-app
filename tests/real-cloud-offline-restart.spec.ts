@@ -1,3 +1,5 @@
+import { UI_TIMEOUT, LOCAL_SAVE_TIMEOUT, AUTH_TIMEOUT, SERVER_WRITE_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice, expectCloudProfile } from './auth-test-phases'
 import { test, expect } from '@playwright/test'
 import { createClient } from '@supabase/supabase-js'
 
@@ -34,9 +36,10 @@ test('bound account queues an offline add across browser restart and syncs after
     await page.getByLabel('Пароль').fill(password)
     await page.getByRole('button', { name: 'Войти', exact: true }).click()
   // Explicitly retain independent guest data in this regression.
-  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  await waitForAuthChoice(page)
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
   if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+    await expectCloudProfile(page)
     if (integrated) {
       await page.getByRole('button', { name: 'Новый список', exact: true }).click()
       await page.getByRole('textbox', { name: 'Название списка', exact: true }).fill(listName)
@@ -51,18 +54,18 @@ test('bound account queues an offline add across browser restart and syncs after
       await page.getByLabel('Локальный список').selectOption('groceries')
       await page.getByLabel('Облачный список').selectOption({ label: 'SHOPPINGAPP_HTTP_TEST_A' })
       await page.getByRole('button', { name: 'Привязать' }).click()
-      await expect(page.getByText('Продукты: облачный список привязан', { exact: false })).toBeVisible({ timeout: 20000 })
+      await expect(page.getByText('Продукты: облачный список привязан', { exact: false })).toBeVisible({ timeout: SERVER_WRITE_TIMEOUT })
     }
     await context.setOffline(true)
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(name)
     await page.getByRole('button', { name: 'Добавить товар' }).click()
-    await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 15000 })
+    await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: LOCAL_SAVE_TIMEOUT })
     // No remote mutation can succeed while browser networking is disabled.
     const { data: before, error: beforeError } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
     if (beforeError) throw beforeError
     expect(before).toHaveLength(0)
     await page.reload()
-    await expect(page.getByText('Локальный профиль: нет сети.', { exact: false })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByText('Локальный профиль: нет сети.', { exact: false })).toBeVisible({ timeout: AUTH_TIMEOUT })
     if (integrated) await page.getByRole('button', { name: listName, exact: true }).click()
     await expect(page.getByRole('checkbox', { name })).toBeVisible()
     await page.getByLabel('Что нужно купить?', { exact: false }).fill(afterRestartName)
@@ -72,21 +75,21 @@ test('bound account queues an offline add across browser restart and syncs after
     await context.setOffline(false)
     // Connectivity event must reverify the account and drain the durable queue
     // without requiring another page reload or manual cloud action.
-    await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+    await expectCloudProfile(page)
     if (integrated) await page.getByRole('button', { name: listName, exact: true }).click()
-    await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 20000 })
+    await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: LOCAL_SAVE_TIMEOUT })
     await expect.poll(async () => {
       const { data, error } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', name).is('deleted_at', null)
       if (error) throw error
       itemId = data?.[0]?.id ?? null
       return data?.length ?? 0
-    }, { timeout: 30000 }).toBe(1)
+    }, { timeout: SERVER_WRITE_TIMEOUT }).toBe(1)
     await expect.poll(async () => {
       const { data, error } = await api.from('shopping_items').select('id').eq('list_id', listId).eq('name', afterRestartName).is('deleted_at', null)
       if (error) throw error
       afterRestartId = data?.[0]?.id ?? null
       return data?.length ?? 0
-    }, { timeout: 30000 }).toBe(1)
+    }, { timeout: SERVER_WRITE_TIMEOUT }).toBe(1)
   } finally {
     await context.setOffline(false)
     if (listId && !itemId) {

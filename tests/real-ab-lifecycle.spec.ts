@@ -1,3 +1,5 @@
+import { UI_TIMEOUT, LOCAL_SAVE_TIMEOUT, AUTH_TIMEOUT, SERVER_WRITE_TIMEOUT, INITIAL_SYNC_TIMEOUT } from './test-timeouts'
+import { waitForAuthChoice, expectCloudProfile, expectLocalProfile } from './auth-test-phases'
 import { test, expect, type Page } from '@playwright/test'
 
 // Real browser + real Auth A/B against the pinned disposable Supabase lab.
@@ -25,15 +27,16 @@ async function signIn(page: Page, which: 0 | 1) {
   await page.getByLabel('Пароль').fill(password)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   // Explicitly retain independent guest data in this regression.
-  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: 30000 })
+  await waitForAuthChoice(page)
+  await expect(page.getByRole('button', { name: 'Не синхронизировать', exact: true }).or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
   if (await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).isVisible()) await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
 }
 
 async function signOut(page: Page) {
   await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
   await page.getByRole('button', { name: 'Выйти' }).click()
-  await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectLocalProfile(page)
 }
 
 async function add(page: Page, name: string) {
@@ -42,7 +45,7 @@ async function add(page: Page, name: string) {
   if (process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration' &&
       await input.evaluate(element => element.tagName === 'INPUT')) await input.press('Enter')
   else await page.getByRole('button', { name: 'Добавить товар' }).click()
-  await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: 15000 })
+  await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: LOCAL_SAVE_TIMEOUT })
 }
 
 test('real A → B → A isolates local purchases and preserves original guest across reload and offline restart', async ({ page, context }) => {
@@ -87,7 +90,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
       } finally {
         db.close()
       }
-    }), { timeout: 30000 }).toBe(0)
+    }), { timeout: SERVER_WRITE_TIMEOUT }).toBe(0)
   }
 
   async function removeAccountList(name: string) {
@@ -97,7 +100,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await page.getByRole('menuitem', { name: /Удалить список/ }).click()
     await page.getByRole('dialog', { name: 'Удалить список?' })
       .getByRole('button', { name: 'Удалить', exact: true }).click()
-    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0, { timeout: 20000 })
+    await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
   }
 
   const archivedGuest = 'GUEST_ARCHIVE_' + crypto.randomUUID()
@@ -165,21 +168,22 @@ test('real A → B → A isolates local purchases and preserves original guest a
     await context.setOffline(false)
     // A cold restart can verify again, then restore the same selected list.
     await page.reload()
-    await expect(activeCard).toHaveAttribute('aria-pressed', 'true', { timeout: 30000 })
+    await expect(activeCard).toHaveAttribute('aria-pressed', 'true', { timeout: INITIAL_SYNC_TIMEOUT })
     await expect(product).toBeVisible()
 
     await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
     await context.setOffline(true)
     await page.getByRole('button', { name: 'Выйти', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Повторить выход' })).toBeEnabled({ timeout: 15000 })
+    await expect(page.getByRole('alert').filter({ hasText: 'Не удалось завершить выход' })).toBeVisible({ timeout: AUTH_TIMEOUT })
+    await expect(page.getByRole('button', { name: 'Повторить выход' })).toBeEnabled({ timeout: UI_TIMEOUT })
     await expect(product).toHaveCount(0)
     await context.setOffline(false)
     await page.reload()
     await expect(page.getByText('Предыдущий выход не завершён.', { exact: false })).toBeVisible()
     await page.getByRole('button', { name: 'Повторить выход' }).click()
-    await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+    await expectLocalProfile(page)
     await page.reload()
-    await expect(page.getByRole('button', { name: 'Войти в аккаунт' })).toBeVisible({ timeout: 30000 })
+    await expectLocalProfile(page)
   } else {
     await signOut(page)
   }
@@ -218,7 +222,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await selectAccountList(listB, true)
   await add(page, itemB)
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Открыть аккаунт' })).toBeVisible({ timeout: 30000 })
+  await expectCloudProfile(page)
   await selectAccountList(listB)
   await expect(page.getByRole('checkbox', { name: itemB })).toBeVisible()
   await removeAccountList(listB)
@@ -280,7 +284,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
   await context.setOffline(true)
   await page.reload()
   await selectAccountList(guestList)
-  await expect(page.getByRole('checkbox', { name: guest })).toBeVisible({ timeout: 20000 })
+  await expect(page.getByRole('checkbox', { name: guest })).toBeVisible({ timeout: LOCAL_SAVE_TIMEOUT })
   await context.setOffline(false)
 })
 
@@ -310,7 +314,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   await dialog.getByLabel('Больше не спрашивать для этого профиля').check()
   await dialog.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
   await page.getByLabel('Стандартный (горизонтальная лента)').check()
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
@@ -325,7 +329,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await profile.click()
   await expect(page.getByLabel('Не спрашивать о синхронизации этого профиля')).toBeChecked()
   await localProfiles.locator('.profile-option > button:first-child').filter({ hasText: emailA }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await expect(dialog).toHaveCount(0)
   expect(sessionWrites).toHaveLength(1)
   await expect(page.locator('nav.list-rail')).toHaveClass(/standard/)
@@ -338,7 +342,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(skipTransfer).toBeEnabled()
   await expect(skipTransfer).not.toBeChecked()
   await localProfiles.locator('.profile-option > button:first-child').filter({ hasText: emailA }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await expect(dialog).toHaveCount(0)
   expect(sessionWrites).toHaveLength(1)
   await signOut(page)
@@ -351,7 +355,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
   await expect(page.getByLabel('Email', { exact: true })).toHaveCount(0)
   await page.getByLabel('Пароль').fill(passwordA)
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
-  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: 30000 })
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
   await expect(profile).toContainText(emailA)
   expect(sessionWrites.slice(-2)).toEqual(['/auth/v1/token?grant_type=password', '/auth/v1/logout?scope=local'])
   await signOut(page)
@@ -386,8 +390,8 @@ test('E4: a list created and completed after sign-out is archived on re-entry', 
   await page.reload()
   await expect(pending).toBeVisible()
   await signIn(page, 1)
-  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0, { timeout: 45000 })
-  await expect(archive.getByText(item, { exact: true })).toHaveCount(1, { timeout: 30000 })
+  await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
+  await expect(archive.getByText(item, { exact: true })).toHaveCount(1, { timeout: INITIAL_SYNC_TIMEOUT })
   await expect(pending).toHaveCount(0)
 })
 
@@ -410,7 +414,7 @@ test('E4: signed-out cloud copy merges locally across restart and confirms once 
     await create.getByRole('button', { name: 'Создать', exact: true }).click()
     await card(name).click()
     await add(page, item)
-    await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: 30000 })
+    await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: SERVER_WRITE_TIMEOUT })
   }
   await signOut(page)
   await card(source).click()
@@ -426,7 +430,7 @@ test('E4: signed-out cloud copy merges locally across restart and confirms once 
   await card(target).click()
   await expect(page.getByRole('checkbox', { name: first, exact: true })).toBeVisible()
   await signIn(page, 1)
-  await expect(card(source)).toHaveCount(0, { timeout: 45000 })
+  await expect(card(source)).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
   await card(target).click()
   for (const item of [first, second])
     await expect(page.getByRole('checkbox', { name: item, exact: true })).toHaveCount(1)
