@@ -31,7 +31,7 @@ export function SyncIndicator({ state, since, onError, name }: {
 }) {
   const label = syncIndicatorLabels[state] + ' — ' + name
   const style = useMemo(() => state === 'success' && since !== undefined ? { animationDelay: '-' + Math.max(0, Date.now() - since) + 'ms' } : undefined, [state, since])
-  const artwork = <span className="sync-indicator-artwork" style={style}><SyncIndicatorIcon state={state}/></span>
+  const artwork = <span className="sync-indicator-artwork" key={state + ":" + (since ?? "")} style={style}><SyncIndicatorIcon state={state}/></span>
   return state === 'error' && onError
     ? <button type="button" className="list-card-sync" data-sync-state={state} aria-label={label} title={label}
         onClick={onError}>{artwork}</button>

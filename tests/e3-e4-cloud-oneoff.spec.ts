@@ -694,6 +694,33 @@ test.describe('list card sync indicators', () => {
       expect(calls.slice(before).flat()).toContain(ids[0])
       expect(calls.slice(before).flat()).not.toContain(ids[1])
       await expect(indicator(ids[0])).toHaveCount(0, { timeout: UI_TIMEOUT })
+
+      // A read of the unchanged server state must not dismiss an unconfirmed
+      // direct rename. The card retries the same operation UUID and payload.
+      await card(names[0]).click()
+      const renameRoute = '**/rest/v1/rpc/apply_e4_list_metadata'
+      const attempts: string[] = []
+      await page.route(renameRoute, async route => {
+        const body = route.request().postDataJSON() as { p_operation: string; p_list: string }
+        if (body.p_list !== ids[0]) return route.continue()
+        attempts.push(body.p_operation)
+        if (attempts.length === 1) return route.fulfill({ status: 503, json: { message: 'Injected rename failure' } })
+        return route.continue()
+      })
+      const renamed = names[0] + '_renamed'
+      try {
+        await page.getByRole('button', { name: 'Переименовать список', exact: true }).click()
+        const dialog = page.getByRole('dialog', { name: 'Переименовать список' })
+        await dialog.getByLabel('Название списка').fill(renamed)
+        await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click()
+        await expect(dialog.getByRole('alert')).toBeVisible({ timeout: SERVER_WRITE_TIMEOUT })
+        await dialog.getByRole('button', { name: 'Отмена', exact: true }).click()
+        await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','error')
+        await indicator(ids[0]).click()
+        await expect(card(renamed)).toBeVisible({ timeout: SERVER_WRITE_TIMEOUT })
+        expect(attempts).toHaveLength(2)
+        expect(attempts[1]).toBe(attempts[0])
+      } finally { await page.unroute(renameRoute) }
     } finally {
       release()
       await page.unroute(rpcRoute)

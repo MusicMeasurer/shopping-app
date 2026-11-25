@@ -404,6 +404,7 @@ export function createStorage(name = 'shopping-app') {
         await operations.put({ ...row, queuedAt: Date.now(), operation: { ...pending, item: operation.item, ...editTimes } })
         await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
         await tx.done
+        listSyncLedger.queued(accountId, pending.operationId, [operation.localListId], 'items')
         return true
       }
       await tx.done
@@ -437,6 +438,7 @@ export function createStorage(name = 'shopping-app') {
     await operations.add({ key, accountId, operation, queuedAt: Date.now(), neverDispatched: true })
     await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
     await tx.done
+    listSyncLedger.queued(accountId, operation.operationId, [operation.localListId], 'items')
     return true
   }
 
@@ -446,16 +448,17 @@ export function createStorage(name = 'shopping-app') {
     async readListSyncWork(accountId: string): Promise<SyncWork[]> {
       const tx = (await database).transaction(['accountDeletions','accountOperations','accountListMappings',
         'accountDraftLists','accountCompletionRequests','accountCompletions','accountItemVersions','accountFeed'])
-      const [deleted, operations, mappings, drafts, requests, completions, versions, feed] = await Promise.all([
+      const [deleted, operations, mappings, drafts, requests, completions, feed] = await Promise.all([
         tx.objectStore('accountDeletions').get(accountId),
         tx.objectStore('accountOperations').index('byAccount').getAll(accountId),
         tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
         tx.objectStore('accountDraftLists').index('byAccount').getAll(accountId),
         tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId),
         tx.objectStore('accountCompletions').index('byAccount').getAll(accountId),
-        tx.objectStore('accountItemVersions').index('byAccount').getAll(accountId),
         tx.objectStore('accountFeed').get(accountId),
       ])
+      const versions = operations.some(row => row.operation.kind === 'delete')
+        ? await tx.objectStore('accountItemVersions').index('byAccount').getAll(accountId) : []
       await tx.done
       if (deleted) return []
       const local = new Map(mappings.map(row => [row.remoteListId, row.localListId]))
@@ -2533,6 +2536,7 @@ export function createStorage(name = 'shopping-app') {
         const itemStore = tx.objectStore('accountItems')
         checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
         if (draft) await tx.objectStore('accountDraftLists').put({ ...draft, updatedAt: Date.now() })
+        const queuedIds: string[] = []
         for (const item of items) {
           await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
           if (!mapping) continue
@@ -2541,8 +2545,10 @@ export function createStorage(name = 'shopping-app') {
             remoteListId: mapping.remoteListId, itemId: item.id, item, preserveCreatedAt: true,
           }
           await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, queuedAt: Date.now(), neverDispatched: true })
+          queuedIds.push(operation.operationId)
         }
         await tx.done
+        for (const id of queuedIds) listSyncLedger.queued(accountId, id, [listId], 'items')
       } catch (error) {
         try { tx.abort() } catch { /* closed */ }
         await tx.done.catch(() => {})

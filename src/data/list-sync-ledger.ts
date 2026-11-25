@@ -17,6 +17,8 @@ const priority: Record<SyncIndicatorState, number> = { success: 1, waiting: 2, r
 export class ListSyncLedger {
   private accounts = new Map<string, Map<string, ActiveWork>>()
   private successes = new Map<string, Map<string, number>>()
+  private settled = new Map<string, Set<string>>()
+  private retries = new Map<string, Map<string, () => Promise<unknown>>>()
   private listeners = new Set<() => void>()
   private revision = 0
   private notificationPending = false
@@ -46,8 +48,14 @@ export class ListSyncLedger {
   private supersede(account: string, listIds: readonly string[]) {
     for (const listId of listIds) this.successes.get(account)?.delete(listId)
   }
+  queued(account: string, id: string, listIds: readonly string[], kind: SyncWorkKind) {
+    this.supersede(account, listIds)
+    this.work(account).set(id, { id, listIds, kind, phase: 'waiting', durable: true })
+    this.changed()
+  }
   begin(account: string, id: string, listIds: readonly string[], kind: SyncWorkKind, durable = true) {
     if (!listIds.length) return
+    this.settled.get(account)?.delete(id)
     this.supersede(account, listIds)
     this.work(account).set(id, { id, listIds, kind, phase: 'running', durable })
     this.changed()
@@ -60,10 +68,27 @@ export class ListSyncLedger {
     this.changed()
   }
   cancel(account: string, id: string) {
+    this.retries.get(account)?.delete(id)
     if (this.accounts.get(account)?.delete(id)) this.changed()
+  }
+  registerRetry(account: string, id: string, retry: () => Promise<unknown>) {
+    let rows = this.retries.get(account)
+    if (!rows) { rows = new Map(); this.retries.set(account, rows) }
+    rows.set(id, retry)
+  }
+  async retryDirect(account: string, listId: string, active: () => boolean) {
+    for (const row of [...(this.accounts.get(account)?.values() ?? [])]) {
+      if (!active()) return
+      if (row.phase === 'error' && !row.durable && row.listIds.includes(listId))
+        await this.retries.get(account)?.get(row.id)?.()
+    }
   }
   confirm(account: string, id: string, listIds: readonly string[], now = Date.now()) {
     this.accounts.get(account)?.delete(id)
+    this.retries.get(account)?.delete(id)
+    let settled = this.settled.get(account)
+    if (!settled) { settled = new Set(); this.settled.set(account, settled) }
+    settled.add(id)
     const successes = this.successesFor(account)
     for (const [list, at] of successes) if (now - at >= 5000) successes.delete(list)
     for (const listId of listIds) successes.set(listId, now)
@@ -73,14 +98,15 @@ export class ListSyncLedger {
    * surviving a cancellation, replacement, or a newer locally queued edit. */
   reconcile(account: string, queued: readonly SyncWork[]) {
     const ids = new Set(queued.map(row => row.id))
+    for (const id of this.settled.get(account) ?? []) if (!ids.has(id)) this.settled.get(account)?.delete(id)
     for (const [id, work] of this.accounts.get(account) ?? []) {
-      if (work.durable && work.phase === 'error' && !ids.has(id)) this.accounts.get(account)?.delete(id)
+      if (work.durable && work.phase !== 'running' && !ids.has(id)) this.accounts.get(account)?.delete(id)
     }
     // A success on one operation must not reappear after other work is cancelled.
-    for (const row of queued) this.supersede(account, row.listIds)
+    for (const row of queued) if (!this.settled.get(account)?.has(row.id)) this.supersede(account, row.listIds)
   }
   reset(account: string) {
-    this.accounts.delete(account); this.successes.delete(account); this.changed()
+    this.accounts.delete(account); this.successes.delete(account); this.settled.delete(account); this.retries.delete(account); this.changed()
   }
   /** Only a confirmed operation starts the five-second success window. No
    * account-wide transport status, timer, or empty poll creates a success. */
@@ -94,21 +120,20 @@ export class ListSyncLedger {
     }
     for (const [list, at] of this.successes.get(account) ?? []) if (now - at < 5000) set(list, 'success', undefined, at)
     const active = this.accounts.get(account)
-    const queuedIds = new Set(queued.map(row => row.id))
     for (const row of queued) {
+      if (this.settled.get(account)?.has(row.id)) continue
       const live = active?.get(row.id)
       const phase = row.phase === 'error' ? 'error' : live?.phase ?? row.phase
       for (const list of row.listIds) set(list, phase, row.kind)
     }
     for (const row of active?.values() ?? []) {
-      if (row.durable && row.phase === 'error' && !queuedIds.has(row.id)) continue
       for (const list of row.listIds) set(list, row.phase, row.kind)
     }
     for (const list of conflicts) set(list, 'error', 'items')
     return result
   }
-  /** A successful verified feed refresh can resolve an uncertain direct
-   * metadata mutation without resending it. */
+  /** Only read/application failures of the shared feed may be cleared by
+   * a verified feed check; uncertain mutations require their own receipt. */
   clearFeedErrors(account: string, listId: string) {
     for (const [id, work] of this.accounts.get(account) ?? []) if (!work.durable && work.kind === 'feed' &&
         work.phase === 'error' && work.listIds.includes(listId)) this.accounts.get(account)?.delete(id)

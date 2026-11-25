@@ -1,5 +1,5 @@
 import 'fake-indexeddb/auto'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { ListSyncLedger, type SyncWork } from './list-sync-ledger'
 import { createStorage } from './storage'
 import { createItem } from '../domain/shopping'
@@ -76,5 +76,35 @@ describe('list sync state is aggregated by actual operation and scoped account',
     await storage.applyAccountFeed(account, '2', '3', [{ entity: 'list', listId: list, metadata: { ...metadata, name: 'B', revision: 2 } }], false, () => true)
     expect(storage.listSyncLedger.states(account, [], []).get(list)?.state).toBe('success')
     await storage.close()
+  })
+})
+describe('indicator receipt and retry edge cases', () => {
+  it('does not let an older inventory or confirmed earlier edit hide newer waiting work', () => {
+    const ledger = new ListSyncLedger()
+    ledger.queued('a','old',['L'],'items')
+    ledger.begin('a','old',['L'],'items')
+    ledger.queued('a','new',['L'],'items')
+    ledger.confirm('a','old',['L'],100)
+    expect(ledger.states('a',[waiting('old','L')],[],101).get('L')?.state).toBe('waiting')
+    ledger.reconcile('a',[waiting('new','L')])
+    ledger.begin('a','new',['L'],'items')
+    ledger.confirm('a','new',['L'],200)
+    expect(ledger.states('a',[waiting('new','L')],[],201).get('L')?.state).toBe('success')
+  })
+  it('a successful feed read cannot dismiss a failed direct write; retry is scoped', async () => {
+    const ledger = new ListSyncLedger(), retry = vi.fn(async()=>{}), other = vi.fn(async()=>{})
+    ledger.begin('a','meta',['L'],'lists',false)
+    ledger.registerRetry('a','meta',retry)
+    ledger.fail('a','meta')
+    ledger.begin('a','other',['M'],'lists',false)
+    ledger.registerRetry('a','other',other)
+    ledger.fail('a','other')
+    ledger.clearFeedErrors('a','L')
+    expect(ledger.states('a',[],[]).get('L')?.state).toBe('error')
+    await ledger.retryDirect('a','L',()=>true)
+    expect(retry).toHaveBeenCalledOnce()
+    expect(other).not.toHaveBeenCalled()
+    await ledger.retryDirect('b','L',()=>true)
+    expect(retry).toHaveBeenCalledOnce()
   })
 })
