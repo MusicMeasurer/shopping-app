@@ -15,6 +15,7 @@ import { version } from '../package.json'
 import { ListHeading } from './ListHeading'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { WorkspaceViewport } from './WorkspaceViewport'
+import { SyncIndicatorPreview } from './SyncIndicatorPreview'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
@@ -1470,5 +1471,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!semanticNotice && semanticError && <p role="alert" className="error">{semanticError}<button type="button"
       onClick={() => { semanticAttempt.current = ''; setSemanticError(''); setSemanticRefresh(value => value + 1) }}>Повторить</button></p>}
     <footer>Списки сохраняются на этом устройстве.<br/>После первого открытия приложение работает без интернета.</footer>
+    <SyncIndicatorPreview/>
   </WorkspaceViewport>
 }

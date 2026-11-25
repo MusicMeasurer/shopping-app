@@ -1,0 +1,15 @@
+/* Temporary isolated preview; no rules for existing application indicators. */
+.sync-preview { margin: 24px 0 0; padding: 12px; border: 1px solid #d8dfd6; border-radius: 12px; }
+.sync-preview-title { font-size: 14px; font-weight: 650; margin: 0 0 8px; }
+.sync-preview-row { display: flex; align-items: center; gap: 12px; min-height: 44px; padding: 5px 0; font-size: 13px; }
+.sync-preview-icon { display: block; flex: 0 0 28px; width: 28px; height: 28px; transform-origin: center; }
+.sync-preview-icon[data-state="waiting"] { color: #D49A27; animation: sync-preview-wait 2s ease-in-out infinite; }
+.sync-preview-icon[data-state="running"] { color: #3889DB; animation: sync-preview-spin 1.8s linear infinite; }
+.sync-preview-icon[data-state="error"] { color: #D64545; animation: sync-preview-error 3s ease-in-out infinite; }
+.sync-preview-icon[data-state="success"] { color: #27965B; animation: sync-preview-success 7s ease-in-out infinite; }
+.sync-preview-note { font-size: 11px; margin: 8px 0 0; }
+@keyframes sync-preview-wait { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+@keyframes sync-preview-spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+@keyframes sync-preview-error { 0%,30%,60%,100% { transform: scale(1); opacity: 1; } 15%,45% { transform: scale(.9); opacity: .55; } }
+@keyframes sync-preview-success { 0% { opacity: 0; transform: scale(.8); } 5% { opacity: 1; transform: scale(1); } 65% { opacity: 1; } 71.428571%,100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sync-preview-icon { animation: none !important; } }
