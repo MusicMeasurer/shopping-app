@@ -78,3 +78,33 @@ test('temporary indicator preview preserves static artwork and isolates animatio
   ))).toBe(true)
   expect(await running.locator('path').evaluateAll(nodes => nodes.map(node => node.getAttribute('d')))).toEqual(geometry)
 })
+
+
+test('failed local write reports a temporary notice without misleading reload or a false success', async ({ page }) => {
+  await page.goto('/shopping-app/')
+  const input = page.getByLabel('Что нужно купить?')
+  await expect(input).toBeEnabled()
+  await input.fill('Тест сохранения')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  const item = page.getByRole('checkbox', { name: 'Тест сохранения' })
+  await expect(item).not.toBeChecked()
+  await page.evaluate(() => {
+    const original = IDBObjectStore.prototype.put
+    IDBObjectStore.prototype.put = function (value: unknown, key?: IDBValidKey) {
+      if (this.name === 'profileItems' || this.name === 'items') {
+        IDBObjectStore.prototype.put = original
+        throw new DOMException('Injected local write failure', 'QuotaExceededError')
+      }
+      return key === undefined ? original.call(this, value) : original.call(this, value, key)
+    }
+  })
+  await item.click()
+  const notice = page.locator('.item-write-notice')
+  await expect(notice).toContainText('Не удалось сохранить изменение')
+  await expect(item).not.toBeChecked()
+  await expect(page.getByRole('button', { name: 'Повторить загрузку' })).toHaveCount(0)
+  await expect(page.locator('.list-card-sync[data-sync-state="success"]')).toHaveCount(0)
+  await expect(notice).toHaveCount(0, { timeout: 8000 })
+  await item.click()
+  await expect(item).toBeChecked()
+})
