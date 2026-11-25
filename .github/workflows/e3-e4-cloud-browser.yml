@@ -11,6 +11,7 @@ jobs:
     timeout-minutes: 12
     environment: e3-lab
     env:
+      VITE_SYNC_DIAGNOSTICS: 'true'
       E3E4_LAB_URL: https://gmrqeubhotjpmtwokfeq.supabase.co
       E3E4_LAB_PUBLISHABLE_KEY: sb_publishable_iN1Oxw6kkBK0eEjvFy3YZw_4wWpwRJ3
       E3E4_LAB_TEST_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}

@@ -1,3 +1,4 @@
+import { beginSync, traceSync } from './sync-diagnostics'
 import type { SignOutGuard } from './signout-guard'
 import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 import { transitionAuthView, type AuthView } from './auth-view'
@@ -151,13 +152,14 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   // Bound the whole check, including SDK storage-lock waits; late results
   // cannot publish a view or authorize queue processing.
   async function recheckSession(expectedAccountId: string, isCurrent: () => boolean = () => true): Promise<boolean> {
+    const finish = beginSync('session')
     let expired = false
     let timeout: ReturnType<typeof setTimeout> | undefined
     const valid = () => !expired && active && !signingOut && !guard?.isPending() && isCurrent()
     const verify = async () => {
       for (let attempt = 0; attempt < 3 && valid(); attempt++) {
         const startedAt = generation
-        const { data, error } = await client.getSession()
+        const { data, error } = await traceSync('session-read', () => client.getSession(), {}, result => !result.error && !!result.data.session)
         if (!valid()) return false
         if (generation !== startedAt) continue
         if (error) return false
@@ -176,11 +178,14 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       return false
     }
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         verify(),
         new Promise<boolean>(resolve => { timeout = setTimeout(() => { expired = true; resolve(false) }, 20_000) }),
       ])
+      finish(expired ? 'timeout' : result ? 'ok' : 'rejected')
+      return result
     } catch {
+      finish('error')
       return false
     } finally {
       expired = true

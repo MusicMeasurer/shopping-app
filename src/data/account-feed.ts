@@ -1,3 +1,4 @@
+import { traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { parseCloudListMetadata, type CloudListMetadata } from './e4-cloud-list-metadata'
 import { parseRemoteItems, type RemoteItem } from './remote-snapshot'
@@ -71,19 +72,19 @@ export async function pullAccountFeed(
   const snapshot = async () => {
     assertActive()
     onRequest()
-    const { data, error } = await client.rpc('snapshot_e4_account_changes', { p_account: accountId })
+    const { data, error } = await traceSync('feed-read', () => client.rpc('snapshot_e4_account_changes', { p_account: accountId }), {}, result => !result.error)
     if (error?.code === 'PGRST202' && cursor === undefined) return false
     if (error) throw error
     const { next, changes } = parseAccountFeedSnapshot(data, accountId)
     assertActive()
-    await storage.applyAccountFeed(accountId, cursor, next, changes, true, isActive)
+    await traceSync('feed-store', () => storage.applyAccountFeed(accountId, cursor, next, changes, true, isActive), { count: changes.length }, result => result)
     cursor = next
     return true
   }
   if (cursor === undefined) return snapshot()
   while (isActive()) {
     onRequest()
-    const { data, error } = await client.rpc('pull_e4_account_changes', { p_account: accountId, p_after: cursor, p_limit: pageSize })
+    const { data, error } = await traceSync('feed-read', () => client.rpc('pull_e4_account_changes', { p_account: accountId, p_after: cursor, p_limit: pageSize }), {}, result => !result.error)
     assertActive()
     if (error?.code === 'P0002') return snapshot()
     if (error) throw error
@@ -97,7 +98,7 @@ export async function pullAccountFeed(
       next = eventPosition
       changes.push(parseAccountFeedChange(row, accountId))
     }
-    if (!await storage.applyAccountFeed(accountId, cursor, next, changes, false, isActive)) return true
+    if (!await traceSync('feed-store', () => storage.applyAccountFeed(accountId, cursor, next, changes, false, isActive), { count: changes.length }, result => result)) return true
     cursor = next
     if (data.length < pageSize) return true
   }

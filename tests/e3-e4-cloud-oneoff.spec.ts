@@ -754,3 +754,111 @@ test.describe('list card sync indicators', () => {
     }
   })
 })
+
+
+test('diagnostic journal distinguishes a delayed session check and a lost committed item response', async ({ page }) => {
+  test.setTimeout(150000)
+  const client = createClient(url, key, { auth: { persistSession: false } })
+  const auth = await client.auth.signInWithPassword({ email, password })
+  expect(auth.error).toBeNull()
+  const name = 'SYNC_TRACE_' + crypto.randomUUID()
+  const item = 'TRACE_ITEM_' + crypto.randomUUID()
+  const created = await client.rpc('create_e4_list', { p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent' })
+  expect(created.error).toBeNull()
+  const id = created.data.list_id as string
+  const journalKey = 'shopping-app:sync-diagnostics:v1'
+  const read = () => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '[]') as
+    { stage: string; outcome: string; elapsedMs?: number; count?: number; pending?: boolean }[], journalKey)
+  const has = (stage: string, outcome: string) => async () => (await read()).some(row => row.stage === stage && row.outcome === outcome)
+  const authRoute = '**/auth/v1/user', pushRoute = '**/rest/v1/rpc/push_e4_account_changes'
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  let held = false, allow = false, committed = false
+  const operationIds: string[] = []
+  try {
+    await page.goto('/shopping-app/')
+    await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+    await page.getByLabel('Email').fill(email)
+    await page.getByLabel('Пароль').fill(password)
+    await page.getByRole('button', { name: 'Войти', exact: true }).click()
+    await waitForAuthChoice(page)
+    const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+    await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
+    if (await decline.isVisible()) await decline.click()
+    await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: INITIAL_SYNC_TIMEOUT })
+    await page.getByRole('button', { name, exact: true }).click()
+    await page.route(authRoute, async route => {
+      if (!held) { held = true; await hold }
+      return route.continue()
+    })
+    await page.evaluate(() => window.dispatchEvent(new Event('online')))
+    await expect.poll(() => held, { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(has('session','start'), { timeout: UI_TIMEOUT }).toBe(true)
+    release()
+    await expect.poll(has('session','ok'), { timeout: AUTH_TIMEOUT }).toBe(true)
+    await page.unroute(authRoute)
+    await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: INITIAL_SYNC_TIMEOUT })
+    await page.route(pushRoute, async route => {
+      const body = route.request().postDataJSON() as { p_operations: { operation_id: string; list_id: string }[] }
+      const ops = body.p_operations.filter(op => op.list_id === id)
+      if (!ops.length) return route.continue()
+      operationIds.push(...ops.map(op => op.operation_id))
+      if (allow) return route.continue()
+      const response = await route.fetch()
+      if (response.ok()) {
+        const rows = await response.json()
+        if (Array.isArray(rows) && rows.some(row => row.receipt)) committed = true
+      }
+      return route.abort()
+    })
+    await page.getByLabel('Что нужно купить?').fill(item)
+    await page.getByRole('button', { name: 'Добавить товар' }).click()
+    await expect.poll(() => committed, { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
+    await expect.poll(async () => (await read()).some(row => row.stage === 'batch-send' && ['error','rejected'].includes(row.outcome)), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
+    const failed = await read()
+    expect(failed.some(row => row.stage === 'receipt-store' && row.outcome === 'ok')).toBe(false)
+    await expect(page.locator('.profile-menu-trigger')).toContainText(/ошибк/i, { timeout: UI_TIMEOUT })
+    await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
+    const dialog = page.getByRole('dialog', { name: 'Мой аккаунт' })
+    allow = true
+    await dialog.getByRole('button', { name: 'Повторить синхронизацию' }).click()
+    await expect.poll(has('manual','start'), { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(has('receipt-store','ok'), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
+    await expect.poll(async () => (await read()).some(row => row.stage === 'queue' && row.outcome === 'ok' && row.count === 0), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
+    expect(operationIds.length).toBeGreaterThan(1)
+    expect(new Set(operationIds).size).toBe(1)
+    await expect(dialog.locator('.profile-status')).toHaveText(/Синхронизировано/, { timeout: INITIAL_SYNC_TIMEOUT })
+    await dialog.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
+    await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
+    await expect.poll(has('visible','ok'), { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(has('feed-store','ok'), { timeout: REMOTE_UPDATE_TIMEOUT }).toBe(true)
+    await page.reload()
+    await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
+    await expect.poll(has('manual','start'), { timeout: UI_TIMEOUT }).toBe(true)
+    await page.evaluate(() => Object.defineProperty(navigator, 'clipboard', { configurable: true,
+      value: { writeText: async () => { throw new Error('Clipboard blocked for test') } } }))
+    await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+    const settings = page.getByRole('dialog', { name: 'Настройки приложения' })
+    await settings.getByRole('button', { name: 'Копировать журнал диагностики' }).click()
+    const copy = settings.getByRole('textbox', { name: 'Журнал диагностики' })
+    await expect(copy).toBeVisible()
+    const exported = await copy.inputValue()
+    expect(JSON.parse(exported).events).toEqual(expect.arrayContaining([expect.objectContaining({ stage: 'manual', outcome: 'start' })]))
+    for (const secret of [email, password, auth.data.user!.id, id, name, item, ...operationIds]) expect(exported).not.toContain(secret)
+    const { count, error } = await client.from('shopping_items').select('id', { count: 'exact', head: true }).eq('list_id', id).is('deleted_at', null)
+    expect(error).toBeNull(); expect(count).toBe(1)
+  } finally {
+    release()
+    await page.unroute(authRoute)
+    await page.unroute(pushRoute)
+    await page.close()
+    const row = await client.from('shopping_lists').select('revision,deleted_at').eq('id', id).maybeSingle()
+    if (row.error) throw row.error
+    if (row.data && !row.data.deleted_at) {
+      const result = await client.rpc('complete_e4_list', { p_operation: crypto.randomUUID(), p_list: id,
+        p_expected_revision: row.data.revision, p_mode: 'delete_list' })
+      if (result.error) throw result.error
+    }
+    await client.auth.signOut({ scope: 'local' })
+  }
+})

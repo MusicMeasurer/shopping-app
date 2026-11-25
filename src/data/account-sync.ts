@@ -1,3 +1,4 @@
+import { traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ListId, Item } from '../domain/shopping'
 import { duplicatedItems, itemNameKey, matchingNamePair, sameItemSnapshot, type ItemNameDecision } from '../domain/item-names'
@@ -375,13 +376,13 @@ export function createAccountSync(
     send: async mutation => {
       activeOperations.add(mutation.operationId)
       ledger?.begin(accountId, mutation.operationId, [localListId], 'items')
-      try { return await applyRemoteMutation(client, mutation) }
+      try { return await traceSync('batch-send', () => applyRemoteMutation(client, mutation), { count: 1 }) }
       catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
     },
     commitReceipt: async (mutation, receipt) => {
       assertActive()
       try {
-        await storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
+        await traceSync('receipt-store', () => storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion))
         activeOperations.delete(mutation.operationId)
       } catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
     },

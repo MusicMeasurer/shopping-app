@@ -1,3 +1,4 @@
+import { markSync, traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAccountSync, serializeAccountItemFlush } from './account-sync'
 import type { CloudPendingOperation } from './pending-operations'
@@ -31,6 +32,7 @@ export function flushAccountBatch(
     let failure: Error | undefined
     while (isActive()) {
       const pending = await storage.readSyncableAccountPending(accountId)
+      markSync('queue', 'ok', { count: pending.length })
       if (!isActive()) return
       const items = new Set<string>()
       const batch: CloudPendingOperation[] = []
@@ -46,27 +48,31 @@ export function flushAccountBatch(
         if (batch.length === 50) break
       }
       if (!batch.length) break
-      const claimed = await Promise.all(batch.map(operation => storage.claimAccountPending(accountId, operation.operationId)))
+      const claimed = await traceSync('batch-claim', () => Promise.all(batch.map(operation => storage.claimAccountPending(accountId, operation.operationId))), { count: batch.length })
       if (!isActive()) return
       const mutations = claimed.map(resolveVersionedMutation)
       const unresolved = new Set(batch.map(op => op.operationId))
       for (const op of batch) ledger?.begin(accountId, op.operationId, [op.localListId], 'items')
       try {
-      const { data, error } = await client.rpc('push_e4_account_changes', { p_account: accountId, p_operations: mutations.map(payload) })
+      const { data, error } = await traceSync('batch-send', () => client.rpc('push_e4_account_changes', { p_account: accountId, p_operations: mutations.map(payload) }), { count: mutations.length }, result => !result.error)
       if (!isActive()) return
       if (error) throw error
-      if (!Array.isArray(data) || data.length !== mutations.length) throw new Error('Invalid operation batch response')
+      if (!Array.isArray(data) || data.length !== mutations.length) {
+        markSync('receipt-validate', 'rejected')
+        throw new Error('Invalid operation batch response')
+      }
       for (const [index, mutation] of mutations.entries()) {
         if (!isActive()) return
         const outcome = data[index]
         if (outcome?.receipt !== undefined) {
-          const receipt = parseRemoteMutationReceipt(outcome.receipt, mutation.operationId)
-          await storage.commitAccountReceipt(accountId, receipt.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
+          const receipt = await traceSync('receipt-validate', async () => parseRemoteMutationReceipt(outcome.receipt, mutation.operationId))
+          await traceSync('receipt-store', () => storage.commitAccountReceipt(accountId, receipt.operationId, mutation.listId, mutation.itemId, receipt.itemVersion))
           unresolved.delete(mutation.operationId)
           continue
         }
         if (outcome?.operation_id !== mutation.operationId || typeof outcome.message !== 'string')
           throw new Error('Batch outcome does not match the operation')
+        markSync('batch-rejected', 'rejected')
         const operation = batch[index]
         const sync = createAccountSync(storage, client, {
           accountId, isActive, localListId: operation.localListId, remoteListId: operation.remoteListId, onReconciled,

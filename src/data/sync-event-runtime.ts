@@ -1,3 +1,4 @@
+import { traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Storage } from './storage'
 import { pullAccountFeed } from './account-feed'
@@ -18,7 +19,7 @@ export async function pullSemanticAccountFeed(client: Pick<SupabaseClient, 'rpc'
     const saved = await storage.readAccountSemanticState(accountId)
     const bound = saved?.evidence?.position === expected ? saved?.batchThrough : undefined
     const observedHead = bound ? saved?.observedHead : undefined
-    const batch = await readSyncEventPage(client, accountId, expected, isActive, onRequest, bound, observedHead)
+    const batch = await traceSync('feed-read', () => readSyncEventPage(client, accountId, expected, isActive, onRequest, bound, observedHead))
     if (batch.kind === 'unsupported') {
       unsupported.add(client)
       if (expected === undefined) return false
@@ -27,7 +28,7 @@ export async function pullSemanticAccountFeed(client: Pick<SupabaseClient, 'rpc'
     const next = batch.kind === 'snapshot' ? batch.position : batch.through
     const changes = batch.kind === 'snapshot' ? batch.changes : batch.events.map(event => event.change)
     if (!isActive()) throw new Error('Account changed during feed synchronization')
-    if (!await storage.applyAccountFeed(accountId, expected, next, changes, batch.kind === 'snapshot', isActive, batch)) return true
+    if (!await traceSync('feed-store', () => storage.applyAccountFeed(accountId, expected, next, changes, batch.kind === 'snapshot', isActive, batch), { count: changes.length }, result => result)) return true
     if (batch.kind === 'snapshot' || batch.head === batch.through) return true
     if (!batch.batchThrough) count++
   }

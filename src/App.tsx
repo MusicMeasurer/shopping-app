@@ -1,3 +1,5 @@
+import { SyncDiagnosticsControl } from './SyncDiagnosticsControl'
+import { syncDiagnosticsEnabled } from './data/sync-diagnostics'
 import { workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
 import { noticeKey, type AccountSemanticState, type Acknowledgement } from './data/sync-event-state'
 import { cachedFallbackList, deferListFallback, localSyncListId, lostSyncListId } from './domain/sync-notice-ui'
@@ -1182,6 +1184,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <label><input type="radio" name="content-size" checked={draftContentSize === 'large'} onChange={() => setDraftContentSize('large')}/> Крупный</label>
       </fieldset>
       <button type="button" onClick={() => { setSettingsOpen(false); onOpenProfileMenu() }}>Настройка профиля</button>
+      {syncDiagnosticsEnabled && <SyncDiagnosticsControl />}
       <div className="dialog-buttons">
         <button type="button" onClick={() => setSettingsOpen(false)}>
           {draftCardSize === cardSize && draftContentSize === contentSize ? 'Закрыть' : 'Отмена'}

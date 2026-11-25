@@ -1,3 +1,4 @@
+import { traceSync } from './sync-diagnostics'
 import { isAuthRetryableFetchError, type SupabaseClient } from '@supabase/supabase-js'
 import { accountIdFromSessionCandidate, type SessionCandidate } from './auth-scope'
 
@@ -12,7 +13,7 @@ export async function verifiedAccountId(client: Pick<SupabaseClient, 'auth'>): P
 
 /** Preserve transient failures for actions that can retry or explain them. */
 export async function checkVerifiedAccountId(client: Pick<SupabaseClient, 'auth'>): Promise<string | null> {
-  const { data: sessionData, error: sessionError } = await client.auth.getSession()
+  const { data: sessionData, error: sessionError } = await traceSync('session-read', () => client.auth.getSession(), {}, result => !result.error && !!result.data.session)
   if (isAuthRetryableFetchError(sessionError)) throw sessionError
   if (sessionError || !sessionData.session) return null
   return verifySessionIdentity(client, sessionData.session as SessionCandidate)
@@ -22,7 +23,7 @@ export async function checkVerifiedAccountId(client: Pick<SupabaseClient, 'auth'
 export async function verifySessionIdentity(client: Pick<SupabaseClient, 'auth'>, session: SessionCandidate): Promise<string | null> {
   const candidate = accountIdFromSessionCandidate(session)
   if (!candidate) return null
-  const { data, error } = await client.auth.getUser(session.access_token)
+  const { data, error } = await traceSync('identity', () => client.auth.getUser(session.access_token), {}, result => !result.error && result.data.user?.id.toLowerCase() === candidate)
   if (isAuthRetryableFetchError(error)) throw error
   return !error && data.user?.id.toLowerCase() === candidate ? candidate : null
 }
