@@ -2,7 +2,10 @@ name: Deploy ShoppingApp to GitHub Pages
 
 on:
   push:
-    branches: [main, release/interim-clean]
+    # Keep automatic verification of the interim branch, never production.
+    branches: [release/interim-clean]
+    paths-ignore:
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
@@ -41,15 +44,15 @@ jobs:
       - name: Verify the clean PWA in Chromium and WebKit
         run: npx playwright test tests/interim-clean-deployment.spec.ts
       - name: Configure GitHub Pages
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
-        if: github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
         uses: actions/upload-pages-artifact@v3
         with:
           path: dist
   deploy:
-    if: github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
