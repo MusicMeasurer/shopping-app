@@ -1,10 +1,13 @@
 /** One account-scoped source for the state of operations, independent of UI size. */
 export type SyncIndicatorState = 'waiting' | 'running' | 'error' | 'success'
 export type SyncWorkKind = 'items' | 'lists' | 'feed'
+export type SyncScope = 'items' | 'lists'
 export interface SyncWork {
   id: string
   listIds: readonly string[]
   kind: SyncWorkKind
+  /** Feed transport can carry either entity; retry still uses kind. */
+  scope?: SyncScope
   phase: 'waiting' | 'running' | 'error'
 }
 interface ActiveWork extends SyncWork { durable: boolean }
@@ -13,10 +16,12 @@ export interface ListIndicatorState {
   since?: number
   errors: readonly SyncWorkKind[]
 }
+const scopeOf = (work: Pick<SyncWork, 'kind' | 'scope'>): SyncScope => work.scope ?? (work.kind === 'items' ? 'items' : 'lists')
 const priority: Record<SyncIndicatorState, number> = { success: 1, waiting: 2, running: 3, error: 4 }
 export class ListSyncLedger {
   private accounts = new Map<string, Map<string, ActiveWork>>()
   private successes = new Map<string, Map<string, number>>()
+  private listSuccesses = new Map<string, Map<string, number>>()
   private settled = new Map<string, Set<string>>()
   private retries = new Map<string, Map<string, () => Promise<unknown>>>()
   private listeners = new Set<() => void>()
@@ -40,31 +45,34 @@ export class ListSyncLedger {
     if (!rows) { rows = new Map(); this.accounts.set(account, rows) }
     return rows
   }
-  private successesFor(account: string) {
-    let rows = this.successes.get(account)
-    if (!rows) { rows = new Map(); this.successes.set(account, rows) }
+  private successesFor(account: string, source = this.successes) {
+    let rows = source.get(account)
+    if (!rows) { rows = new Map(); source.set(account, rows) }
     return rows
   }
-  private supersede(account: string, listIds: readonly string[]) {
-    for (const listId of listIds) this.successes.get(account)?.delete(listId)
+  private supersede(account: string, listIds: readonly string[], scope: SyncScope) {
+    for (const listId of listIds) {
+      this.successes.get(account)?.delete(listId)
+      if (scope === 'lists') this.listSuccesses.get(account)?.delete(listId)
+    }
   }
   queued(account: string, id: string, listIds: readonly string[], kind: SyncWorkKind) {
-    this.supersede(account, listIds)
+    this.supersede(account, listIds, scopeOf({ kind }))
     this.work(account).set(id, { id, listIds, kind, phase: 'waiting', durable: true })
     this.changed()
   }
-  begin(account: string, id: string, listIds: readonly string[], kind: SyncWorkKind, durable = true) {
+  begin(account: string, id: string, listIds: readonly string[], kind: SyncWorkKind, durable = true, scope?: SyncScope) {
     if (!listIds.length) return
     this.settled.get(account)?.delete(id)
-    this.supersede(account, listIds)
-    this.work(account).set(id, { id, listIds, kind, phase: 'running', durable })
+    this.supersede(account, listIds, scopeOf({ kind, scope }))
+    this.work(account).set(id, { id, listIds, kind, scope, phase: 'running', durable })
     this.changed()
   }
   fail(account: string, id: string) {
     const work = this.accounts.get(account)?.get(id)
     if (!work) return
     this.work(account).set(id, { ...work, phase: 'error' })
-    this.supersede(account, work.listIds)
+    this.supersede(account, work.listIds, scopeOf(work))
     this.changed()
   }
   cancel(account: string, id: string) {
@@ -83,7 +91,9 @@ export class ListSyncLedger {
         await this.retries.get(account)?.get(row.id)?.()
     }
   }
-  confirm(account: string, id: string, listIds: readonly string[], now = Date.now()) {
+  confirm(account: string, id: string, listIds: readonly string[], now = Date.now(), fallbackScope: SyncScope = 'items') {
+    const work = this.accounts.get(account)?.get(id)
+    const scope = work ? scopeOf(work) : fallbackScope
     this.accounts.get(account)?.delete(id)
     this.retries.get(account)?.delete(id)
     let settled = this.settled.get(account)
@@ -92,6 +102,9 @@ export class ListSyncLedger {
     const successes = this.successesFor(account)
     for (const [list, at] of successes) if (now - at >= 5000) successes.delete(list)
     for (const listId of listIds) successes.set(listId, now)
+    const listSuccesses = this.listSuccesses.get(account)
+    for (const [list, at] of listSuccesses ?? []) if (now - at >= 5000) listSuccesses?.delete(list)
+    if (scope === 'lists') for (const listId of listIds) this.successesFor(account, this.listSuccesses).set(listId, now)
     this.changed()
   }
   /** A fresh durable inventory prevents obsolete errors or old success from
@@ -103,14 +116,14 @@ export class ListSyncLedger {
       if (work.durable && work.phase !== 'running' && !ids.has(id)) this.accounts.get(account)?.delete(id)
     }
     // A success on one operation must not reappear after other work is cancelled.
-    for (const row of queued) if (!this.settled.get(account)?.has(row.id)) this.supersede(account, row.listIds)
+    for (const row of queued) if (!this.settled.get(account)?.has(row.id)) this.supersede(account, row.listIds, scopeOf(row))
   }
   reset(account: string) {
-    this.accounts.delete(account); this.successes.delete(account); this.settled.delete(account); this.retries.delete(account); this.changed()
+    this.accounts.delete(account); this.successes.delete(account); this.listSuccesses.delete(account); this.settled.delete(account); this.retries.delete(account); this.changed()
   }
   /** Only a confirmed operation starts the five-second success window. No
    * account-wide transport status, timer, or empty poll creates a success. */
-  states(account: string, queued: readonly SyncWork[], conflicts: readonly string[], now = Date.now()): Map<string, ListIndicatorState> {
+  states(account: string, queued: readonly SyncWork[], conflicts: readonly string[], now = Date.now(), activeListId?: string): Map<string, ListIndicatorState> {
     const result = new Map<string, ListIndicatorState>()
     const set = (listId: string, state: SyncIndicatorState, kind?: SyncWorkKind, since?: number) => {
       const old = result.get(listId)
@@ -118,16 +131,20 @@ export class ListSyncLedger {
       if (!old || priority[state] > priority[old.state]) result.set(listId, { state, since, errors })
       else if (errors.length !== old.errors.length) result.set(listId, { ...old, errors })
     }
-    for (const [list, at] of this.successes.get(account) ?? []) if (now - at < 5000) set(list, 'success', undefined, at)
+    for (const [list, at] of this.successes.get(account) ?? []) if (list !== activeListId && now - at < 5000) set(list, 'success', undefined, at)
+    const activeSuccess = activeListId === undefined ? undefined : this.listSuccesses.get(account)?.get(activeListId)
+    if (activeListId !== undefined && activeSuccess !== undefined && now - activeSuccess < 5000) set(activeListId, 'success', undefined, activeSuccess)
+    const visible = (listId: string, work: SyncWork, phase: SyncWork['phase']) =>
+      listId !== activeListId || scopeOf(work) === 'lists' || phase === 'error'
     const active = this.accounts.get(account)
     for (const row of queued) {
       if (this.settled.get(account)?.has(row.id)) continue
       const live = active?.get(row.id)
       const phase = row.phase === 'error' ? 'error' : live?.phase ?? row.phase
-      for (const list of row.listIds) set(list, phase, row.kind)
+      for (const list of row.listIds) if (visible(list, live ?? row, phase)) set(list, phase, row.kind)
     }
     for (const row of active?.values() ?? []) {
-      for (const list of row.listIds) set(list, row.phase, row.kind)
+      for (const list of row.listIds) if (visible(list, row, row.phase)) set(list, row.phase, row.kind)
     }
     for (const list of conflicts) set(list, 'error', 'items')
     return result

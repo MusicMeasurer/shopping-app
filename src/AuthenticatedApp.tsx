@@ -604,7 +604,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           } catch (cause) {
             // Scope a known legacy list read failure, not an account-wide poll.
             if (stillActive()) {
-              storage.listSyncLedger.begin(accountId, 'legacy-feed:' + localListId, [localListId], 'feed', false)
+              storage.listSyncLedger.begin(accountId, 'legacy-feed:' + localListId, [localListId], 'feed', false, 'items')
               storage.listSyncLedger.fail(accountId, 'legacy-feed:' + localListId)
             }
             // Keep processing other bound lists, but never import conflicting
@@ -816,7 +816,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
-      storage.listSyncLedger.confirm(accountId, 'create:' + created.id, [created.id])
+      storage.listSyncLedger.confirm(accountId, 'create:' + created.id, [created.id], Date.now(), 'lists')
       return created.id
     } catch (error) {
       if (activeAccount.current === accountId)

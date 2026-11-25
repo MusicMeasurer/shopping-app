@@ -464,9 +464,9 @@ export function createStorage(name = 'shopping-app') {
       const local = new Map(mappings.map(row => [row.remoteListId, row.localListId]))
       const known = new Map(versions.map(row => [row.itemId, row.remoteListId]))
       const rows = new Map<string, SyncWork>()
-      const add = (id: string, listIds: (string | undefined)[], kind: SyncWork['kind'], error = false) => {
+      const add = (id: string, listIds: (string | undefined)[], kind: SyncWork['kind'], error = false, scope?: SyncWork['scope']) => {
         const ids = [...new Set(listIds.filter((v): v is string => !!v))]
-        if (ids.length) rows.set(id, { id, listIds: ids, kind, phase: error ? 'error' : 'waiting' })
+        if (ids.length) rows.set(id, { id, listIds: ids, kind, ...(scope ? { scope } : {}), phase: error ? 'error' : 'waiting' })
       }
       for (const row of operations) {
         const op = row.operation
@@ -483,7 +483,7 @@ export function createStorage(name = 'shopping-app') {
       for (const row of requests) add(row.operationId, [row.localListId], 'lists')
       for (const { intent } of completions) add(intent.operationId, [intent.localListId], 'lists')
       for (const change of feed?.deferred ?? []) add('deferred:' + change.entity + ':' +
-        (change.entity === 'list' ? change.listId : change.itemId), [local.get(change.listId) ?? change.listId], 'feed')
+        (change.entity === 'list' ? change.listId : change.itemId), [local.get(change.listId) ?? change.listId], 'feed', false, change.entity === 'list' ? 'lists' : 'items')
       return [...rows.values()]
     },
     /** Immediately notifies late subscribers if an older open tab blocks schema upgrade. */
@@ -1995,11 +1995,12 @@ export function createStorage(name = 'shopping-app') {
     },
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
       changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean, semanticBatch?: SemanticBatch): Promise<boolean> {
-      const observedLists = new Set<string>()
-      const observe = (listId: string) => {
-        if (observedLists.has(listId)) return
-        observedLists.add(listId)
-        listSyncLedger.begin(accountId, 'feed:' + listId, [listId], 'feed', false)
+      const observedWork = new Map<string, string>()
+      const observe = (listId: string, scope: 'lists' | 'items') => {
+        const id = 'feed:' + scope + ':' + listId
+        if (observedWork.has(id)) return
+        observedWork.set(id, listId)
+        listSyncLedger.begin(accountId, id, [listId], 'feed', false, scope)
       }
       const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountSyncEvents', 'accountListMappings', 'accountItems',
         'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
@@ -2082,14 +2083,14 @@ export function createStorage(name = 'shopping-app') {
             const mapping = { ...(current ?? { key: accountKey(accountId, change.listId), accountId,
               localListId: change.listId, remoteListId: change.listId }), metadata: { name, kind, position, ...(updatedAt !== undefined ? { updatedAt } : current?.metadata?.updatedAt !== undefined ? { updatedAt: current.metadata.updatedAt } : {}) }, cloudRevision: revision }
             if (!current?.metadata || current.metadata.name !== name || current.metadata.kind !== kind ||
-                current.metadata.position !== position) observe(mapping.localListId)
+                current.metadata.position !== position) observe(mapping.localListId, 'lists')
             if (!current) await mappings.add(mapping)
             else await mappings.put(mapping)
             byRemote.set(change.listId, mapping)
           } else if (current) {
             retiredLists.add(change.listId)
             if (current.metadata) {
-              observe(current.localListId)
+              observe(current.localListId, 'lists')
               const { metadata: _metadata, ...mapping } = current
               await mappings.put(mapping)
               byRemote.set(change.listId, mapping)
@@ -2113,14 +2114,14 @@ export function createStorage(name = 'shopping-app') {
           if (known && known.remoteListId !== change.listId) throw new Error('Account feed item mapping mismatch')
           if (!change.item) {
             if (known) {
-              if (await items.get(key)) observe(mapping?.localListId ?? change.listId)
+              if (await items.get(key)) observe(mapping?.localListId ?? change.listId, 'items')
               await items.delete(key)
             }
             continue
           }
           if (!mapping?.metadata || (known && known.version > change.item.version)) continue
           const { id, name, purchased, quantity, unit, createdAt, version } = change.item
-          if (!known || known.version < version) observe(mapping.localListId)
+          if (!known || known.version < version) observe(mapping.localListId, 'items')
           await items.put({ key, accountId, item: { id, listId: mapping.localListId, name, purchased, quantity, unit,
             createdAt: Date.parse(createdAt) } })
           await versions.put({ key, accountId, itemId: id, remoteListId: change.listId, version })
@@ -2165,16 +2166,16 @@ export function createStorage(name = 'shopping-app') {
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })
         await done
-        for (const listId of observedLists) {
-          if (isActive()) listSyncLedger.confirm(accountId, 'feed:' + listId, [listId])
-          else listSyncLedger.cancel(accountId, 'feed:' + listId)
+        for (const [id, listId] of observedWork) {
+          if (isActive()) listSyncLedger.confirm(accountId, id, [listId])
+          else listSyncLedger.cancel(accountId, id)
         }
         listSyncLedger.changed()
         return true
       } catch (error) {
-        for (const listId of observedLists) {
-          if (isActive()) listSyncLedger.fail(accountId, 'feed:' + listId)
-          else listSyncLedger.cancel(accountId, 'feed:' + listId)
+        for (const id of observedWork.keys()) {
+          if (isActive()) listSyncLedger.fail(accountId, id)
+          else listSyncLedger.cancel(accountId, id)
         }
         try { tx.abort() } catch { /* already closed */ }
         await done.catch(() => {})

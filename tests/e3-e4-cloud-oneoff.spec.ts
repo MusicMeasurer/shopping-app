@@ -660,18 +660,23 @@ test.describe('list card sync indicators', () => {
       await card(names[0]).click()
       await add('Indicator A')
       await expect.poll(() => firstHeld, { timeout: UI_TIMEOUT }).toBe(true)
-      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','running')
+      await expect(indicator(ids[0])).toHaveCount(0)
       await expect(indicator(ids[1])).toHaveCount(0)
+      await card(names[1]).click()
+      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','running')
       async function checkSize(expected: number) {
         expect(await indicator(ids[0]).evaluate(el => {
           const tile = el.closest('.list-tile')!
           const symbol = tile.querySelector('.list-symbol')!
-          const kind = tile.querySelector('.list-card-indicators')!
-          const rect = el.getBoundingClientRect()
+          const rect = el.getBoundingClientRect(), parent = tile.getBoundingClientRect()
+          const art = el.querySelector('.sync-indicator-artwork')!
+          const icon = el.querySelector('.sync-indicator-icon')!
           return [parseFloat(getComputedStyle(symbol).fontSize), Math.round(rect.width * 10) / 10,
-            rect.left >= symbol.getBoundingClientRect().right - 2,
-            rect.right <= kind.getBoundingClientRect().left + 1]
-        })).toEqual([expected, expected, true, true])
+            Math.abs(rect.x + rect.width / 2 - parent.x - parent.width / 2) < 1,
+            Math.abs(rect.y + rect.height / 2 - parent.y - parent.height / 2) < 1,
+            getComputedStyle(art).backgroundColor, getComputedStyle(icon).animationName,
+            getComputedStyle(icon).animationDuration, tile.querySelector('.list-card-indicators') === null]
+        })).toEqual([expected, expected, true, true, 'rgba(255, 255, 255, 0.1)', 'sync-live-spin', '1.8s', true])
       }
       await checkSize(34.5)
       await page.getByRole('button', { name: 'Настройки', exact: true }).click()
@@ -682,11 +687,15 @@ test.describe('list card sync indicators', () => {
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
       await card(names[1]).click()
       await add('Indicator B')
+      await expect(indicator(ids[1])).toHaveCount(0)
+      await card(names[0]).click()
+      await expect(indicator(ids[0])).toHaveCount(0)
       await expect(indicator(ids[1])).toHaveAttribute('data-sync-state','waiting')
       release()
       await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','error', { timeout: SERVER_WRITE_TIMEOUT })
       await expect(indicator(ids[1])).toHaveAttribute('data-sync-state','success', { timeout: SERVER_WRITE_TIMEOUT })
       await expect(indicator(ids[1])).toHaveCount(0, { timeout: UI_TIMEOUT })
+      await card(names[1]).click()
       failA = false
       const before = calls.length
       await indicator(ids[0]).click()

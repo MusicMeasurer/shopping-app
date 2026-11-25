@@ -196,7 +196,7 @@ export function createAccountSync(
       throw new Error('Remote list changed during import; retry comparison')
     }
     const feedId = 'legacy-feed:' + localListId
-    if (entries.length || remoteChanges.length) ledger?.begin(accountId, feedId, [localListId], 'feed', false)
+    if (entries.length || remoteChanges.length) ledger?.begin(accountId, feedId, [localListId], 'feed', false, 'items')
     let changed = 0
     try {
       await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)

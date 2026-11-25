@@ -817,7 +817,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }, [storage, accountId, refreshRevision])
   const listConflicts = itemConflicts.filter(conflict => conflict.localListId === active)
   const selectedConflict = listConflicts.find(conflict => conflict.operationId === conflictId)
-  const cardSync = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId))
+  const cardSync = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId), active)
   async function resolveConflict(conflict: ItemDeletionConflict, keepItem: boolean) {
     if (!onResolveItemDeletion || resolvingConflict || listLocked(conflict.localListId)) return
     setResolvingConflict(true)
@@ -1226,7 +1226,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={() => { setActive(row.id);setName('');setItemNotice('');setMenuTarget(null) }}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
         {state && <SyncIndicator key={state + ':' + (state === 'success' ? indicator?.since : '')}
           state={state} since={indicator?.since} name={row.name} onError={action}/>}
-        <div className="list-card-indicators"><ListIndicators kind={row.kind}/></div>
         <div className="menu-anchor">{menuTrigger(row, 'card')}</div>
         {active === row.id && canEditList && <div className="list-rail-controls" role="group" aria-label="Порядок выбранного списка">
           {([-1, 1] as const).map(direction => {

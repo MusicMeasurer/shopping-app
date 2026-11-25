@@ -4,7 +4,7 @@ import type { ListIndicatorState, SyncWork } from '../data/list-sync-ledger'
 
 const empty: SyncWork[] = []
 export function useListSyncIndicators(storage: Storage, accountId: string | null, refreshRevision: number,
-  draftRevision: number, conflicts: readonly string[]) {
+  draftRevision: number, conflicts: readonly string[], activeListId?: string) {
   const ledger = storage.listSyncLedger
   const revision = useSyncExternalStore(ledger.subscribe, ledger.version, ledger.version)
   const [queue, setQueue] = useState<{ account: string; rows: SyncWork[] }>({ account: '', rows: empty })
@@ -21,7 +21,7 @@ export function useListSyncIndicators(storage: Storage, accountId: string | null
     return () => { cancelled = true }
   }, [storage, ledger, accountId, refreshRevision, draftRevision, revision])
   const now = Date.now()
-  const states = accountId ? ledger.states(accountId, queue.account === accountId ? queue.rows : empty, conflicts, now) : new Map<string, ListIndicatorState>()
+  const states = accountId ? ledger.states(accountId, queue.account === accountId ? queue.rows : empty, conflicts, now, activeListId) : new Map<string, ListIndicatorState>()
   const deadline = Math.min(...[...states.values()].flatMap(row => row.state === 'success' && row.since !== undefined ? [row.since + 5000] : []))
   useEffect(() => {
     if (!Number.isFinite(deadline)) return
