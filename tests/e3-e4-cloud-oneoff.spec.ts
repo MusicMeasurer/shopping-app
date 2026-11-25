@@ -600,3 +600,114 @@ test('SYNC-UI-03: background changes preserve stable scroll anchors, draft, edit
     await client.auth.signOut({ scope: 'local' })
   }
 })
+
+test.describe('list card sync indicators', () => {
+  test.use({ serviceWorkers: 'block' })
+  test('scopes a held item batch, independent waiting/error/success, retry and both icon sizes', async ({ page }) => {
+    test.setTimeout(150000)
+    const client = createClient(url, key, { auth: { persistSession: false } })
+    const auth = await client.auth.signInWithPassword({ email, password })
+    expect(auth.error).toBeNull()
+    const names = ['CARD_SYNC_A_', 'CARD_SYNC_B_'].map(prefix => prefix + crypto.randomUUID())
+    const ids: string[] = []
+    let release!: () => void
+    const hold = new Promise<void>(resolve => { release = resolve })
+    let first = true, firstHeld = false, failA = true
+    const calls: string[][] = []
+    const rpcRoute = '**/rest/v1/rpc/push_e4_account_changes'
+    try {
+      for (const name of names) {
+        const result = await client.rpc('create_e4_list', { p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent' })
+        expect(result.error).toBeNull(); ids.push(result.data.list_id)
+      }
+      await page.goto('/shopping-app/')
+      await page.getByRole('button', { name: 'Войти в аккаунт' }).click()
+      await page.getByLabel('Email').fill(email)
+      await page.getByLabel('Пароль').fill(password)
+      await page.getByRole('button', { name: 'Войти', exact: true }).click()
+      const decline = page.getByRole('button', { name: 'Не синхронизировать', exact: true })
+      await waitForAuthChoice(page)
+      await expect(decline.or(page.getByRole('button', { name: 'Открыть аккаунт' }))).toBeVisible({ timeout: UI_TIMEOUT })
+      if (await decline.isVisible()) await decline.click()
+      await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: INITIAL_SYNC_TIMEOUT })
+      const card = (name: string) => page.getByRole('button', { name, exact: true })
+      const tile = (id: string) => page.locator('.list-tile').filter({ has: card(names[ids.indexOf(id)]) })
+      const indicator = (id: string) => tile(id).locator('.list-card-sync')
+      await expect(indicator(ids[0])).toHaveCount(0, { timeout: UI_TIMEOUT })
+      await expect(indicator(ids[1])).toHaveCount(0, { timeout: UI_TIMEOUT })
+      await page.route(rpcRoute, async route => {
+        const body = route.request().postDataJSON() as { p_operations: { list_id: string; operation_id: string }[] }
+        const ops = body.p_operations
+        if (!ops.some(op => ids.includes(op.list_id))) return route.continue()
+        calls.push(ops.map(op => op.list_id))
+        if (first && ops.some(op => op.list_id === ids[0])) { first = false; firstHeld = true; await hold }
+        if (!failA || !ops.some(op => op.list_id === ids[0])) return route.continue()
+        const pass = ops.filter(op => op.list_id !== ids[0])
+        let outcomes: { operation_id?: string; receipt?: { operation_id: string } }[] = []
+        if (pass.length) {
+          const response = await route.fetch({ postData: JSON.stringify({ ...body, p_operations: pass }) })
+          if (!response.ok()) return route.fulfill({ response })
+          outcomes = await response.json()
+        }
+        await route.fulfill({ status: 200, json: ops.map(op => op.list_id === ids[0]
+          ? { operation_id: op.operation_id, message: 'Injected retryable transport outcome' }
+          : outcomes.find(row => (row.operation_id ?? row.receipt?.operation_id) === op.operation_id)) })
+      })
+      const add = async (name: string) => {
+        await page.getByLabel('Что нужно купить?').fill(name)
+        await page.getByRole('button', { name: 'Добавить товар' }).click()
+      }
+      await card(names[0]).click()
+      await add('Indicator A')
+      await expect.poll(() => firstHeld, { timeout: UI_TIMEOUT }).toBe(true)
+      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','running')
+      await expect(indicator(ids[1])).toHaveCount(0)
+      async function checkSize(expected: number) {
+        expect(await indicator(ids[0]).evaluate(el => {
+          const tile = el.closest('.list-tile')!
+          const symbol = tile.querySelector('.list-symbol')!
+          const kind = tile.querySelector('.list-card-indicators')!
+          const rect = el.getBoundingClientRect()
+          return [parseFloat(getComputedStyle(symbol).fontSize), Math.round(rect.width * 10) / 10,
+            rect.left >= symbol.getBoundingClientRect().right - 2,
+            rect.right <= kind.getBoundingClientRect().left + 1]
+        })).toEqual([expected, expected, true, true])
+      }
+      await checkSize(34.5)
+      await page.getByRole('button', { name: 'Настройки', exact: true }).click()
+      const settings = page.getByRole('dialog', { name: 'Настройки приложения' })
+      await settings.getByRole('radio', { name: 'Стандартный (горизонтальная лента)' }).check()
+      await settings.getByRole('button', { name: 'Сохранить', exact: true }).click()
+      await checkSize(27)
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      await card(names[1]).click()
+      await add('Indicator B')
+      await expect(indicator(ids[1])).toHaveAttribute('data-sync-state','waiting')
+      release()
+      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','error', { timeout: SERVER_WRITE_TIMEOUT })
+      await expect(indicator(ids[1])).toHaveAttribute('data-sync-state','success', { timeout: SERVER_WRITE_TIMEOUT })
+      await expect(indicator(ids[1])).toHaveCount(0, { timeout: UI_TIMEOUT })
+      failA = false
+      const before = calls.length
+      await indicator(ids[0]).click()
+      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','success', { timeout: SERVER_WRITE_TIMEOUT })
+      expect(calls.slice(before).flat()).toContain(ids[0])
+      expect(calls.slice(before).flat()).not.toContain(ids[1])
+      await expect(indicator(ids[0])).toHaveCount(0, { timeout: UI_TIMEOUT })
+    } finally {
+      release()
+      await page.unroute(rpcRoute)
+      await page.close()
+      for (const id of ids) {
+        const row = await client.from('shopping_lists').select('revision,deleted_at').eq('id', id).maybeSingle()
+        if (row.error) throw row.error
+        if (row.data && !row.data.deleted_at) {
+          const result = await client.rpc('complete_e4_list', { p_operation: crypto.randomUUID(), p_list: id,
+            p_expected_revision: row.data.revision, p_mode: 'delete_list' })
+          if (result.error) throw result.error
+        }
+      }
+      await client.auth.signOut({ scope: 'local' })
+    }
+  })
+})

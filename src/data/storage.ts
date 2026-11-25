@@ -1,4 +1,5 @@
 import type { AccountFeedChange } from './account-feed'
+import { ListSyncLedger, type SyncWork } from './list-sync-ledger'
 import { newSemanticState, rememberContext, rememberOwnOperation, storeSemanticBatch, evaluateSemanticState, semanticReady, presentSemanticNotice, acknowledgeSemanticNotice, consumeSilentRecovery, type AccountSemanticState, type SemanticBatch } from './sync-event-state'
 import type { ReconciledSyncContext } from './sync-event-fate'
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
@@ -231,6 +232,7 @@ function accountKey(accountId: string, operationId: string): string {
   return JSON.stringify([accountId, operationId])
 }
 export function createStorage(name = 'shopping-app') {
+  const listSyncLedger = new ListSyncLedger()
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
   const database = openDB<ShoppingDB>(name, 19, {
@@ -439,6 +441,48 @@ export function createStorage(name = 'shopping-app') {
   }
 
   return {
+    listSyncLedger,
+    /** Account-scoped read-only inventory. No server calls or schema changes. */
+    async readListSyncWork(accountId: string): Promise<SyncWork[]> {
+      const tx = (await database).transaction(['accountDeletions','accountOperations','accountListMappings',
+        'accountDraftLists','accountCompletionRequests','accountCompletions','accountItemVersions','accountFeed'])
+      const [deleted, operations, mappings, drafts, requests, completions, versions, feed] = await Promise.all([
+        tx.objectStore('accountDeletions').get(accountId),
+        tx.objectStore('accountOperations').index('byAccount').getAll(accountId),
+        tx.objectStore('accountListMappings').index('byAccount').getAll(accountId),
+        tx.objectStore('accountDraftLists').index('byAccount').getAll(accountId),
+        tx.objectStore('accountCompletionRequests').index('byAccount').getAll(accountId),
+        tx.objectStore('accountCompletions').index('byAccount').getAll(accountId),
+        tx.objectStore('accountItemVersions').index('byAccount').getAll(accountId),
+        tx.objectStore('accountFeed').get(accountId),
+      ])
+      await tx.done
+      if (deleted) return []
+      const local = new Map(mappings.map(row => [row.remoteListId, row.localListId]))
+      const known = new Map(versions.map(row => [row.itemId, row.remoteListId]))
+      const rows = new Map<string, SyncWork>()
+      const add = (id: string, listIds: (string | undefined)[], kind: SyncWork['kind'], error = false) => {
+        const ids = [...new Set(listIds.filter((v): v is string => !!v))]
+        if (ids.length) rows.set(id, { id, listIds: ids, kind, phase: error ? 'error' : 'waiting' })
+      }
+      for (const row of operations) {
+        const op = row.operation
+        add(op.operationId, [op.kind === 'upsert' ? op.item.listId : op.kind === 'delete' ?
+          local.get(known.get(op.itemId) ?? '') : op.localListId], 'items', !!row.conflict || !!row.deferred)
+      }
+      for (const draft of drafts) add(draft.operationId, [draft.id], 'lists', !!draft.nameConflict)
+      for (const row of mappings) {
+        for (const change of row.pendingMetadata ?? []) add(change.operationId,
+          [change.localListId, change.targetId ? local.get(change.targetId) : undefined], 'lists')
+        const merge = row.pendingMerge
+        if (merge) add(merge.operationId, [merge.source.localListId, merge.target.localListId], 'lists')
+      }
+      for (const row of requests) add(row.operationId, [row.localListId], 'lists')
+      for (const { intent } of completions) add(intent.operationId, [intent.localListId], 'lists')
+      for (const change of feed?.deferred ?? []) add('deferred:' + change.entity + ':' +
+        (change.entity === 'list' ? change.listId : change.itemId), [local.get(change.listId) ?? change.listId], 'feed')
+      return [...rows.values()]
+    },
     /** Immediately notifies late subscribers if an older open tab blocks schema upgrade. */
     subscribeUpgradeBlocked(listener: () => void): () => void {
       blockedListeners.add(listener)
@@ -713,6 +757,7 @@ export function createStorage(name = 'shopping-app') {
       const tx = (await database).transaction('accountDeletions', 'readwrite')
       if (!await tx.store.get(accountId)) await tx.store.add({ accountId, purged: false, acknowledged: false })
       await tx.done
+      listSyncLedger.reset(accountId)
     },
     async purgeDeletedAccount(accountId: string): Promise<void> {
       const accountIndexed = ['accountItems', 'accountOperations', 'accountCompletions', 'accountCompletionRequests',
@@ -1947,6 +1992,12 @@ export function createStorage(name = 'shopping-app') {
     },
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
       changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean, semanticBatch?: SemanticBatch): Promise<boolean> {
+      const observedLists = new Set<string>()
+      const observe = (listId: string) => {
+        if (observedLists.has(listId)) return
+        observedLists.add(listId)
+        listSyncLedger.begin(accountId, 'feed:' + listId, [listId], 'feed', false)
+      }
       const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountSyncEvents', 'accountListMappings', 'accountItems',
         'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
@@ -2027,12 +2078,15 @@ export function createStorage(name = 'shopping-app') {
             if (!snapshot && current?.cloudRevision !== undefined && current.cloudRevision > revision) continue
             const mapping = { ...(current ?? { key: accountKey(accountId, change.listId), accountId,
               localListId: change.listId, remoteListId: change.listId }), metadata: { name, kind, position, ...(updatedAt !== undefined ? { updatedAt } : current?.metadata?.updatedAt !== undefined ? { updatedAt: current.metadata.updatedAt } : {}) }, cloudRevision: revision }
+            if (!current?.metadata || current.metadata.name !== name || current.metadata.kind !== kind ||
+                current.metadata.position !== position) observe(mapping.localListId)
             if (!current) await mappings.add(mapping)
             else await mappings.put(mapping)
             byRemote.set(change.listId, mapping)
           } else if (current) {
             retiredLists.add(change.listId)
             if (current.metadata) {
+              observe(current.localListId)
               const { metadata: _metadata, ...mapping } = current
               await mappings.put(mapping)
               byRemote.set(change.listId, mapping)
@@ -2055,11 +2109,15 @@ export function createStorage(name = 'shopping-app') {
           const known = await versions.get(key)
           if (known && known.remoteListId !== change.listId) throw new Error('Account feed item mapping mismatch')
           if (!change.item) {
-            if (known) await items.delete(key)
+            if (known) {
+              if (await items.get(key)) observe(mapping?.localListId ?? change.listId)
+              await items.delete(key)
+            }
             continue
           }
           if (!mapping?.metadata || (known && known.version > change.item.version)) continue
           const { id, name, purchased, quantity, unit, createdAt, version } = change.item
+          if (!known || known.version < version) observe(mapping.localListId)
           await items.put({ key, accountId, item: { id, listId: mapping.localListId, name, purchased, quantity, unit,
             createdAt: Date.parse(createdAt) } })
           await versions.put({ key, accountId, itemId: id, remoteListId: change.listId, version })
@@ -2104,8 +2162,17 @@ export function createStorage(name = 'shopping-app') {
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })
         await done
+        for (const listId of observedLists) {
+          if (isActive()) listSyncLedger.confirm(accountId, 'feed:' + listId, [listId])
+          else listSyncLedger.cancel(accountId, 'feed:' + listId)
+        }
+        listSyncLedger.changed()
         return true
       } catch (error) {
+        for (const listId of observedLists) {
+          if (isActive()) listSyncLedger.fail(accountId, 'feed:' + listId)
+          else listSyncLedger.cancel(accountId, 'feed:' + listId)
+        }
         try { tx.abort() } catch { /* already closed */ }
         await done.catch(() => {})
         throw error
@@ -2202,6 +2269,8 @@ export function createStorage(name = 'shopping-app') {
           await queue.delete(key)
         }
         await tx.done
+        if ('serverVersion' in decision && !decision.replacement) listSyncLedger.confirm(accountId, operation.operationId, [operation.localListId])
+        else { listSyncLedger.cancel(accountId, operation.operationId); listSyncLedger.changed() }
       } catch (error) {
         try { tx.abort() } catch { /* already closed */ }
         await tx.done.catch(() => {})
@@ -2520,6 +2589,7 @@ export function createStorage(name = 'shopping-app') {
       }
       await tx.objectStore('accountOperations').delete(key)
       await tx.done
+      listSyncLedger.confirm(accountId, operationId, [pending.operation.localListId])
     },
     /** Import a server-only item and its confirmed version atomically; never overwrite local work. */
     async importRemoteOnlyItem(accountId: string, remoteListId: string, item: Item, version: number): Promise<void> {

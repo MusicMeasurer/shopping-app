@@ -13,3 +13,33 @@
 @keyframes sync-preview-error { 0%,30%,60%,100% { transform: scale(1); opacity: 1; } 15%,45% { transform: scale(.9); opacity: .55; } }
 @keyframes sync-preview-success { 0% { opacity: 0; transform: scale(.8); } 5% { opacity: 1; transform: scale(1); } 65% { opacity: 1; } 71.428571%,100% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .sync-preview-icon { animation: none !important; } }
+
+/* Runtime artwork: identical colour, outline and motion to accepted preview. */
+.sync-indicator-artwork { display: grid; place-items: center; width: 100%; height: 100%; margin: 0; }
+.sync-indicator-icon { display: block; width: 100%; height: 100%; transform-origin: center; }
+.sync-indicator-icon[data-state="waiting"] { color: #D49A27; animation: sync-preview-wait 2s ease-in-out infinite; }
+.sync-indicator-icon[data-state="running"] { color: #3889DB; animation: sync-preview-spin 1.8s linear infinite; }
+.sync-indicator-icon[data-state="error"] { color: #D64545; animation: sync-preview-error 3s ease-in-out infinite; }
+.sync-indicator-icon[data-state="success"] { color: #27965B; }
+[data-sync-state="success"] .sync-indicator-artwork { animation: sync-live-success 5s ease-in-out both; }
+@keyframes sync-live-success { 0% { opacity: 0; transform: scale(.8); } 7% { opacity: 1; transform: scale(1); } 91% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .sync-indicator-icon, [data-sync-state="success"] .sync-indicator-artwork { animation: none !important; } }
+/* Reserve enough width for two full-size icons, type mark and menu.
+   The rail remains horizontally scrollable at small viewport widths. */
+.shopping-e4 nav.lists-grid.list-rail { grid-auto-columns: min(max(44%, 148px), 240px); }
+.shopping-e4 nav.lists-grid.list-rail.standard { grid-auto-columns: min(max(calc((100% - 16px) / 3), 114px), 160px); }
+.shopping-e4 nav.lists-grid .list-card-sync {
+  position: absolute; z-index: 3; top: 10px; left: calc(14px + var(--card-symbol-size));
+  display: grid; place-items: center; width: var(--card-symbol-size); height: var(--card-symbol-size);
+  min-width: 0; min-height: 0; max-width: none; max-height: none; margin: 0; padding: 0;
+  border: 0; border-radius: 50%; background: #fff; box-shadow: none; overflow: visible;
+}
+.shopping-e4 nav.lists-grid.standard .list-card-sync { top: 5px; left: calc(7px + var(--card-symbol-size)); }
+.shopping-e4 nav.lists-grid span.list-card-sync { pointer-events: none; }
+.shopping-e4 nav.lists-grid button.list-card-sync { pointer-events: auto; }
+.shopping-e4 nav.lists-grid .list-card-sync .sync-indicator-artwork { margin: 0; }
+.shopping-e4 nav.lists-grid .list-card-sync[data-sync-state="success"] { background: transparent; }
+.shopping-e4 nav.lists-grid .list-tile:has(.list-select[aria-pressed="true"]) .list-card-sync[data-sync-state="success"] .sync-indicator-artwork { background: white; border-radius: 50%; }
+.item-write-notice { position: fixed; top: calc(env(safe-area-inset-top) + 8px); left: 50%; transform: translateX(-50%);
+  width: min(92%, 480px); z-index: 25; padding: 10px 14px; border: 1px solid #e0b1a5; border-radius: 12px; background: #fff0e9; color: #8a3521;
+  font-size: 14px; pointer-events: none; box-shadow: 0 4px 16px #203b3020; }

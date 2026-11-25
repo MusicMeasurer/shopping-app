@@ -33,6 +33,7 @@ import { createAccountSync } from './data/account-sync'
 import type { CloudCompletionRequest, Storage } from './data/storage'
 import { ProfileTransferPreference, type ProfileSyncState } from './ProfileMenu'
 import type { ListOperationStatus } from './App'
+import type { SyncWorkKind } from './data/list-sync-ledger'
 import { createAuthController } from './data/auth-controller'
 import { createSyncRecovery, shouldRecoverSync } from './data/sync-recovery'
 import { markAuthStage, exportAuthStages } from './data/auth-flow-diagnostics'
@@ -107,6 +108,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const lastCloudCheck = useRef<{ accountId: string; at: number } | undefined>(undefined)
   const [cloudRefreshStatus, setCloudRefreshStatus] = useState('')
   const [syncError, setSyncError] = useState('')
+  const cardRetries = useRef(new Set<string>())
   const [listOperations, setListOperations] = useState<ListOperationStatus[]>([])
   const [syncOnline, setSyncOnline] = useState(() => navigator.onLine)
   const [pushState, setPushState] = useState<{ account: string; status: 'syncing' | 'done' | 'error' }>()
@@ -346,6 +348,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
   const automaticFlushRunning = useRef(new Map<string, Promise<void>>())
   const flushRequested = useRef(new Set<string>())
   const onQueued = useCallback((): Promise<void> | undefined => {
+    storage.listSyncLedger.changed()
     setSyncQueueRevision(revision => revision + 1)
     if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
     const accountId = currentAccount
@@ -599,6 +602,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             }
             pulledRevisions.set(row.id, row.revision)
           } catch (cause) {
+            // Scope a known legacy list read failure, not an account-wide poll.
+            if (stillActive()) {
+              storage.listSyncLedger.begin(accountId, 'legacy-feed:' + localListId, [localListId], 'feed', false)
+              storage.listSyncLedger.fail(accountId, 'legacy-feed:' + localListId)
+            }
             // Keep processing other bound lists, but never import conflicting
             // items from this list or hide the error from the account owner.
             if (disposed || activeAccount.current !== accountId) return
@@ -703,22 +711,37 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       apply: async (snapshot, choices, operationId) => {
         const [source, target] = await bindings(snapshot.source.id, snapshot.target.id)
         if (workspaceSemanticFeedEnabled) await storage.rememberAccountSyncOperation(account, operationId)
-        await applyCloudListMerge(connection, snapshot, source, target, choices, operationId)
-        if (!stillActive()) return
+        const affected = [source.localListId, target.localListId]
+        storage.listSyncLedger.begin(account, operationId, affected, 'feed', false)
+        try { await applyCloudListMerge(connection, snapshot, source, target, choices, operationId) }
+        catch (error) {
+          if (stillActive() && !(error instanceof ListMergeConflict)) storage.listSyncLedger.fail(account, operationId)
+          else storage.listSyncLedger.cancel(account, operationId)
+          throw error
+        }
+        if (!stillActive()) { storage.listSyncLedger.cancel(account, operationId); return }
         // The RPC receipt comes before the cache refresh. A failed refresh must
         // never turn an acknowledged mutation into an unconfirmed mutation.
         setCloudMetadata(rows => rows?.filter(row => row.id !== source.remoteListId) ?? null)
         setCloudLists(rows => rows.filter(row => row.id !== source.remoteListId))
         try {
           if (await storage.readAccountFeedPosition(account) !== undefined) {
+            // The feed owns confirmed local application; no success on receipt alone.
+            storage.listSyncLedger.cancel(account, operationId)
             if (stillActive()) requestCloudRefresh.current?.()
             return
           }
           await createAccountSync(storage, connection, { accountId: account, localListId: target.localListId,
             remoteListId: target.remoteListId, isActive: stillActive }).importRemoteOnly({ reconcileNames: true })
-          if (stillActive()) setWorkspaceRevision(value => value + 1)
+          if (stillActive()) {
+            storage.listSyncLedger.confirm(account, operationId, affected)
+            setWorkspaceRevision(value => value + 1)
+          } else storage.listSyncLedger.cancel(account, operationId)
         } catch {
-          if (stillActive()) setPullState({ account, status: 'error' })
+          if (stillActive()) {
+            storage.listSyncLedger.fail(account, operationId)
+            setPullState({ account, status: 'error' })
+          } else storage.listSyncLedger.cancel(account, operationId)
         }
       },
     }
@@ -762,6 +785,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMappingRevision(value => value + 1)
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(row => ({ id: row.id, name: row.name })))
+      storage.listSyncLedger.confirm(accountId, 'create:' + created.id, [created.id])
       return created.id
     } catch (error) {
       if (activeAccount.current === accountId)
@@ -774,12 +798,17 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         cloudMutationBusy || cloudLoading || row.ownerId !== currentAccount ||
         !cloudMetadata?.some(value => value.id === row.id && value.revision === row.revision)) return
     const accountId = currentAccount
+    const operationId = crypto.randomUUID()
+    const localListId = Object.keys(cloudBindings).find(id => cloudBindings[id] === row.id) ?? row.id
+    const target = change.action === 'reorder' ? cloudMetadata?.find(value => value.position === change.position) : undefined
+    const affected = [localListId, ...(target && target.id !== row.id ? [Object.keys(cloudBindings).find(id => cloudBindings[id] === target.id) ?? target.id] : [])]
     setCloudMutationBusy(true)
     setCloudMetadataError('')
     try {
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
         throw new Error('Account changed')
-      await sendCloudListChange(client, row, crypto.randomUUID(), change)
+      storage.listSyncLedger.begin(accountId, operationId, affected, 'feed', false)
+      await sendCloudListChange(client, row, operationId, change)
       void storage.markAccountListsChanged(accountId).catch(() => {})
       const refreshed = await fetchCloudListMetadata(client, accountId)
       if (activeAccount.current !== accountId || await verifiedAccountId(client) !== accountId)
@@ -788,13 +817,22 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (activeAccount.current !== accountId) return
       setCloudMetadata(refreshed)
       setCloudLists(refreshed.map(value => ({ id: value.id, name: value.name })))
+      storage.listSyncLedger.confirm(accountId, operationId, affected)
       return true
     } catch (error) {
       if (activeAccount.current === accountId) {
-        if ((error as { code?: string })?.code === '23505') setCloudMetadataError('Список с таким названием уже существует.')
-        else setCloudMetadataError('Изменение не подтверждено сервером. Проверьте список заново; не повторяйте операцию до проверки состояния.')
+        if ((error as { code?: string })?.code === '23505') {
+          storage.listSyncLedger.cancel(accountId, operationId)
+          setCloudMetadataError('Список с таким названием уже существует.')
+        } else {
+          storage.listSyncLedger.fail(accountId, operationId)
+          setCloudMetadataError('Изменение не подтверждено сервером. Проверьте список заново; не повторяйте операцию до проверки состояния.')
+        }
       }
-    } finally { setCloudMutationBusy(false) }
+    } finally {
+      if (activeAccount.current !== accountId) storage.listSyncLedger.cancel(accountId, operationId)
+      setCloudMutationBusy(false)
+    }
   }
 
   async function loadCloudLists() {
@@ -1113,8 +1151,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setListOperations(rows => rows.filter(row => row.accountId !== accountId || row.localListId !== localListId))
   }
 
-  async function syncLocalListChanges(accountId: string, client: SupabaseClient, stillActive: () => boolean) {
-    const queue = await storage.readLocalListChanges(accountId)
+  async function syncLocalListChanges(accountId: string, client: SupabaseClient, stillActive: () => boolean, onlyListId?: string) {
+    const queue = (await storage.readLocalListChanges(accountId)).filter(row => !onlyListId ||
+      row.localListId === onlyListId || row.targetId === (cloudBindings[onlyListId] ?? onlyListId))
     if (!queue.length) return true
     if (await verifiedAccountId(client) !== accountId || !stillActive()) return false
     let metadata = await fetchCloudListMetadata(client, accountId)
@@ -1122,6 +1161,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!stillActive() || !navigator.onLine) return false
       const current = metadata.find(row => row.id === operation.remoteListId)
       const { change, before, prepared, targetId } = operation
+      const affected = [operation.localListId, ...(targetId ? [Object.keys(cloudBindings).find(id => cloudBindings[id] === targetId) ?? targetId] : [])]
+      try {
       const unchanged = current && (change.action === 'rename' ? current.name === before.name
         : change.action === 'kind' ? current.kind === before.kind
           : current.position === before.position && metadata.some(row => row.id === targetId && row.position === change.position))
@@ -1130,6 +1171,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         const base = prepared ?? await storage.prepareLocalListChange(accountId, operation, current!)
         if (!stillActive()) return false
         try {
+          storage.listSyncLedger.begin(accountId, operation.operationId, affected, 'lists')
           await sendCloudListChange(client, base, operation.operationId, change)
         } catch (error) {
           const failure = error as { code?: string; message?: string }
@@ -1148,17 +1190,30 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       setCloudMetadata(metadata)
       setCloudLists(metadata.map(row => ({ id: row.id, name: row.name })))
       setWorkspaceRevision(value => value + 1)
-      if (conflict) setCompletionError('Список изменился на другом устройстве или название занято. Проверьте список и повторите изменение.')
+      if (conflict) {
+        storage.listSyncLedger.cancel(accountId, operation.operationId)
+        setCompletionError('Список изменился на другом устройстве или название занято. Проверьте список и повторите изменение.')
+      } else storage.listSyncLedger.confirm(accountId, operation.operationId, affected)
+      } catch (error) {
+        if (stillActive()) storage.listSyncLedger.fail(accountId, operation.operationId)
+        throw error
+      } finally {
+        if (!stillActive()) storage.listSyncLedger.cancel(accountId, operation.operationId)
+      }
     }
     return true
   }
 
-  async function syncQueuedListMerges(accountId: string, connection: SupabaseClient, stillActive: () => boolean) {
-    for (const merge of await storage.readQueuedListMerges(accountId)) {
+  async function syncQueuedListMerges(accountId: string, connection: SupabaseClient, stillActive: () => boolean, onlyListId?: string) {
+    for (const merge of (await storage.readQueuedListMerges(accountId)).filter(row =>
+      !onlyListId || row.source.localListId === onlyListId || row.target.localListId === onlyListId)) {
       if (!stillActive() || await verifiedAccountId(connection) !== accountId || !stillActive()) return false
       const { source, target, expected, operationId } = merge
+      const affected = [source.localListId, target.localListId]
       let prepared = merge
       try {
+      try {
+        storage.listSyncLedger.begin(accountId, operationId, affected, 'lists')
         if (!prepared.revisions) {
           for (const binding of [source, target]) {
             await createAccountSync(storage, connection, { accountId, ...binding, isActive: stillActive }).flush()
@@ -1182,6 +1237,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         if (!(error instanceof ListMergeConflict)) throw error
         if (!stillActive()) return false
         await storage.finishQueuedListMerge(accountId, prepared)
+        storage.listSyncLedger.cancel(accountId, operationId)
         setCompletionError('Не удалось объединить «' + expected.source.name + '» и «' + expected.target.name +
           '»: списки изменились. Проверьте их и подтвердите объединение заново.')
         setWorkspaceRevision(value => value + 1)
@@ -1204,20 +1260,27 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!stillActive()) return false
       await storage.finishQueuedListMerge(accountId, prepared, entries)
       if (!stillActive()) return false
+      storage.listSyncLedger.confirm(accountId, operationId, affected)
       setCloudMetadata(metadata)
       setCloudLists(metadata.map(row => ({ id: row.id, name: row.name })))
       setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== source.remoteListId)))
       setWorkspaceRevision(value => value + 1)
       setCloudMappingRevision(value => value + 1)
+      } catch (error) {
+        if (stillActive()) storage.listSyncLedger.fail(accountId, operationId)
+        throw error
+      } finally {
+        if (!stillActive()) storage.listSyncLedger.cancel(accountId, operationId)
+      }
     }
     return true
   }
 
-  function processListOperations(accountId: string): Promise<void> | undefined {
+  function processListOperations(accountId: string, onlyListId?: string): Promise<void> | undefined {
     if (!client || activeAccount.current !== accountId || !navigator.onLine) return
-    completionRequested.current.add(accountId)
+    if (!onlyListId) completionRequested.current.add(accountId)
     const running = completionWorkers.current.get(accountId)
-    if (running) return running
+    if (running) return onlyListId ? running.then(() => processListOperations(accountId, onlyListId)) : running
     setCompletionBusy(true)
     const stillActive = () => activeAccount.current === accountId
     let createdDrafts = false
@@ -1228,10 +1291,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const attempted = new Set<string>()
       const attemptedDrafts = new Set<string>()
       do {
-        completionRequested.current.delete(accountId)
-        if ((await storage.readAccountDraftLists(accountId)).some(row => !row.nameConflict && !attemptedDrafts.has(row.operationId))) {
+        if (!onlyListId) completionRequested.current.delete(accountId)
+        if ((await storage.readAccountDraftLists(accountId)).some(row => (!onlyListId || row.id === onlyListId) && !row.nameConflict && !attemptedDrafts.has(row.operationId))) {
           if (await verifiedAccountId(client) !== accountId || !stillActive()) return
-          const result = await syncAccountDrafts(storage, client, accountId, stillActive, attemptedDrafts)
+          const result = await syncAccountDrafts(storage, client, accountId, stillActive, attemptedDrafts, onlyListId)
           if (!stillActive()) return
           if (result.failed) setCompletionError('Не удалось подтвердить создание локальных списков. Повторите синхронизацию.')
           if (result.nameConflict || result.promoted.length) setWorkspaceRevision(value => value + 1)
@@ -1244,8 +1307,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             setCloudLists(rows => rows.some(row => row.id === remote.id) ? rows : [...rows, { id: remote.id, name: remote.name }])
           }
         }
-        if (!await syncLocalListChanges(accountId, client, stillActive)) return
-        if (!await syncQueuedListMerges(accountId, client, stillActive)) return
+        if (!await syncLocalListChanges(accountId, client, stillActive, onlyListId)) return
+        if (!await syncQueuedListMerges(accountId, client, stillActive, onlyListId)) return
         const draftIds = new Set((await storage.readAccountDraftLists(accountId)).map(draft => draft.id))
         const [requests, intents] = await Promise.all([
           storage.readAccountCompletionRequests(accountId),
@@ -1257,6 +1320,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             .map(intent => ({ ...intent, name: cloudMetadata?.find(row => row.id === intent.remoteListId)?.name ?? 'Облачный список' })),
         ]
         for (const request of queue) {
+          if (onlyListId && request.localListId !== onlyListId) continue
           if (!stillActive() || !navigator.onLine) return
           if (attempted.has(request.operationId)) continue
           attempted.add(request.operationId)
@@ -1273,6 +1337,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               }
               await createAccountSync(storage, client, { accountId, localListId, remoteListId, isActive: stillActive }).flush()
             }
+            storage.listSyncLedger.begin(accountId, operationId, [localListId], 'lists')
             const receipt = intent ? await coordinator.resume(intent) :
               await coordinator.begin(localListId, remoteListId, mode, 'confirmedMarked' in request ? request.confirmedMarked : undefined, operationId, ('localKind' in request && request.localKind) ? { kind: request.localKind, name: request.name } : undefined)
             if (!stillActive()) return
@@ -1282,6 +1347,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             }
             if (receipt.mode === 'delete_list')
               setCloudBindings(rows => Object.fromEntries(Object.entries(rows).filter(([, id]) => id !== remoteListId)))
+            storage.listSyncLedger.confirm(accountId, operationId, [localListId])
             clearListOperation(accountId, localListId)
             setCompletionNotice({
               accountId, at: Date.now(),
@@ -1323,6 +1389,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             }
             if (!stillActive()) return
             const retry = uncertain || !!unsent
+            if (retry) storage.listSyncLedger.fail(accountId, operationId)
+            else storage.listSyncLedger.cancel(accountId, operationId)
+            storage.listSyncLedger.changed()
             setListOperation({
               ...status, phase: 'error', retry: retry ? () => void processListOperations(accountId) : undefined,
               message: retry ? (cause instanceof Error && cause.message.startsWith('Список изменился.') ? cause.message
@@ -1334,9 +1403,11 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
               } : retry ? undefined : () => clearListOperation(accountId, localListId),
             })
             if (showLabControls && cause instanceof Error) setCompletionPreflight(cause.message)
+          } finally {
+            if (!stillActive()) storage.listSyncLedger.cancel(accountId, operationId)
           }
         }
-      } while (completionRequested.current.has(accountId) && stillActive())
+      } while (!onlyListId && completionRequested.current.has(accountId) && stillActive())
     } catch {
       if (stillActive()) setCompletionError('Не удалось синхронизировать операции со списками. Повторите синхронизацию.')
     }
@@ -1385,6 +1456,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setCompletionError('')
     try {
       await storage.queueAccountCompletion(request)
+      storage.listSyncLedger.changed()
       if (activeAccount.current !== accountId) return
       setListOperation({ ...request, phase: 'queued' })
       void processListOperations(accountId)
@@ -1685,6 +1757,44 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setDismissedSyncError(false)
     requestRecovery.current?.(true)
   }
+  async function retryListSync(listId: string, kinds: readonly SyncWorkKind[]) {
+    if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine) return
+    const account = currentAccount
+    const key = account + ':' + listId
+    if (cardRetries.current.has(key)) return
+    cardRetries.current.add(key)
+    const stillActive = () => activeAccount.current === account
+    try {
+      if (!stillActive() || await verifiedAccountId(client) !== account || !stillActive()) return
+      if (kinds.includes('items')) {
+        if (await storage.readAccountFeedPosition(account) !== undefined) {
+          await flushAccountBatch(storage, client, account, stillActive, () => setWorkspaceRevision(value => value + 1), listId)
+        } else {
+          const remoteListId = cloudBindings[listId]
+          if (remoteListId) await createAccountSync(storage, client, { accountId: account, localListId: listId, remoteListId, isActive: stillActive }).flush()
+        }
+      }
+      if (stillActive() && kinds.includes('items') && !(await storage.readAccountPending(account)).length) {
+        setSyncError('')
+        setPushState({ account, status: 'done' })
+      }
+      if (stillActive() && kinds.includes('lists')) await processListOperations(account, listId)
+      // v2 has a single account cursor. The safe retry of a feed read is
+      // the existing shared feed, never a new per-card background request.
+      if (stillActive() && kinds.includes('feed')) {
+        const started = Date.now()
+        await requestCloudRefresh.current?.()
+        if (stillActive() && lastCloudCheck.current?.accountId === account && lastCloudCheck.current.at >= started)
+          storage.listSyncLedger.clearFeedErrors(account, listId)
+      }
+    } catch {
+      // Operation-level error remains in the ledger and durable queue.
+      if (stillActive()) setSyncError('Не удалось отправить изменения. Повторите синхронизацию.')
+    } finally {
+      cardRetries.current.delete(key)
+      if (stillActive()) { storage.listSyncLedger.changed(); setWorkspaceRevision(value => value + 1) }
+    }
+  }
   return <>
     {localCopyRemovalError && <p role="alert">{localCopyRemovalError}
       <button type="button" onClick={() => setLocalCopyRemovalError('')}>Закрыть сообщение</button>
@@ -1714,6 +1824,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       }} />}
     {client && offlineAccount && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
     <App key={workspaceAccount ?? 'local:' + deletion.revision} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
+      onRetryListSync={currentAccount && readyAccount === currentAccount ? (id, kinds) => void retryListSync(id, kinds) : undefined}
       onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
         const listId = decision.change.listId
         const remoteListId = cloudBindings[listId]

@@ -2,6 +2,7 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import type { ListId, Item } from '../domain/shopping'
 import { duplicatedItems, itemNameKey, matchingNamePair, sameItemSnapshot, type ItemNameDecision } from '../domain/item-names'
 import type { Storage, VersionedItemChange } from './storage'
+import { syncLedger } from './list-sync-ledger'
 import { mergeItemEdit, type ItemDeletionConflict } from './item-conflict'
 import type { PendingItemOperation } from './pending-operations'
 import { createSyncCoordinator } from './sync-coordinator'
@@ -51,6 +52,8 @@ export function createAccountSync(
   },
 ) {
   const { accountId, remoteListId, localListId, isActive, resolveMutation = resolveVersionedMutation } = options
+  const ledger = syncLedger(storage)
+  const activeOperations = new Set<string>()
   if (!accountId.trim() || !remoteListId.trim()) throw new Error('Account and remote list are required')
   const assertActive = () => {
     if (!isActive()) throw new Error('Account changed during synchronization')
@@ -192,11 +195,22 @@ export function createAccountSync(
     if (signature(remote) !== signature(latest)) {
       throw new Error('Remote list changed during import; retry comparison')
     }
-    await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
-    assertActive()
-    const changed = remoteChanges.length
-      ? await storage.applyVersionedItemChanges(accountId, localListId, remoteListId, remoteChanges)
-      : 0
+    const feedId = 'legacy-feed:' + localListId
+    if (entries.length || remoteChanges.length) ledger?.begin(accountId, feedId, [localListId], 'feed', false)
+    let changed = 0
+    try {
+      await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
+      assertActive()
+      changed = remoteChanges.length
+        ? await storage.applyVersionedItemChanges(accountId, localListId, remoteListId, remoteChanges)
+        : 0
+      if (entries.length || changed) ledger?.confirm(accountId, feedId, [localListId])
+      else if (remoteChanges.length) ledger?.cancel(accountId, feedId)
+    } catch (error) {
+      if (isActive()) ledger?.fail(accountId, feedId)
+      else ledger?.cancel(accountId, feedId)
+      throw error
+    }
     // Unrelated confirmed imports can proceed while an item has a pending edit.
     const processed = new Set(remoteChanges.map(entry => entry.before.id))
     if (reconcileNames && entries.length === 0 && changed === 0 &&
@@ -358,10 +372,18 @@ export function createAccountSync(
       await storage.acknowledgeAccountPending(accountId, operationId)
     },
     fetch: () => fetchRemoteItems(client, remoteListId),
-    send: mutation => applyRemoteMutation(client, mutation),
+    send: async mutation => {
+      activeOperations.add(mutation.operationId)
+      ledger?.begin(accountId, mutation.operationId, [localListId], 'items')
+      try { return await applyRemoteMutation(client, mutation) }
+      catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
+    },
     commitReceipt: async (mutation, receipt) => {
       assertActive()
-      await storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
+      try {
+        await storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion)
+        activeOperations.delete(mutation.operationId)
+      } catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
     },
     resolveMutation,
     handleRejected,
@@ -371,7 +393,13 @@ export function createAccountSync(
   })
   return {
     ...coordinator,
-    flush: () => serializeAccountItemFlush(storage, accountId, coordinator.flush),
+    flush: () => serializeAccountItemFlush(storage, accountId, async () => {
+      try { return await coordinator.flush() }
+      finally {
+        if (!isActive()) for (const id of activeOperations) ledger?.cancel(accountId, id)
+        activeOperations.clear()
+      }
+    }),
     handleRejected, importRemoteOnly, previewDeletions, applyConfirmedDeletions, resolveItemDeletion, resolveItemName,
   }
 }
