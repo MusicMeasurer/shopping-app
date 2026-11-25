@@ -1,3 +1,4 @@
+import { checkStandardCardLabels } from './card-label-layout'
 import { UI_TIMEOUT, AUTH_TIMEOUT, SERVER_WRITE_TIMEOUT, REMOTE_UPDATE_TIMEOUT, INITIAL_SYNC_TIMEOUT } from './test-timeouts'
 import { waitForAuthChoice } from './auth-test-phases'
 import { test, expect } from '@playwright/test'
@@ -685,6 +686,10 @@ test.describe('list card sync indicators', () => {
       await settings.getByRole('button', { name: 'Сохранить', exact: true }).click()
       await checkSize(27)
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+      // The held write is still running; selecting either card must not move
+      // its label, regardless of the active-card indicator suppression.
+      await checkStandardCardLabels(card(names[0]), card(names[1]), [2, 2])
+      await checkSize(27)
       await card(names[1]).click()
       await add('Indicator B')
       await expect(indicator(ids[1])).toHaveCount(0)

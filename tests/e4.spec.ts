@@ -1,3 +1,4 @@
+import { checkStandardCardLabels } from './card-label-layout'
 import { test, expect } from '@playwright/test'
 test('E4: completing a oneoff list archives edited quantities and removes the list', async ({ page }) => {
   await page.goto('/shopping-app/')
@@ -154,16 +155,12 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await expect(page.locator('nav .list-tile')).toHaveCount(2)
   const tile = page.getByRole('button', { name: 'Хозяйственные покупки', exact: true })
   await expect(tile.locator('.list-symbol')).toHaveCSS('font-size', '27px')
-  const standard = await tile.evaluate(button => {
-    const label = button.querySelector<HTMLElement>('.list-name')!
-    return {
-      height: label.getBoundingClientRect().height,
-      lineHeight: Number.parseFloat(getComputedStyle(label).lineHeight),
-      bottomGap: button.getBoundingClientRect().bottom - label.getBoundingClientRect().bottom,
-    }
-  })
-  expect(standard.height).toBeCloseTo(standard.lineHeight * 2, 0)
-  expect(standard.bottomGap).toBeLessThan(10)
+  const short = page.getByRole('button', { name: 'Продукты', exact: true })
+  await checkStandardCardLabels(short, tile, [1, 2])
+  const viewport = page.viewportSize()!
+  await page.setViewportSize({ width: 320, height: viewport.height })
+  await checkStandardCardLabels(short, tile, [1, 2])
+  await page.setViewportSize(viewport)
   await page.reload()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/standard/)
   await page.getByRole('button', { name: 'Настройки', exact: true }).click()
@@ -171,6 +168,7 @@ test('E4: card density setting persists and leaves list data unchanged', async (
   await page.getByRole('dialog', { name: 'Настройки приложения' }).getByRole('button', { name: 'Сохранить' }).click()
   await expect(page.locator('nav.lists-grid')).toHaveClass(/large/)
   await expect(tile.locator('.list-symbol')).toHaveCSS('font-size', '34.5px')
+  await expect(tile.locator('.list-name')).toHaveCSS('font-size', '24px')
 })
 
 test('E4: new-list tile opens a reversible creation dialog', async ({ page }) => {
