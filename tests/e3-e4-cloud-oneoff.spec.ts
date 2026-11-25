@@ -756,7 +756,9 @@ test.describe('list card sync indicators', () => {
 })
 
 
-test('diagnostic journal distinguishes a delayed session check and a lost committed item response', async ({ page }) => {
+test.describe('sync diagnostics with intercepted network', () => {
+  test.use({ serviceWorkers: 'block' })
+test('diagnostic journal distinguishes a delayed session check and a lost committed item response', async ({ page, context }) => {
   test.setTimeout(150000)
   const client = createClient(url, key, { auth: { persistSession: false } })
   const auth = await client.auth.signInWithPassword({ email, password })
@@ -768,7 +770,7 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
   const id = created.data.list_id as string
   const journalKey = 'shopping-app:sync-diagnostics:v1'
   const read = () => page.evaluate(key => JSON.parse(localStorage.getItem(key) ?? '[]') as
-    { stage: string; outcome: string; elapsedMs?: number; count?: number; pending?: boolean }[], journalKey)
+    { at: number; span?: number; stage: string; outcome: string; elapsedMs?: number; count?: number; pending?: boolean }[], journalKey)
   const has = (stage: string, outcome: string) => async () => (await read()).some(row => row.stage === stage && row.outcome === outcome)
   const authRoute = '**/auth/v1/user', pushRoute = '**/rest/v1/rpc/push_e4_account_changes'
   let release!: () => void
@@ -787,15 +789,29 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
     if (await decline.isVisible()) await decline.click()
     await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: INITIAL_SYNC_TIMEOUT })
     await page.getByRole('button', { name, exact: true }).click()
+    await page.bringToFront()
+    await expect.poll(() => page.evaluate(() => document.visibilityState), { timeout: UI_TIMEOUT }).toBe('visible')
+    // Block service workers only in this intercepted-network scenario, as in
+    // the existing conflict/card tests. Drive a real offline/online transition.
+    await page.evaluate(key => localStorage.removeItem(key), journalKey)
+    await context.setOffline(true)
+    await expect.poll(() => page.evaluate(() => navigator.onLine), { timeout: UI_TIMEOUT }).toBe(false)
+    await expect.poll(has('offline','ok'), { timeout: UI_TIMEOUT }).toBe(true)
     await page.route(authRoute, async route => {
       if (!held) { held = true; await hold }
       return route.continue()
     })
-    await page.evaluate(() => window.dispatchEvent(new Event('online')))
-    await expect.poll(() => held, { timeout: UI_TIMEOUT }).toBe(true)
+    await context.setOffline(false)
+    await expect.poll(() => page.evaluate(() => navigator.onLine), { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(has('online','ok'), { timeout: UI_TIMEOUT }).toBe(true)
     await expect.poll(has('session','start'), { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(() => held, { timeout: UI_TIMEOUT }).toBe(true)
+    await expect.poll(has('identity','start'), { timeout: UI_TIMEOUT }).toBe(true)
+    // Intentional injected latency, not a replacement for a state assertion.
+    await new Promise(resolve => setTimeout(resolve, 350))
     release()
     await expect.poll(has('session','ok'), { timeout: AUTH_TIMEOUT }).toBe(true)
+    expect((await read()).some(row => row.stage === 'identity' && row.outcome === 'ok' && (row.elapsedMs ?? 0) >= 350)).toBe(true)
     await page.unroute(authRoute)
     await expect(page.locator('.profile-menu-trigger')).toContainText('Синхронизировано', { timeout: INITIAL_SYNC_TIMEOUT })
     await page.route(pushRoute, async route => {
@@ -817,6 +833,7 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
     await expect.poll(async () => (await read()).some(row => row.stage === 'batch-send' && ['error','rejected'].includes(row.outcome)), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
     const failed = await read()
     expect(failed.some(row => row.stage === 'receipt-store' && row.outcome === 'ok')).toBe(false)
+    expect(failed.some(row => row.stage === 'queue' && row.count === 1)).toBe(true)
     await expect(page.locator('.profile-menu-trigger')).toContainText(/ошибк/i, { timeout: UI_TIMEOUT })
     await page.getByRole('button', { name: 'Открыть аккаунт' }).click()
     const dialog = page.getByRole('dialog', { name: 'Мой аккаунт' })
@@ -824,14 +841,22 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
     await dialog.getByRole('button', { name: 'Повторить синхронизацию' }).click()
     await expect.poll(has('manual','start'), { timeout: UI_TIMEOUT }).toBe(true)
     await expect.poll(has('receipt-store','ok'), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
-    await expect.poll(async () => (await read()).some(row => row.stage === 'queue' && row.outcome === 'ok' && row.count === 0), { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
+    await expect.poll(async () => {
+      const rows = await read()
+      const receipt = rows.findIndex(row => row.stage === 'receipt-store' && row.outcome === 'ok')
+      return receipt >= 0 && rows.slice(receipt + 1).some(row => row.stage === 'queue' && row.outcome === 'ok' && row.count === 0)
+    }, { timeout: SERVER_WRITE_TIMEOUT }).toBe(true)
     expect(operationIds.length).toBeGreaterThan(1)
     expect(new Set(operationIds).size).toBe(1)
     await expect(dialog.locator('.profile-status')).toHaveText(/Синхронизировано/, { timeout: INITIAL_SYNC_TIMEOUT })
     await dialog.getByRole('button', { name: 'Закрыть окно аккаунта' }).click()
     await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')))
     await expect.poll(has('visible','ok'), { timeout: UI_TIMEOUT }).toBe(true)
-    await expect.poll(has('feed-store','ok'), { timeout: REMOTE_UPDATE_TIMEOUT }).toBe(true)
+    await expect.poll(async () => {
+      const rows = await read()
+      const receipt = rows.findIndex(row => row.stage === 'receipt-store' && row.outcome === 'ok')
+      return receipt >= 0 && rows.slice(receipt + 1).some(row => row.stage === 'feed-store' && row.outcome === 'ok')
+    }, { timeout: REMOTE_UPDATE_TIMEOUT }).toBe(true)
     await page.reload()
     await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: INITIAL_SYNC_TIMEOUT })
     await expect.poll(has('manual','start'), { timeout: UI_TIMEOUT }).toBe(true)
@@ -847,8 +872,14 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
     for (const secret of [email, password, auth.data.user!.id, id, name, item, ...operationIds]) expect(exported).not.toContain(secret)
     const { count, error } = await client.from('shopping_items').select('id', { count: 'exact', head: true }).eq('list_id', id).is('deleted_at', null)
     expect(error).toBeNull(); expect(count).toBe(1)
+  } catch (error) {
+    // This schema is intentionally closed and contains no account/item data.
+    console.log('[SYNC-DIAG phase]', JSON.stringify({ online: await page.evaluate(() => navigator.onLine),
+      visibility: await page.evaluate(() => document.visibilityState), events: (await read()).slice(-45) }))
+    throw error
   } finally {
     release()
+    await context.setOffline(false)
     await page.unroute(authRoute)
     await page.unroute(pushRoute)
     await page.close()
@@ -861,4 +892,5 @@ test('diagnostic journal distinguishes a delayed session check and a lost commit
     }
     await client.auth.signOut({ scope: 'local' })
   }
+})
 })
