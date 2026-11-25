@@ -4,6 +4,8 @@ on:
   push:
     branches: [feature/local-profiles-foundation, feature/e4-accepted-reintegration]
     paths:
+      - 'cloud/drafts/042_e4_account_deletion_mail_acl.sql'
+      - 'tests/recovery/test_e4_account_deletion_mail_acl.sql'
       - 'src/data/**'
       - 'src/AuthenticatedApp.tsx'
       - 'src/e3-local-cloud.integration.test.ts'
