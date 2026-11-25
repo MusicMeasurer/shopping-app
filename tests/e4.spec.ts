@@ -585,7 +585,12 @@ test('E4: a saved deletion conflict marks the list and opens directly from the a
   await dialog.getByRole('button', { name: 'Позже' }).click()
   await expect(dialog).toHaveCount(0)
   await expect(indicator).toBeVisible()
-  await navigation.getByRole('button', { name: 'Продукты с конфликтом', exact: true }).click()
+  const conflictedCard = navigation.getByRole('button', { name: 'Продукты с конфликтом', exact: true })
+  // The centered error button has a distinct action; tap the list pictogram to select the card.
+  await conflictedCard.locator('.list-symbol').click()
+  await expect(conflictedCard).toHaveAttribute('aria-pressed', 'true')
+  await expect(dialog).toHaveCount(0)
+  await expect(indicator).toBeVisible()
   await page.getByRole('button', { name: /Молоко с конфликтом.*Удалён здесь/ }).click()
   await expect(dialog.getByText('2 л', { exact: true })).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Сохранить товар с правкой' })).toBeDisabled()

@@ -696,6 +696,13 @@ test.describe('list card sync indicators', () => {
       await expect(indicator(ids[1])).toHaveAttribute('data-sync-state','success', { timeout: SERVER_WRITE_TIMEOUT })
       await expect(indicator(ids[1])).toHaveCount(0, { timeout: UI_TIMEOUT })
       await card(names[1]).click()
+      await expect(card(names[1])).toHaveAttribute('aria-pressed', 'true')
+      const beforeSelection = calls.length
+      await card(names[0]).locator('.list-symbol').click()
+      await expect(card(names[0])).toHaveAttribute('aria-pressed', 'true')
+      await expect(indicator(ids[0])).toHaveAttribute('data-sync-state','error')
+      expect(calls).toHaveLength(beforeSelection)
+      await card(names[1]).click()
       failA = false
       const before = calls.length
       await indicator(ids[0]).click()
