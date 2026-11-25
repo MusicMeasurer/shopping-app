@@ -1,5 +1,4 @@
-import { pullAccountFeed as pullLegacyAccountFeed } from './data/account-feed'
-import { pullSemanticAccountFeed, workspaceSemanticFeedEnabled } from './data/sync-event-runtime'
+import { pullAccountFeed } from './data/account-feed'
 import { flushAccountBatch } from './data/account-batch'
 import { syncAccountDrafts } from './data/sync-account-drafts'
 import { applyCloudListMerge, previewCloudListMerge } from './data/cloud-list-merge'
@@ -40,8 +39,6 @@ import { createSignOutGuard } from './data/signout-guard'
 import { checkVerifiedAccountId, verifiedAccountId, verifySessionIdentity } from './data/verified-account'
 import type { AuthView } from './data/auth-view'
 import type { SessionCandidate } from './data/auth-scope'
-
-const pullAccountFeed = workspaceSemanticFeedEnabled ? pullSemanticAccountFeed : pullLegacyAccountFeed
 
 type Controller = ReturnType<typeof createAuthController>
 
@@ -288,12 +285,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           : 'Перенос локального профиля не завершён. Данные сохранены. Повторите вход после восстановления связи.')
       }
       const restore = await storage.needsAccountCacheRestore(currentAccount)
-      if (workspaceSemanticFeedEnabled) {
-        try {
-          const selected = localStorage.getItem('shopping-workspace:' + currentAccount + ':list')
-          if (selected) await storage.recordAccountSyncContext(currentAccount, selected)
-        } catch { /* optional context capture; existing data synchronization remains authoritative */ }
-      }
       const feed = await pullAccountFeed(client, storage, currentAccount, () => !cancelled)
       if (cancelled) return
       const rows = feed ? await storage.readAccountFeedLists(currentAccount)
@@ -702,7 +693,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       },
       apply: async (snapshot, choices, operationId) => {
         const [source, target] = await bindings(snapshot.source.id, snapshot.target.id)
-        if (workspaceSemanticFeedEnabled) await storage.rememberAccountSyncOperation(account, operationId)
+        // Preserve the receipt identity when the forward semantic client returns.
+        await storage.rememberAccountSyncOperation(account, operationId)
         await applyCloudListMerge(connection, snapshot, source, target, choices, operationId)
         if (!stillActive()) return
         // The RPC receipt comes before the cache refresh. A failed refresh must

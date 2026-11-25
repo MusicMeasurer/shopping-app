@@ -4,6 +4,9 @@ import type { SupabaseClient } from '@supabase/supabase-js'
 import { createStorage } from './storage'
 import { pullSemanticAccountFeed } from './sync-event-runtime'
 import { noticeKey } from './sync-event-state'
+import { pullAccountFeed } from './account-feed'
+import { openDB } from 'idb'
+import { createItem } from '../domain/shopping'
 const uid = (n: number) => '51000000-0000-4000-8000-' + String(n).padStart(12, '0')
 const account = uid(1), foreign = uid(2), a = uid(101), b = uid(102), c = uid(103), item = uid(201), op = uid(301), op2 = uid(302)
 const date = '2026-11-24T12:00:00Z'
@@ -214,5 +217,113 @@ describe('durable semantic synchronization', () => {
     await pullSemanticAccountFeed(api, storage, account, active)
     expect((await storage.readAccountSemanticState(account))?.pending?.fate.notice).toMatchObject({ sourceId: item, reason: 'deleted' })
     await storage.close()
+  })
+})
+
+describe('rollback compatibility: v19 semantic client, legacy feed, semantic client again', () => {
+  it('preserves local profile, archive, cloud queue, installation identity, pending notice and cursor', async () => {
+    const { db, storage, rpc, api } = await setup()
+    const local = await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    const milk = { ...createItem('groceries', 'Milk'), purchased: true }
+    await storage.saveProfileItem(local, milk)
+    await storage.completeProfileList(local, 'groceries', uid(700), Date.now())
+    const bread = createItem('groceries', 'Bread')
+    await storage.saveProfileItem(local, bread)
+    const archives = await storage.readProfileArchives(local)
+    expect(archives).toHaveLength(1)
+    await storage.ensureVerifiedAccountProfile(account)
+    const identity = await storage.readInstallationIdentity()
+    rpc.mockResolvedValueOnce(page(11, [rem(11, a, b)]))
+    await pullSemanticAccountFeed(api, storage, account, active)
+    const pending = (await storage.readAccountSemanticState(account))!.pending
+    expect(pending?.fate.notice?.targetListId).toBe(b)
+    const offline = { ...createItem(b, 'Offline'), id: uid(701) }
+    const operation = { kind: 'cloud-add' as const, operationId: uid(702), localListId: b,
+      remoteListId: b, itemId: offline.id, item: offline }
+    await storage.saveAccountEdit(account, operation)
+    await storage.close()
+
+    const raw = await openDB(db)
+    expect(raw.version).toBe(19)
+    expect(raw.objectStoreNames.contains('accountSyncEvents')).toBe(true)
+    raw.close()
+    const rollback = createStorage(db)
+    expect(await rollback.readProfileItems(local)).toEqual([bread])
+    expect(await rollback.readProfileArchives(local)).toEqual(archives)
+    expect(await rollback.readAccountPending(account)).toEqual([operation])
+    expect(await rollback.readInstallationIdentity()).toEqual(identity)
+    const changed = { event_position: '12', list_id: c, entity_id: c, entity: 'list', deleted: false,
+      snapshot: { ...list(c), name: 'Changed during rollback', revision: 2 } }
+    rpc.mockResolvedValueOnce({ data: [changed], error: null })
+    await pullAccountFeed(api, rollback, account, active)
+    expect(rpc.mock.calls.at(-1)?.[0]).toBe('pull_e4_account_changes')
+    expect(await rollback.readAccountFeedPosition(account)).toBe('12')
+    const suspended = (await rollback.readAccountSemanticState(account))!
+    expect(suspended.pending).toEqual(pending)
+    expect(suspended.evidence?.position).toBe('12')
+    expect(suspended.ready).toBe(false)
+    expect(suspended.evidence?.caughtUp).toBe(false)
+    expect(await rollback.readAccountPending(account)).toEqual([operation])
+    await rollback.close()
+
+    const forward = createStorage(db)
+    rpc.mockResolvedValueOnce(page(12, []))
+    await pullSemanticAccountFeed(api, forward, account, active)
+    expect(rpc.mock.calls.at(-1)?.[1]).toMatchObject({ p_after: '12' })
+    expect((await forward.readAccountSemanticState(account))?.pending?.fate.notice).toEqual(pending?.fate.notice)
+    expect(await forward.readAccountPending(account)).toEqual([operation])
+    expect(await forward.readProfileArchives(local)).toEqual(archives)
+    expect(await forward.readProfileItems(local)).toEqual([bread])
+    await forward.close()
+  })
+  it('keeps an already presented notice and never invents a reason for a new legacy deletion', async () => {
+    const { db, storage, rpc, api } = await setup()
+    rpc.mockResolvedValueOnce(page(11, [rem(11, a, b)]))
+    await pullSemanticAccountFeed(api, storage, account, active)
+    const first = (await storage.readAccountSemanticState(account))!.pending!
+    const key = noticeKey(first)!
+    await storage.presentAccountSyncNotice(account, key)
+    await storage.close()
+    const rollback = createStorage(db)
+    const { semantics: _semantics, ...unknownDeletion } = rem(12, b, undefined, op2)
+    rpc.mockResolvedValueOnce({ data: [unknownDeletion], error: null })
+    await pullAccountFeed(api, rollback, account, active)
+    expect((await rollback.readAccountSemanticState(account))?.presented).toEqual(first)
+    expect((await rollback.readAccountFeedLists(account)).map(row => row.id)).not.toContain(b)
+    await rollback.close()
+    const forward = createStorage(db)
+    rpc.mockResolvedValueOnce(page(12, []))
+    await pullSemanticAccountFeed(api, forward, account, active)
+    const next = (await forward.readAccountSemanticState(account))!
+    expect(next.presented).toEqual(first)
+    expect(next.pending?.fate.notice).toBeUndefined()
+    expect(await forward.acknowledgeAccountSyncNotice(account, key)).toEqual({ kind: 'navigate', nextListId: c, resetViewport: true })
+    await forward.close()
+  })
+  it('clears stale navigation even on an empty legacy check, keeps other accounts and purges deleted-account metadata', async () => {
+    const { db, storage, rpc, api } = await setup()
+    await storage.migrateLegacyGuestToProfile()
+    await storage.markGuestCutoverReady()
+    await storage.ensureVerifiedAccountProfile(account)
+    await storage.rememberAccountSyncOperation(foreign, op2)
+    await storage.close()
+    const rollback = createStorage(db)
+    rpc.mockResolvedValueOnce({ data: [], error: null })
+    await pullAccountFeed(api, rollback, account, active)
+    expect((await rollback.readAccountSemanticState(account))?.context).toBeUndefined()
+    expect((await rollback.readAccountSemanticState(account))?.activity).toContain(a)
+    await rollback.rememberDeletedAccount(account)
+    expect(await rollback.readAccountSemanticState(account)).toBeUndefined()
+    await rollback.purgeDeletedAccount(account)
+    await rollback.close()
+    const raw = await openDB(db)
+    expect(await raw.get('accountSyncEvents', account)).toBeUndefined()
+    expect((await raw.get('accountSyncEvents', foreign))?.own[0].id).toBe(op2)
+    raw.close()
+    const forward = createStorage(db)
+    expect(await forward.readAccountSemanticState(account)).toBeUndefined()
+    await expect(forward.ensureVerifiedAccountProfile(account)).rejects.toThrow('deletion')
+    await forward.close()
   })
 })

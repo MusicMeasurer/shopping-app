@@ -1,4 +1,5 @@
 import type { AccountFeedChange } from './account-feed'
+import { suspendRollbackSemantics } from './rollback-semantic-state'
 import { newSemanticState, rememberContext, rememberOwnOperation, storeSemanticBatch, evaluateSemanticState, semanticReady, presentSemanticNotice, acknowledgeSemanticNotice, consumeSilentRecovery, type AccountSemanticState, type SemanticBatch } from './sync-event-state'
 import type { ReconciledSyncContext } from './sync-event-fate'
 import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
@@ -1967,6 +1968,11 @@ export function createStorage(name = 'shopping-app') {
         const semanticBefore = await states.get(accountId)
         if (!snapshot && !changes.length && !previous?.deferred.length && (!semanticBatch ||
             (semanticBefore?.evidence?.position === position && semanticBefore.evidence.caughtUp && semanticBefore.ready && (semanticBatch.kind === 'snapshot' || !semanticBatch.batchThrough)))) {
+          if (!semanticBatch && semanticBefore) {
+            const suspended = suspendRollbackSemantics(semanticBefore, expected, position, changes)
+            if (suspended !== semanticBefore) await states.put(suspended)
+            if (!isActive()) throw new Error('Account changed during feed synchronization')
+          }
           await done
           return true
         }
@@ -2097,9 +2103,9 @@ export function createStorage(name = 'shopping-app') {
             state = { ...state, activity: state.activity.filter(id => live.has(id)) }
           }
           await states.put(state)
-        } else if (semanticBefore?.evidence) {
-          // Legacy server fallback has no trustworthy semantic history.
-          await states.put({ ...semanticBefore, evidence: undefined, batchThrough: undefined, observedHead: undefined, ready: false })
+        } else if (semanticBefore) {
+          const suspended = suspendRollbackSemantics(semanticBefore, expected, position, changes)
+          if (suspended !== semanticBefore) await states.put(suspended)
         }
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })

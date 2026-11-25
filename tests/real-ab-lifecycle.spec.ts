@@ -42,7 +42,7 @@ async function signOut(page: Page) {
 async function add(page: Page, name: string) {
   const input = page.getByLabel('Что нужно купить?', { exact: false })
   await input.fill(name)
-  if (process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration' &&
+  if (['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb19'].includes(process.env.GITHUB_REF_NAME ?? '') &&
       await input.evaluate(element => element.tagName === 'INPUT')) await input.press('Enter')
   else await page.getByRole('button', { name: 'Добавить товар' }).click()
   await expect(page.getByRole('checkbox', { name })).toBeVisible({ timeout: LOCAL_SAVE_TIMEOUT })
@@ -54,7 +54,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
       !process.env.VITE_SUPABASE_PUBLISHABLE_KEY?.startsWith('sb_publishable_')) {
     throw new Error('Only pinned disposable lab with publishable key is allowed')
   }
-  const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  const integrated = ['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb19'].includes(process.env.GITHUB_REF_NAME ?? '')
   const guestList = integrated ? 'GUEST_LIST_' + crypto.randomUUID() : 'E4 TEST LIST'
   const listA = 'A_LIST_' + crypto.randomUUID()
   const listB = 'B_LIST_' + crypto.randomUUID()
@@ -289,7 +289,7 @@ test('real A → B → A isolates local purchases and preserves original guest a
 })
 
 test('E4: local workspaces preserve one session, remembered transfer opt-out, and linked account switching', async ({ page }) => {
-  test.skip(process.env.GITHUB_REF_NAME !== 'feature/e4-accepted-reintegration', 'Requires the integrated profile menu')
+  test.skip(!['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb19'].includes(process.env.GITHUB_REF_NAME ?? ''), 'Requires the integrated profile menu')
   test.setTimeout(150000)
   if (process.env.VITE_SUPABASE_URL !== 'https://gmrqeubhotjpmtwokfeq.supabase.co')
     throw new Error('Only the pinned disposable lab is allowed')
@@ -362,7 +362,7 @@ test('E4: local workspaces preserve one session, remembered transfer opt-out, an
 })
 
 test('E4: a list created and completed after sign-out is archived on re-entry', async ({ page }) => {
-  test.skip(process.env.GITHUB_REF_NAME !== 'feature/e4-accepted-reintegration', 'Requires the integrated profile menu')
+  test.skip(!['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb19'].includes(process.env.GITHUB_REF_NAME ?? ''), 'Requires the integrated profile menu')
   test.setTimeout(120000)
   if (process.env.VITE_SUPABASE_URL !== 'https://gmrqeubhotjpmtwokfeq.supabase.co')
     throw new Error('Only the pinned disposable lab is allowed')
@@ -396,7 +396,7 @@ test('E4: a list created and completed after sign-out is archived on re-entry', 
 })
 
 test('E4: signed-out cloud copy merges locally across restart and confirms once after re-entry', async ({ page }) => {
-  test.skip(process.env.GITHUB_REF_NAME !== 'feature/e4-accepted-reintegration', 'Requires the integrated profile menu')
+  test.skip(!['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb19'].includes(process.env.GITHUB_REF_NAME ?? ''), 'Requires the integrated profile menu')
   test.setTimeout(150000)
   if (process.env.VITE_SUPABASE_URL !== 'https://gmrqeubhotjpmtwokfeq.supabase.co')
     throw new Error('Only the pinned disposable lab is allowed')
