@@ -160,3 +160,9 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/042_e4_account_deletion_mail_acl.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_mail_acl.sql
+
+      - name: Verify private registration queue, code lifecycle and RPC permissions
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/040_e4_registration_email_status.sql
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/043_e4_private_registration.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_private_registration.sql

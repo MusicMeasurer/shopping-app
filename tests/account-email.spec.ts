@@ -37,8 +37,9 @@ async function mockCloud(page: Page, duplicate = false, deletion = { removed: fa
     const respond = (json: object, status = 200) => route.fulfill({
       status, json, headers: { 'x-supabase-api-version': '2024-01-01' },
     })
-    if (path === '/auth/v1/signup') {
-      await (duplicate ? respond({ code: 'user_already_exists', msg: 'User already registered' }, 422) : respond(user))
+    if (path === '/functions/v1/private-registration') {
+      await respond({ result: body.action === 'request' ? 'accepted'
+        : body.code === emailCode && !duplicate ? 'created' : 'invalid' })
     } else if (path === '/auth/v1/verify') {
       await (body.token === emailCode ? respond(session) : respond({ code: 'otp_expired', msg: 'Invalid code' }, 403))
     } else if (path === '/auth/v1/token') {
@@ -53,8 +54,6 @@ async function mockCloud(page: Page, duplicate = false, deletion = { removed: fa
       await respond(user)
     } else if (path === '/auth/v1/recover' || path === '/auth/v1/resend' || path === '/auth/v1/logout') {
       await respond({})
-    } else if (path === '/rest/v1/rpc/registration_email_status') {
-      await route.fulfill({ json: 'available' })
     } else if (path === '/rest/v1/rpc/account_deletion_status') {
       await route.fulfill({ json: deletion.removed && body.p_account === accountId })
     } else if (path === '/rest/v1/rpc/register_account_deletion_device') {
@@ -93,12 +92,12 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
   await registration.getByLabel('Повторите пароль').fill(tooShort)
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
   await expect(registration.getByText('Не менее 8 символов.')).toBeVisible()
-  expect(calls.some(call => call.path === '/auth/v1/signup')).toBe(false)
+  expect(calls.some(call => call.path === '/functions/v1/private-registration')).toBe(false)
   await registration.getByLabel('Новый пароль').fill(password)
   await registration.getByLabel('Повторите пароль').fill('different password')
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
   await expect(registration.getByRole('alert')).toHaveText('Пароли не совпадают.')
-  expect(calls.some(call => call.path === '/auth/v1/signup')).toBe(false)
+  expect(calls.some(call => call.path === '/functions/v1/private-registration')).toBe(false)
   await registration.getByLabel('Повторите пароль').fill(password)
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
   await expect(registration.getByLabel('Код из письма'),
@@ -109,22 +108,23 @@ test('confirms a new email code, then the first explicit sign-in keeps the local
     await registrationCode.fill(invalid)
     await confirmRegistration.click()
     await expect(registration.getByRole('alert')).toHaveText('Введите код из 6 цифр.')
-    expect(calls.some(call => call.path === '/auth/v1/verify')).toBe(false)
+    expect(calls.some(call => call.body.action === 'confirm')).toBe(false)
   }
   await registrationCode.fill('999999')
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   await expect(registration.getByRole('alert')).toContainText('Код неверный')
   await registration.getByRole('button', { name: 'Запросить новый код' }).click()
   await expect(registration.getByLabel('Код из письма')).toHaveValue('')
-  expect(calls.find(call => call.path === '/auth/v1/resend')?.body).toMatchObject({ email, type: 'signup' })
+  expect(calls.filter(call => call.body.action === 'request').map(call => call.body)).toEqual([
+    { action: 'request', email }, { action: 'request', email },
+  ])
   await registration.getByLabel('Код из письма').fill(emailCode)
   await registration.getByRole('button', { name: 'Подтвердить код' }).click()
   const signIn = page.getByRole('dialog', { name: 'Вход в аккаунт' })
   await expect(signIn.getByRole('status')).toContainText('Почта подтверждена')
   await expect(signIn.getByLabel('Пароль')).toHaveValue('')
-  expect(calls.some(call => call.path.startsWith('/rest/v1/') &&
-    call.path !== '/rest/v1/rpc/registration_email_status')).toBe(false)
-  expect(calls.find(call => call.path === '/auth/v1/verify')?.body.type).toBe('email')
+  expect(calls.some(call => call.path.startsWith('/rest/v1/') || call.path.startsWith('/auth/v1/'))).toBe(false)
+  expect(calls.filter(call => call.body.action === 'confirm').at(-1)?.body).toEqual({ action: 'confirm', email, password, code: emailCode })
 
   await signIn.getByLabel('Пароль').fill(password)
   await signIn.getByRole('button', { name: 'Войти', exact: true }).click()
@@ -147,6 +147,7 @@ test('duplicate registration stays generic and recovery resets the password with
   await registration.getByLabel('Повторите пароль').fill(password)
   await registration.getByRole('button', { name: 'Зарегистрироваться' }).click()
   await expect(registration.getByLabel('Код из письма')).toBeVisible()
+  await expect(registration.getByText('Проверьте почту и введите код подтверждения.')).toBeVisible()
   await expect(registration.getByRole('alert')).toHaveCount(0)
   await registration.getByRole('button', { name: 'Вернуться ко входу' }).click()
   await page.getByRole('button', { name: 'Забыли пароль?' }).click()
@@ -169,7 +170,7 @@ test('duplicate registration stays generic and recovery resets the password with
   expect(calls.find(call => call.path === '/auth/v1/verify')?.body).toMatchObject({ type: 'recovery', token: emailCode })
   expect(calls.find(call => call.path === '/auth/v1/user' && call.method === 'PUT')?.body.password).toBe(password)
   expect(calls.some(call => call.path === '/auth/v1/token' ||
-    (call.path.startsWith('/rest/v1/') && call.path !== '/rest/v1/rpc/registration_email_status'))).toBe(false)
+    call.path.startsWith('/rest/v1/'))).toBe(false)
   expect(await page.evaluate(() => Object.keys(localStorage).some(key => key.includes('auth-token')))).toBe(false)
 })
 
@@ -478,7 +479,7 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
 
 test('reports generic Auth 500 as server error without inventing a deletion', async ({ page }) => {
   const calls = await mockCloud(page)
-  await page.route(`**${fixturePath}/auth/v1/signup`, route =>
+  await page.route(`**${fixturePath}/functions/v1/private-registration`, route =>
     route.fulfill({ status: 500, json: { code: 'unexpected_failure', message: 'Database error saving new user' } }))
   await page.goto('/shopping-app/')
   await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
@@ -491,64 +492,8 @@ test('reports generic Auth 500 as server error without inventing a deletion', as
   await expect(dialog.getByRole('alert')).toContainText('Сервер не смог выполнить регистрацию')
   await expect(dialog.getByRole('alert')).not.toContainText('24 часа')
   await expect(dialog.getByLabel('Код из письма')).toHaveCount(0)
-  expect(calls.filter(call => call.path.endsWith('/registration_email_status'))).toHaveLength(2)
+  expect(calls.some(call => call.path.startsWith('/auth/v1/') || call.path.startsWith('/rest/v1/'))).toBe(false)
 })
-
-test('shows the same 24-hour cooldown in a fresh browser without any linked profile, then permits signup', async ({ page }) => {
-  const calls = await mockCloud(page)
-  let stillBlocked = true
-  let statusRequests = 0
-  await page.route(`**${fixturePath}/rest/v1/rpc/registration_email_status`, async route => {
-    statusRequests++
-    await route.fulfill({ json: stillBlocked ? 'cooldown' : 'available' })
-  })
-  await page.goto('/shopping-app/')
-  await expect(page.locator('.profile-menu-trigger')).toHaveAttribute('data-profile-mode', 'local')
-  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
-  await page.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Регистрация аккаунта' })
-  await dialog.getByLabel('Email').fill(email)
-  await dialog.getByLabel('Новый пароль').fill(password)
-  await dialog.getByLabel('Повторите пароль').fill(password)
-  await dialog.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
-  await expect(dialog.getByRole('alert')).toHaveText(
-    'Регистрация с этим адресом временно недоступна. После удаления аккаунта повторная регистрация возможна через 24 часа с момента завершения удаления.',
-  )
-  expect(calls.filter(call => call.path === '/auth/v1/signup')).toHaveLength(0)
-  expect(statusRequests).toBe(1)
-  stillBlocked = false
-  await dialog.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
-  await expect(dialog.getByLabel('Код из письма')).toBeVisible()
-  expect(calls.filter(call => call.path === '/auth/v1/signup')).toHaveLength(1)
-  expect(statusRequests).toBe(2)
-})
-
-test('re-checks server restriction if deletion starts between preflight and Auth signup', async ({ page }) => {
-  await mockCloud(page)
-  let statusChecks = 0
-  await page.route(`**${fixturePath}/rest/v1/rpc/registration_email_status`, async route => {
-    statusChecks++
-    await route.fulfill({ json: statusChecks === 1 ? 'available' : 'cooldown' })
-  })
-  let signups = 0
-  await page.route(`**${fixturePath}/auth/v1/signup`, route => {
-    signups++
-    return route.fulfill({ status: 500, json: { code: 'unexpected_failure', message: 'Database error saving new user' } })
-  })
-  await page.goto('/shopping-app/')
-  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
-  await page.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
-  const dialog = page.getByRole('dialog', { name: 'Регистрация аккаунта' })
-  await dialog.getByLabel('Email').fill(email)
-  await dialog.getByLabel('Новый пароль').fill(password)
-  await dialog.getByLabel('Повторите пароль').fill(password)
-  await dialog.getByRole('button', { name: 'Зарегистрироваться', exact: true }).click()
-  await expect(dialog.getByRole('alert')).toContainText('24 часа с момента завершения удаления')
-  expect(statusChecks).toBe(2)
-  expect(signups).toBe(1)
-  await expect(dialog.getByLabel('Код из письма')).toHaveCount(0)
-})
-
 
 test('reopens a signed-out linked account on the first restart after offline local edits', async ({ page }) => {
   await mockCloud(page)

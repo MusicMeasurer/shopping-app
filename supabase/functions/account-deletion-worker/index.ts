@@ -47,6 +47,28 @@ Deno.serve(async request => {
   const { data, error: claimError } = await client.rpc('claim_account_deletion_mail', { p_lease: lease })
   if (claimError || !Array.isArray(data)) return new Response(null, { status: 503 })
 
+  // Claim without holding a database transaction across SMTP. The plaintext
+  // registration code exists only in this delivery attempt.
+  async function sendRegistrationMail() {
+    const { data: job, error } = await client.rpc('claim_private_registration_mail')
+    if (error) throw new Error('Registration mail claim failed')
+    if (!job) return
+    const text = job.kind === 'code'
+      ? 'Код подтверждения регистрации ShoppingApp: ' + job.code + '. Введите его в приложении.'
+      : job.kind === 'existing'
+        ? 'Аккаунт ShoppingApp уже зарегистрирован. Если забыли пароль, воспользуйтесь восстановлением в приложении. Вводить код не требуется.'
+        : 'Регистрация ShoppingApp временно недоступна. Повторная регистрация возможна через 24 часа после завершения удаления предыдущего аккаунта. Вводить код не требуется.'
+    await smtp.sendMail({
+      from: { name: 'ShoppingApp', address: sender },
+      to: job.email,
+      subject: 'Запрос регистрации ShoppingApp',
+      text: text + ' Если вы не запрашивали регистрацию, действий не требуется.',
+    })
+  }
+  const registrationDelivery = Deno.env.get('PRIVATE_REGISTRATION_TRUST_PROXY') === 'true'
+    ? Promise.allSettled(Array.from({ length: 4 }, () => sendRegistrationMail()))
+    : Promise.resolve([])
+
   const deliveries = await Promise.allSettled((data as MailJob[]).map(async job => {
     const codeMail = job.kind === 'code'
     if (!codeMail) {
@@ -78,5 +100,6 @@ Deno.serve(async request => {
     const result = await client.rpc('complete_account_deletion_mail', { p_job: job.id, p_lease: lease })
     if (result.error) throw new Error('Mail acknowledgment failed')
   }))
-  return new Response(null, { status: deliveries.some(outcome => outcome.status === 'rejected') ? 503 : 204 })
+  const outcomes = deliveries.concat(await registrationDelivery)
+  return new Response(null, { status: outcomes.some(outcome => outcome.status === 'rejected') ? 503 : 204 })
 })

@@ -2,7 +2,6 @@ import { useState, type FormEvent } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { accountEmailErrorMessage } from './data/account-email-error'
-import { registrationEmailStatus, signupCooldownMessage } from './data/registration-email-status'
 
 export type AccountEmailMode = 'register' | 'recover'
 const emailCodeLength = 6
@@ -31,6 +30,16 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
   const title = registering ? 'Регистрация аккаунта' : 'Восстановление доступа'
   const showPassword = registering ? !codeSent : recoveryVerified
 
+  async function registrationRequest(isolated: SupabaseClient, action: 'request' | 'confirm', address: string) {
+    const body = action === 'request' ? { action, email: address } : { action, email: address, code, password }
+    const { data, error: issue } = await isolated.functions.invoke('private-registration', { body })
+    if (issue) {
+      if (issue.context instanceof Response) throw { status: issue.context.status }
+      throw issue
+    }
+    return data?.result
+  }
+
   function dismiss() {
     if (busy) return
     if (recoveryVerified && client) void client.auth.signOut({ scope: 'local' }).catch(() => {})
@@ -53,56 +62,38 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
       if (!client) setClient(isolated)
       if (!codeSent) {
         if (registering) {
-          // Always ask the server, on every device. If the status RPC is
-          // temporarily unavailable, Auth can still attempt signup and its
-          // existing server-side registration trigger remains authoritative.
-          const status = await registrationEmailStatus(isolated, address).catch(() => 'unknown')
-          if (status === 'cooldown') {
-            setError(signupCooldownMessage)
-            return
-          }
-          const { data, error: issue } = await isolated.auth.signUp({ email: address, password })
-          if (issue && issue.code !== 'user_already_exists' && issue.code !== 'email_exists') {
-            if ((issue.status ?? 0) >= 500) {
-              // Close the race between a first available status and the Auth
-              // trigger: a newly confirmed deletion may have started meanwhile.
-              const freshStatus = await registrationEmailStatus(isolated, address).catch(() => 'unknown')
-              if (freshStatus === 'cooldown') {
-                setError(signupCooldownMessage)
-                return
-              }
-            }
-            throw issue
-          }
-          if (data.session) {
-            await isolated.auth.signOut({ scope: 'local' })
-            setError('Подтверждение почты недоступно. Попробуйте позже.')
-            return
-          }
+          if (await registrationRequest(isolated, 'request', address) !== 'accepted')
+            throw new Error('Registration request failed')
         } else {
           const { error: issue } = await isolated.auth.resetPasswordForEmail(address)
           if (issue && issue.code !== 'user_not_found') throw issue
         }
         setEmail(address)
-        setPassword('')
-        setConfirmation('')
+        if (!registering) {
+          setPassword('')
+          setConfirmation('')
+        }
         setCodeSent(true)
       } else if (!recoveryVerified) {
-        const { data, error: issue } = await isolated.auth.verifyOtp({
-          email: address, token: code, type: registering ? 'email' : 'recovery',
-        })
-        if (issue && (issue.status === 0 || (issue.status ?? 0) >= 500)) throw issue
-        if (issue || !data.session) {
-          setError('Код неверный или больше не действует. Проверьте письмо или запросите новый код.')
-          return
-        }
-        setCode('')
+        const invalidCode = 'Код неверный или больше не действует. Проверьте письмо или запросите новый код.'
         if (registering) {
-          await isolated.auth.signOut({ scope: 'local' }).catch(() => {})
+          if (await registrationRequest(isolated, 'confirm', address) !== 'created') {
+            setError(invalidCode)
+            return
+          }
+          setPassword('')
+          setConfirmation('')
           onCompleted(address, 'Почта подтверждена. Войдите с паролем, который указали при регистрации.')
         } else {
+          const { data, error: issue } = await isolated.auth.verifyOtp({ email: address, token: code, type: 'recovery' })
+          if (issue && (issue.status === 0 || (issue.status ?? 0) >= 500)) throw issue
+          if (issue || !data.session) {
+            setError(invalidCode)
+            return
+          }
           setRecoveryVerified(true)
         }
+        setCode('')
       } else {
         const { error: issue } = await isolated.auth.updateUser({ password })
         if (issue) throw issue
@@ -122,10 +113,13 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
     setError('')
     setBusy(true)
     try {
-      const { error: issue } = registering
-        ? await client.auth.resend({ type: 'signup', email })
-        : await client.auth.resetPasswordForEmail(email)
-      if (issue && issue.code !== 'user_not_found' && issue.code !== 'user_already_exists') throw issue
+      if (registering) {
+        if (await registrationRequest(client, 'request', email) !== 'accepted')
+          throw new Error('Registration request failed')
+      } else {
+        const { error: issue } = await client.auth.resetPasswordForEmail(email)
+        if (issue && issue.code !== 'user_not_found') throw issue
+      }
       setCode('')
     } catch (cause) {
       setError(accountEmailErrorMessage(cause, 'resend'))
@@ -142,8 +136,9 @@ export function AccountEmailDialog({ mode, initialEmail, createClient, onDismiss
           value={email} onChange={event => setEmail(event.target.value)} />
       </label>}
       {codeSent && !recoveryVerified && <>
-        <p>Если для этого адреса можно продолжить, на {email} придёт письмо с кодом.</p>
-        {registering && <p>Если аккаунт уже существует, войдите или восстановите доступ.</p>}
+        {registering
+          ? <p>Проверьте почту и введите код подтверждения.</p>
+          : <p>Если для этого адреса можно продолжить, на {email} придёт письмо с кодом.</p>}
         <label>Код из письма
           <input name="code" type="text" inputMode="numeric" autoComplete="one-time-code" required disabled={busy}
             aria-describedby="account-email-code-help" pattern={emailCodePattern} value={code}
