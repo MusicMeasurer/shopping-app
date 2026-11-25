@@ -207,3 +207,6 @@
 
 
 **Контрольная точка 25.11 · SYNC-CARDS уточнения:** [b216247](https://github.com/MusicMeasurer/shopping-app/commit/b216247ffa3524135a0f6c31decc50119d1adfd6) — оба CI success, инструкция 1 завершена. По поручению пользователя опубликовано на отдельном полигоне, [Pages CI](https://github.com/MusicMeasurer/shopping-app-preview/actions/runs/45565930714) completed/success, фактическую загрузку ревизии подтвердить на iPhone (HTTP из среды недоступен, DNS). Физический тест 7 (новая визуализация и область карточки), ранее открытые 3–4; остальные стадии только по отдельному поручению. [Матрица](08_IPHONE_ACCEPTANCE.md).
+
+
+**Контрольная точка 25.11 · CARD-TYPOGRAPHY + SYNC-DIAG:** [5a6bf7a](https://github.com/MusicMeasurer/shopping-app/commit/5a6bf7ab17ac96611c45375777cf39a4d0320cba) — инструкция 1 завершена, оба CI success; по поручению начата совместная выкладка на полигон с локальным диагностическим журналом ([Pages CI](https://github.com/MusicMeasurer/shopping-app-preview/actions/runs/45606533309)). Физические тесты 8–9, ранее открытые 3–4, замечание 7.5 наблюдать при обычной работе; первопричина не установлена. [Матрица](08_IPHONE_ACCEPTANCE.md). Следующие области индикаторов отдельно. Production не изменён.
