@@ -1,0 +1,35 @@
+name: A1 finite ban real Auth logout
+on:
+  push:
+    branches: [test/r4-w01-http-20261126]
+    paths:
+      - 'tests/http/a1-stage4-start.json'
+permissions:
+  contents: read
+concurrency:
+  group: shoppingapp-r4-w01-http-lab
+  cancel-in-progress: false
+jobs:
+  a1:
+    runs-on: ubuntu-latest
+    timeout-minutes: 9
+    environment: e3-lab
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: node --check tests/http/a1_finite_ban_logout.mjs
+      - name: Real Auth logout before worker, disposable D only
+        env:
+          E3_LAB_URL: ${{ secrets.E3_LAB_URL }}
+          E3_LAB_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+          E3_USER_D_PASSWORD: ${{ secrets.E3_USER_D_PASSWORD }}
+          E3_USER_A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+          E3_USER_B_EMAIL: ${{ secrets.E3_USER_B_EMAIL }}
+          E3_USER_C_EMAIL: ${{ secrets.E3_USER_C_EMAIL }}
+        run: node tests/http/a1_finite_ban_logout.mjs
