@@ -208,7 +208,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       await confirmSession()
     },
     async signOut(scope?: 'local', onSuccess?: () => void) {
-      markAuthStage('signout_requested')
+      markAuthStage(scope === 'local' ? 'signout_local_requested' : 'signout_requested')
       // Hide account data before the remote sign-out request.
       if (signingOut) return
       signingOut = true
@@ -221,6 +221,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
           const attempt = (scope ? client.signOut(scope) : client.signOut()).then(result => {
             // A late success must still unlock the hidden workspace, even after
             // the UI deadline or while a second attempt is in flight.
+            markAuthStage(result.error ? 'signout_sdk_error' : 'signout_sdk_success', result.error)
             if (!result.error && active) {
               guard?.clear()
               // Notify the UI even if its 12-second wait already timed out.
@@ -242,6 +243,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
             new Promise<never>((_, reject) => {
               timeout = setTimeout(() => {
                 timedOut = true
+                markAuthStage('signout_timeout')
                 reject(new Error('Sign-out timed out'))
               }, signOutTimeoutMs)
             }),
@@ -251,6 +253,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
           // A permanently stalled request must not block every future Retry.
           // The persisted guard stays set until some attempt succeeds.
           if (timedOut && pendingSignOut === attempt) pendingSignOut = undefined
+          if (!timedOut) markAuthStage('signout_failed', error)
           throw error
         }
       } finally {

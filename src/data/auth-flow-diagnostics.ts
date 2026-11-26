@@ -12,6 +12,7 @@ const allowedStages = [
   'linked_session_set', 'local_profile_selected', 'profile_open_start',
   'profile_open_ready', 'profile_open_failed', 'merge_sync_start',
   'merge_sync_complete', 'merge_sync_failed', 'signout_requested',
+  'signout_local_requested', 'signout_sdk_success', 'signout_sdk_error', 'signout_timeout', 'signout_failed',
 ] as const
 
 export type AuthStage = typeof allowedStages[number]

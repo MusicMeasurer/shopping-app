@@ -3,6 +3,7 @@ import { createAuthController, type AuthClient } from './auth-controller'
 import type { SessionCandidate } from './auth-scope'
 import { createSignOutGuard } from './signout-guard'
 import type { AuthView } from './auth-view'
+import { exportAuthStages } from './auth-flow-diagnostics'
 
 const id = '123e4567-e89b-42d3-a456-426614174000'
 const secondId = '223e4567-e89b-42d3-a456-426614174001'
@@ -494,4 +495,34 @@ describe('active session recovery', () => {
     await vi.waitFor(() => expect(views.at(-1)).toEqual({ status: 'account', accountId: secondId }))
     controller.dispose()
   })
+})
+
+it('records a failed deleted-account SDK logout without lifting the guard, then records successful retry', async () => {
+  const values = new Map<string, string>()
+  const store = { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+    removeItem: (key: string) => { values.delete(key) } }
+  vi.stubGlobal('sessionStorage', store)
+  try {
+    const guard = createSignOutGuard(store)
+    const fake = fakeClient(session)
+    fake.client.signOut = vi.fn<AuthClient['signOut']>()
+      .mockResolvedValueOnce({ error: { message: 'private@example.test token=secret', status: 500 } } as Awaited<ReturnType<AuthClient['signOut']>>)
+      .mockResolvedValueOnce({ error: null })
+    const views: AuthView[] = []
+    const controller = createAuthController(fake.client, v => views.push(v), guard)
+    await controller.initialize()
+    await expect(controller.signOut('local')).rejects.toThrow()
+    expect(guard.isPending()).toBe(true)
+    expect(views.at(-1)).toEqual({ status: 'checking' })
+    expect(exportAuthStages()).toContain('signout_sdk_error')
+    expect(exportAuthStages()).toContain('http_500')
+    expect(exportAuthStages()).not.toContain('private@example.test')
+    expect(exportAuthStages()).not.toContain('token=secret')
+    await controller.signOut('local')
+    expect(guard.isPending()).toBe(false)
+    expect(views.at(-1)).toEqual({ status: 'guest' })
+    expect(exportAuthStages()).toContain('signout_sdk_success')
+    controller.dispose()
+  } finally { vi.unstubAllGlobals() }
 })

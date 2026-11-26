@@ -1834,7 +1834,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     <p role="status">{signOutError ? 'Аккаунт заблокирован до завершения выхода.'
       : deletedSignOutAccount.current ? 'Завершаем выход после удаления аккаунта…'
       : busy ? 'Выходим из аккаунта…' : 'Проверяем аккаунт…'}</p>
-    {signOutError && <><p role="alert">{signOutError}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button></>}
+    {signOutError && <><p role="alert">{signOutError}</p><button disabled={busy || !controller} onClick={() => void signOut()}>Повторить выход</button>
+      <button type="button" onClick={copyAuthDiagnostics}>Скопировать диагностику входа</button>
+      {authDiagnosticsCopied && <p role="status">Диагностика скопирована без личных данных.</p>}</>}
   </main>
   const pendingWork = pendingSync && pendingSync.account === workspaceAccount ? pendingSync.pending : undefined
   const ownPush = pushState?.account === currentAccount ? pushState?.status : undefined

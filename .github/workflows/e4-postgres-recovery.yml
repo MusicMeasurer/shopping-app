@@ -180,6 +180,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/044_e4_account_deletion_installation_proof.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_installation_proof.sql
 
+      - name: Verify finite Auth deletion ban and restored account fence
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/045_e4_account_deletion_finite_ban.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_finite_ban.sql
+
       - name: Rehearse encrypted account recovery from an older isolated snapshot
         env:
           RECOVERY_PG_CONTAINER: ${{ job.services.postgres.id }}
