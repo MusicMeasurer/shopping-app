@@ -1,0 +1,28 @@
+name: E4 isolated security rollout rehearsal
+on:
+  push:
+    branches: [feature/e4-accepted-reintegration]
+    paths:
+      - 'cloud/recovery/**'
+      - '.github/workflows/e4-security-rollout.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  pwa-transition:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    container: mcr.microsoft.com/playwright:v1.64.1-noble
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Build legacy, new and compatible pause PWA
+        run: bash cloud/recovery/checks/build-security-rollout.sh "$RUNNER_TEMP/security-rollout"
+      - name: Verify cached update, IndexedDB continuity and compatible fallback
+        run: SECURITY_ROLLOUT_FIXTURE="$RUNNER_TEMP/security-rollout" npx playwright test --config cloud/recovery/checks/playwright.config.ts
