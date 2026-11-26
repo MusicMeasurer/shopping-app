@@ -1,0 +1,36 @@
+name: R4-W01 laboratory negative HTTP acceptance
+on:
+  push:
+    branches: [test/r4-w01-http-20261126]
+    paths:
+      - '.github/workflows/r4-w01-safe-http.yml'
+      - 'tests/http/r4_w01_safe_http.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shoppingapp-r4-w01-http-lab
+  cancel-in-progress: false
+jobs:
+  anonymous:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Anonymous HTTP negative checks (synthetic inputs only)
+        run: python3 tests/http/r4_w01_safe_http.py anon
+  authenticated:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: e3-lab
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Ordinary authenticated HTTP negative checks (no data changes)
+        env:
+          E3_USER_A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+          E3_USER_A_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+        run: python3 tests/http/r4_w01_safe_http.py authenticated
