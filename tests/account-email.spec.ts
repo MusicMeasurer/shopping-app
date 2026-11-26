@@ -440,6 +440,9 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
       writeText: async (value: string) => { sessionStorage.setItem('test-copied-auth-trace', value) },
     } })
   })
+  // Inspect only presence, never include fixture token contents in assertion output.
+  const hasSavedSession = () => page.evaluate(() => Object.keys(localStorage).some(key => key.includes('auth-token')))
+  const signOutPending = () => page.evaluate(() => localStorage.getItem('shopping-app:signout-pending:v1') === '1')
   let signOutRequests = 0
   await page.route(`**${fixturePath}/auth/v1/logout**`, async route => {
     signOutRequests++
@@ -455,6 +458,7 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   await page.getByRole('button', { name: 'Войти', exact: true }).click()
   await page.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
   await page.getByRole('button', { name: /Открыть аккаунт/ }).click()
+  expect(await hasSavedSession()).toBe(true)
   await page.getByRole('button', { name: 'Удалить аккаунт', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Удаление облачного аккаунта' })
   await dialog.getByRole('button', { name: 'Отправить код' }).click()
@@ -465,6 +469,9 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   const localItem = page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })
   await expect(retry).toBeVisible({ timeout: AUTH_TIMEOUT })
   await expect(page.getByRole('alert')).toContainText('Не удалось завершить выход')
+  expect(signOutRequests).toBe(1) // Confirm the injected first HTTP 500 was exercised.
+  expect(await signOutPending()).toBe(true)
+  await expect(localItem).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
   await page.getByRole('button', { name: 'Скопировать диагностику входа' }).click()
   await expect(page.getByText('Диагностика скопирована без личных данных.')).toBeVisible()
@@ -478,14 +485,27 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   for (const secret of [email, password, accountId, session.access_token, session.refresh_token,
     'private@example.test', 'token=secret']) expect(exported).not.toContain(secret)
   await retry.click()
-  // The click does not await the asynchronous SDK call. Observe the actual request.
-  await expect.poll(() => signOutRequests, { timeout: AUTH_TIMEOUT }).toBe(2)
-  await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible()
+  // auth-js local signOut can already have removed the session before HTTP 500.
+  // Retry must succeed, but a second network request is not its contract.
+  await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible({ timeout: AUTH_TIMEOUT })
   await expect(localItem).toBeVisible()
+  const completed = await page.evaluate(() => {
+    const events = JSON.parse(sessionStorage.getItem('shopping-app:auth-stage-trace:v1') ?? '[]') as { stage: string; code?: string }[]
+    const failed = events.findIndex(event => event.stage === 'signout_sdk_error' && event.code === 'http_500')
+    const retried = events.findIndex((event, index) => index > failed && event.stage === 'signout_local_requested')
+    return failed >= 0 && retried > failed && events.some((event, index) => index > retried && event.stage === 'signout_sdk_success')
+  })
+  expect(completed).toBe(true)
+  expect(await signOutPending()).toBe(false)
+  expect(await hasSavedSession()).toBe(false)
+  await expect(retry).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
   expect(calls.filter(call => call.path.endsWith('/confirm_account_deletion'))).toHaveLength(1)
   await page.reload()
   await expect(page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })).toBeVisible()
   await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
+  expect(await hasSavedSession()).toBe(false)
+  expect(await signOutPending()).toBe(false)
 })
 
 test('reports generic Auth 500 as server error without inventing a deletion', async ({ page }) => {
