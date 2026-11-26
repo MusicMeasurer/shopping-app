@@ -28,16 +28,17 @@ async function browserStorage(page: Page, seed = false) {
       open.onerror = () => reject(open.error)
     })
     try {
-      const tx = db.transaction(['installationIdentity', 'accountOperations'], seed ? 'readwrite' : 'readonly')
+      const tx = db.transaction(['installationIdentity', 'accountOperations', 'profileItems'], seed ? 'readwrite' : 'readonly')
       const operations = tx.objectStore('accountOperations')
       if (seed) operations.add(queued)
       const identity = tx.objectStore('installationIdentity').get('device')
       const pending = operations.get(queued.key)
+      const local = tx.objectStore('profileItems').getAll()
       await new Promise<void>((resolve, reject) => {
         tx.oncomplete = () => resolve()
         tx.onabort = tx.onerror = () => reject(tx.error)
       })
-      return { version: db.version, identity: identity.result, pending: pending.result }
+      return { version: db.version, identity: identity.result, pending: pending.result, local: local.result }
     } finally { db.close() }
   }, { seed, queued })
 }
@@ -139,6 +140,7 @@ test('updates an installed PWA and uses a compatible pause build after cutover',
     const original = await browserStorage(page, true)
     expect(original.identity).toBeTruthy()
     expect(original.pending).toEqual(queued)
+    expect(JSON.stringify(original.local)).toContain('Локальная покупка до обновления')
     upgradedServer = true
 
     await context.setOffline(true)

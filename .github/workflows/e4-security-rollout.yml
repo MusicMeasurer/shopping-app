@@ -23,6 +23,8 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Build legacy, new and compatible pause PWA
-        run: bash cloud/recovery/checks/build-security-rollout.sh "$RUNNER_TEMP/security-rollout"
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          bash cloud/recovery/checks/build-security-rollout.sh "$RUNNER_TEMP/security-rollout"
       - name: Verify cached update, IndexedDB continuity and compatible fallback
         run: SECURITY_ROLLOUT_FIXTURE="$RUNNER_TEMP/security-rollout" npx playwright test --config cloud/recovery/checks/playwright.config.ts
