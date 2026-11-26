@@ -174,4 +174,6 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_installation_proof.sql
 
       - name: Rehearse encrypted account recovery from an older isolated snapshot
+        env:
+          RECOVERY_PG_CONTAINER: ${{ job.services.postgres.id }}
         run: bash tests/recovery/rehearse_account_security.sh

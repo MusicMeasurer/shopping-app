@@ -1,5 +1,6 @@
 -- Run with psql -X -q -v ON_ERROR_STOP=1 -v required_through=... -f this-file.
 -- Feed the authenticated, decrypted export to stdin. Keep APIs and workers stopped.
+\set VERBOSITY terse
 begin;
 
 create temp table security_export (payload jsonb not null) on commit drop;

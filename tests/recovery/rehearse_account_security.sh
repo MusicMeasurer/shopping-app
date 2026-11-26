@@ -9,6 +9,15 @@ mkdir -m 700 "$GNUPGHOME"
 restored=shoppingapp_account_restore_ci
 trap 'dropdb --if-exists "$restored" >/dev/null; rm -rf "$folder"' EXIT
 sql() { psql -X -q -v ON_ERROR_STOP=1 "$@"; }
+pg_tool() {
+  local name=$1
+  shift
+  if [[ -n ${RECOVERY_PG_CONTAINER:-} ]]; then
+    docker exec -i "$RECOVERY_PG_CONTAINER" "$name" -U "$PGUSER" "$@"
+  else
+    "$name" "$@"
+  fi
+}
 
 # The fixture's snapshot contains old credentials, a list and live mail/code.
 sql <<'SQL'
@@ -35,7 +44,7 @@ insert into shoppingapp_registration.requests (email_key, requested_at, expires_
  values (shoppingapp_deletion.digest('email:registered-recovery@example.test'),now(),now()+interval '10 minutes',
  shoppingapp_deletion.digest('registration-code:' || encode(shoppingapp_deletion.digest('email:registered-recovery@example.test'),'hex') || ':123456'));
 SQL
-pg_dump --format=custom --file="$folder/older.dump"
+pg_tool pg_dump --format=custom "$PGDATABASE" >"$folder/older.dump"
 
 # Only this later authoritative state has the installation and deletion.
 sql <<'SQL'
@@ -60,7 +69,7 @@ gpg --batch --quiet --pinentry-mode loopback --passphrase '' --local-user "$reci
   --detach-sign --output "$folder/checkpoint.sig" "$folder/checkpoint.gpg"
 gpg --batch --quiet --verify "$folder/checkpoint.sig" "$folder/checkpoint.gpg"
 createdb "$restored"
-pg_restore --exit-on-error --dbname="$restored" "$folder/older.dump"
+pg_tool pg_restore --exit-on-error --dbname="$restored" <"$folder/older.dump"
 
 restore() {
   gpg --batch --quiet --decrypt "$folder/checkpoint.gpg" |
