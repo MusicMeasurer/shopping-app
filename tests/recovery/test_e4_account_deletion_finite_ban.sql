@@ -1,10 +1,10 @@
 -- Isolated PostgreSQL only. No real mail or account mutation.
 begin;
-insert into auth.users(id,email,banned_until) values
- ('65000000-0000-4000-8000-000000000001','finite-a1@example.test',null),
- ('65000000-0000-4000-8000-000000000002','long-a1@example.test',now()+interval '150 years'),
- ('65000000-0000-4000-8000-000000000003','restore-a1@example.test','infinity'),
- ('65000000-0000-4000-8000-000000000004','independent-a1@example.test','infinity');
+insert into auth.users(id,email,banned_until,email_confirmed_at) values
+ ('65000000-0000-4000-8000-000000000001','finite-a1@example.test',null,now()),
+ ('65000000-0000-4000-8000-000000000002','long-a1@example.test',now()+interval '150 years',now()),
+ ('65000000-0000-4000-8000-000000000003','restore-a1@example.test','infinity',now()),
+ ('65000000-0000-4000-8000-000000000004','independent-a1@example.test','infinity',now());
 insert into auth.sessions(id,user_id) values
  ('65000000-0000-4000-8000-000000000011','65000000-0000-4000-8000-000000000001'),
  ('65000000-0000-4000-8000-000000000012','65000000-0000-4000-8000-000000000003'),
