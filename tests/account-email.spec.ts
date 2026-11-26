@@ -470,9 +470,10 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   await expect(page.getByText('Диагностика скопирована без личных данных.')).toBeVisible()
   const exported = await page.evaluate(() => sessionStorage.getItem('test-copied-auth-trace') ?? '')
   const trace = JSON.parse(exported)
-  expect(trace.events).toEqual(expect.arrayContaining([
+  expect(trace.events.filter((event: { stage: string }) => event.stage.startsWith('signout_'))).toEqual(expect.arrayContaining([
     expect.objectContaining({ stage: 'signout_local_requested' }),
-    expect.objectContaining({ stage: 'signout_sdk_error', code: 'unexpected_failure' }),
+    // auth-js 2.119.0 classifies HTTP 500 as retryable and drops the server code.
+    expect.objectContaining({ stage: 'signout_sdk_error', code: 'http_500' }),
   ]))
   for (const secret of [email, password, accountId, session.access_token, session.refresh_token,
     'private@example.test', 'token=secret']) expect(exported).not.toContain(secret)
