@@ -1,0 +1,27 @@
+name: R4-W04 disposable C real session revocation
+on:
+  push:
+    branches: [test/r4-w01-http-20261126]
+    paths:
+      - '.github/workflows/r4-w04-disposable-c.yml'
+permissions:
+  contents: read
+concurrency:
+  group: shoppingapp-r4-w01-http-lab
+  cancel-in-progress: false
+jobs:
+  revoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: e3-lab
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Verify C and observe user-confirmed deletion (bounded)
+        env:
+          E3_USER_C_EMAIL: ${{ secrets.E3_USER_C_EMAIL }}
+          E3_USER_C_PASSWORD: ${{ secrets.E3_USER_C_PASSWORD }}
+          E3_USER_A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+          E3_USER_B_EMAIL: ${{ secrets.E3_USER_B_EMAIL }}
+        run: python3 -u tests/http/r4_w04_disposable_c.py
