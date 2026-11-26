@@ -5,8 +5,15 @@ begin;
 create function public.register_account_deletion_installation(p_account uuid, p_device uuid, p_proof uuid)
 returns boolean language plpgsql security definer set search_path = '' as $$
 begin
-  if p_account is null or auth.uid() is distinct from p_account then return false; end if;
-  return public.register_account_deletion_device(p_device, p_proof);
+  if p_account is null or p_device is null or p_proof is null
+     or auth.uid() is distinct from p_account then return false; end if;
+  perform pg_advisory_xact_lock_shared(shoppingapp_deletion.lock_key(p_account));
+  perform shoppingapp_deletion.session_id(p_account);
+  insert into shoppingapp_deletion.devices as device (account_id, device_id, proof_hash)
+    values (p_account, p_device, shoppingapp_deletion.digest('device:' || p_proof::text))
+    on conflict (account_id, device_id) do update set proof_hash=excluded.proof_hash
+    where device.proof_hash is distinct from excluded.proof_hash;
+  return true;
 end;
 $$;
 

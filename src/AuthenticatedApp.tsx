@@ -252,9 +252,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
           if (cancelled) return
           const failures = installationFailures.current.get(currentAccount) ?? 0
           installationFailures.current.set(currentAccount, Math.min(failures + 1, 4))
-          installationRetry = setTimeout(() => {
-            if (!cancelled) setProfileAttempt(value => value + 1)
-          }, Math.min(5000 * 2 ** failures, 60_000))
           throw new Error('Could not register installation')
         }
         if (cancelled) return
@@ -349,9 +346,26 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       }
     })().catch((cause: unknown) => {
       markAuthStage('profile_open_failed', cause)
+      const failures = installationFailures.current.get(currentAccount)
+      if (!cancelled && failures) {
+        installationRetry = setTimeout(() => {
+          if (!cancelled && navigator.onLine) setProfileAttempt(value => value + 1)
+        }, Math.min(5000 * 2 ** (failures - 1), 60_000))
+      }
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
-    return () => { cancelled = true; clearTimeout(installationRetry); transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
+    const retryInstallation = () => {
+      if (installationFailures.current.has(currentAccount)) setProfileAttempt(value => value + 1)
+    }
+    window.addEventListener('online', retryInstallation)
+    return () => {
+      cancelled = true
+      clearTimeout(installationRetry)
+      window.removeEventListener('online', retryInstallation)
+      transferAnswer.current?.('skip')
+      transferAnswer.current = null
+      setTransferPrompt(null)
+    }
   }, [client, currentAccount, deletionApi, offlineAccount, workspaceAccount, storage, profileAttempt])
   const activeAccount = useRef<string | null>(null)
   // A verified session is not enough: the account workspace must have a

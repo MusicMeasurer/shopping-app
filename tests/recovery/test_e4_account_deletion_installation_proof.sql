@@ -19,9 +19,14 @@ begin
   if not public.register_account_deletion_installation(a, device, proof) then
     raise exception 'Own registration rejected';
   end if;
-  if public.register_account_deletion_installation(b, device, proof)
-    or public.register_account_deletion_installation(a, device, gen_random_uuid()) then
-    raise exception 'Registration accepted for another account or mismatched proof';
+  if public.register_account_deletion_installation(b, device, proof) then
+    raise exception 'Registration accepted for another account';
+  end if;
+  if not public.register_account_deletion_installation(a, device, gen_random_uuid()) then
+    raise exception 'A verified session could not restore an installation';
+  end if;
+  if not public.register_account_deletion_installation(a, device, proof) then
+    raise exception 'Restoring the expected test proof failed';
   end if;
   if has_function_privilege(current_user, 'public.account_deletion_status(uuid)', 'EXECUTE')
     or has_function_privilege(current_user, 'public.account_deletion_installation_status(uuid,uuid,uuid)', 'EXECUTE') then
