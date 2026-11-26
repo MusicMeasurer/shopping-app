@@ -4,6 +4,7 @@ on:
     branches: [feature/e4-accepted-reintegration]
     paths:
       - 'cloud/drafts/**'
+      - 'cloud/recovery/**'
       - 'tests/recovery/**'
       - 'tests/sql/bootstrap_pg.sql'
       - 'tests/sql/test_acl_rls.sql'
@@ -171,3 +172,6 @@ jobs:
         run: |
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/044_e4_account_deletion_installation_proof.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_installation_proof.sql
+
+      - name: Rehearse encrypted account recovery from an older isolated snapshot
+        run: bash tests/recovery/rehearse_account_security.sh
