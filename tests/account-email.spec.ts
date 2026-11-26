@@ -478,7 +478,8 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   for (const secret of [email, password, accountId, session.access_token, session.refresh_token,
     'private@example.test', 'token=secret']) expect(exported).not.toContain(secret)
   await retry.click()
-  expect(signOutRequests).toBe(2)
+  // The click does not await the asynchronous SDK call. Observe the actual request.
+  await expect.poll(() => signOutRequests, { timeout: AUTH_TIMEOUT }).toBe(2)
   await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible()
   await expect(localItem).toBeVisible()
   expect(calls.filter(call => call.path.endsWith('/confirm_account_deletion'))).toHaveLength(1)
