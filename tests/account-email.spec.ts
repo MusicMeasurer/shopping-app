@@ -435,10 +435,15 @@ test('deletes the cloud workspace after a lost confirmation response and keeps l
 
 test('recovers an interrupted deleted-account sign-out without reloading Safari', async ({ page }) => {
   const calls = await mockCloud(page)
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: {
+      writeText: async (value: string) => { sessionStorage.setItem('test-copied-auth-trace', value) },
+    } })
+  })
   let signOutRequests = 0
-  await page.route(`**${fixturePath}/auth/v1/logout`, async route => {
+  await page.route(`**${fixturePath}/auth/v1/logout**`, async route => {
     signOutRequests++
-    if (signOutRequests === 1) return route.fulfill({ status: 503, json: { code: 'server_error', msg: 'Try again' } })
+    if (signOutRequests === 1) return route.fulfill({ status: 500, json: { code: 'unexpected_failure', msg: 'private@example.test token=secret' } })
     await route.fulfill({ status: 200, json: {} })
   })
   await page.goto('/shopping-app/')
@@ -456,22 +461,23 @@ test('recovers an interrupted deleted-account sign-out without reloading Safari'
   await dialog.getByLabel('Код подтверждения').fill(emailCode)
   await dialog.getByRole('button', { name: 'Удалить аккаунт безвозвратно' }).click()
 
-  // Depending on Auth SDK cleanup, a rejected logout may already have
-  // cleared the local session. Either show a safe Retry or return directly
-  // to the surviving local workspace. Never leave the device stuck checking.
   const retry = page.getByRole('button', { name: 'Повторить выход', exact: true })
   const localItem = page.getByRole('checkbox', { name: 'Оставить в локальном профиле' })
-  await expect(page.getByRole('alert').filter({ hasText: 'Не удалось завершить выход' }).or(localItem)).toBeVisible({ timeout: AUTH_TIMEOUT })
-  await expect(retry.or(localItem)).toBeVisible({ timeout: UI_TIMEOUT })
-  if (await retry.isVisible()) {
-    await expect(page.getByRole('alert')).toContainText('Не удалось завершить выход')
-    await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
-    await retry.click()
-    expect(signOutRequests).toBe(2)
-  } else {
-    // Automatic local logout is also a successful recovery without refresh.
-    expect(signOutRequests).toBeLessThanOrEqual(1)
-  }
+  await expect(retry).toBeVisible({ timeout: AUTH_TIMEOUT })
+  await expect(page.getByRole('alert')).toContainText('Не удалось завершить выход')
+  await expect(page.getByRole('button', { name: /Открыть аккаунт/ })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Скопировать диагностику входа' }).click()
+  await expect(page.getByText('Диагностика скопирована без личных данных.')).toBeVisible()
+  const exported = await page.evaluate(() => sessionStorage.getItem('test-copied-auth-trace') ?? '')
+  const trace = JSON.parse(exported)
+  expect(trace.events).toEqual(expect.arrayContaining([
+    expect.objectContaining({ stage: 'signout_local_requested' }),
+    expect.objectContaining({ stage: 'signout_sdk_error', code: 'unexpected_failure' }),
+  ]))
+  for (const secret of [email, password, accountId, session.access_token, session.refresh_token,
+    'private@example.test', 'token=secret']) expect(exported).not.toContain(secret)
+  await retry.click()
+  expect(signOutRequests).toBe(2)
   await expect(page.getByText('Облачный аккаунт удалён.', { exact: false })).toBeVisible()
   await expect(localItem).toBeVisible()
   expect(calls.filter(call => call.path.endsWith('/confirm_account_deletion'))).toHaveLength(1)
