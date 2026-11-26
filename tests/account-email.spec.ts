@@ -54,9 +54,9 @@ async function mockCloud(page: Page, duplicate = false, deletion = { removed: fa
       await respond(user)
     } else if (path === '/auth/v1/recover' || path === '/auth/v1/resend' || path === '/auth/v1/logout') {
       await respond({})
-    } else if (path === '/rest/v1/rpc/account_deletion_status') {
-      await route.fulfill({ json: deletion.removed && body.p_account === accountId })
-    } else if (path === '/rest/v1/rpc/register_account_deletion_device') {
+    } else if (path === '/rest/v1/rpc/account_deletion_installation_status') {
+      await route.fulfill({ json: deletion.removed && body.p_account === accountId ? 'deleted' : 'active' })
+    } else if (path === '/rest/v1/rpc/register_account_deletion_installation' || path === '/rest/v1/rpc/acknowledge_account_deletion_installation') {
       await route.fulfill({ json: true })
     } else if (path === '/rest/v1/rpc/request_account_deletion') {
       await respond({ status: 'requested', id: 'deletion-challenge', expiresAt: '2026-11-23T02:00:00Z' })
@@ -493,6 +493,32 @@ test('reports generic Auth 500 as server error without inventing a deletion', as
   await expect(dialog.getByRole('alert')).not.toContainText('24 часа')
   await expect(dialog.getByLabel('Код из письма')).toHaveCount(0)
   expect(calls.some(call => call.path.startsWith('/auth/v1/') || call.path.startsWith('/rest/v1/'))).toBe(false)
+})
+
+test('recovers a temporary installation registration failure before linking the local profile', async ({ page }) => {
+  const calls = await mockCloud(page)
+  let attempts = 0
+  await page.route(`**${fixturePath}/rest/v1/rpc/register_account_deletion_installation`, route => {
+    attempts++
+    if (attempts === 1) return route.fulfill({ status: 503, json: { message: 'Temporarily unavailable' } })
+    expect(route.request().postDataJSON()).toMatchObject({
+      p_account: accountId, p_device: expect.any(String), p_proof: expect.any(String),
+    })
+    return route.fulfill({ json: true })
+  })
+  await page.goto('/shopping-app/')
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Покупки сохранены')
+  await expect(page.getByRole('dialog', { name: 'Синхронизация локального профиля' })).toHaveCount(0)
+  const transfer = page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
+  await expect(transfer).toBeVisible({ timeout: AUTH_TIMEOUT })
+  await transfer.getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(page.locator('.profile-menu-trigger')).toHaveAttribute('data-profile-mode', 'cloud')
+  expect(attempts).toBeGreaterThanOrEqual(2)
+  expect(calls.filter(call => call.path === '/auth/v1/token')).toHaveLength(1)
 })
 
 test('reopens a signed-out linked account on the first restart after offline local edits', async ({ page }) => {

@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { createCloudClient } from '../data/cloud-client'
 import { accountDeletionApi } from '../data/account-deletion'
 import type { Storage } from '../data/storage'
 
 export function useAccountDeletion(client: SupabaseClient | null, storage: Storage) {
-  const api = useMemo(() => client ? accountDeletionApi(client) : null, [client])
+  const api = useMemo(() => {
+    if (!client) return null
+    const installationClient = createCloudClient(undefined, undefined, 'installation')
+    return installationClient ? accountDeletionApi(client, installationClient) : null
+  }, [client])
   const [booting, setBooting] = useState(!!api)
   const [deleted, setDeleted] = useState<ReadonlySet<string>>(new Set())
   const [revision, setRevision] = useState(0)
@@ -46,11 +51,11 @@ export function useAccountDeletion(client: SupabaseClient | null, storage: Stora
     return task
   }, [api, storage])
 
-  const check = useCallback(async (account: string, strict = false) => {
+  const check = useCallback(async (account: string) => {
     if (await storage.isDeletedAccount(account)) return true
     if (!api || !navigator.onLine) return false
-    const removed = strict ? await api.isDeleted(account) : await api.isDeleted(account).catch(() => false)
-    if (!removed) return false
+    const status = await storage.readInstallationIdentity().then(identity => api.status(account, identity)).catch(() => 'unavailable')
+    if (status !== 'deleted') return false
     await remove(account)
     return true
   }, [api, remove, storage])
@@ -73,8 +78,14 @@ export function useAccountDeletion(client: SupabaseClient | null, storage: Stora
     void sweep().catch(() => setCleanupError(true)).finally(() => {
       if (active) setBooting(false)
     })
+    const resume = () => { if (document.visibilityState === 'visible') sync() }
     window.addEventListener('online', sync)
-    return () => { active = false; window.removeEventListener('online', sync) }
+    document.addEventListener('visibilitychange', resume)
+    return () => {
+      active = false
+      window.removeEventListener('online', sync)
+      document.removeEventListener('visibilitychange', resume)
+    }
   }, [api, sweep])
 
   useEffect(() => {

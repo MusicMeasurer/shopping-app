@@ -14,7 +14,7 @@ export async function verifiedAccountId(client: Pick<SupabaseClient, 'auth'>): P
 /** Preserve transient failures for actions that can retry or explain them. */
 export async function checkVerifiedAccountId(client: Pick<SupabaseClient, 'auth'>): Promise<string | null> {
   const { data: sessionData, error: sessionError } = await traceSync('session-read', () => client.auth.getSession(), {}, result => !result.error && !!result.data.session)
-  if (isAuthRetryableFetchError(sessionError)) throw sessionError
+  if (isAuthRetryableFetchError(sessionError) || (sessionError?.status ?? 0) >= 500) throw sessionError
   if (sessionError || !sessionData.session) return null
   return verifySessionIdentity(client, sessionData.session as SessionCandidate)
 }
@@ -24,6 +24,6 @@ export async function verifySessionIdentity(client: Pick<SupabaseClient, 'auth'>
   const candidate = accountIdFromSessionCandidate(session)
   if (!candidate) return null
   const { data, error } = await traceSync('identity', () => client.auth.getUser(session.access_token), {}, result => !result.error && result.data.user?.id.toLowerCase() === candidate)
-  if (isAuthRetryableFetchError(error)) throw error
+  if (isAuthRetryableFetchError(error) || (error?.status ?? 0) >= 500) throw error
   return !error && data.user?.id.toLowerCase() === candidate ? candidate : null
 }

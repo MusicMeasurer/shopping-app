@@ -131,14 +131,6 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     if (sessionAccount) return watchDeletion(sessionAccount)
   }, [sessionAccount, watchDeletion])
   useEffect(() => {
-    if (!deletionApi || !currentAccount || !syncOnline) return
-    let cancelled = false
-    void storage.readInstallationIdentity().then(identity => {
-      if (!cancelled) return deletionApi.register(identity)
-    }).catch(() => {})
-    return () => { cancelled = true }
-  }, [currentAccount, deletionApi, storage, syncOnline])
-  useEffect(() => {
     if (!accountWasDeleted || !controller || !viewAccount ||
         deletedSignOutAccount.current === viewAccount) return
     // Deletion is already confirmed. Do not await another getSession() before
@@ -195,6 +187,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       .catch(() => setAuthDiagnosticsCopied(false))
   }
   const [profileAttempt, setProfileAttempt] = useState(0)
+  const installationFailures = useRef(new Map<string, number>())
   const [transferError, setTransferError] = useState('')
   const [transferPrompt, setTransferPrompt] = useState<{ phase: 'consent' | 'collision'; name: string; existing: boolean; collisions: string[] } | null>(null)
   const [rememberDecline, setRememberDecline] = useState(false)
@@ -233,6 +226,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     let cancelled = false
     setReadyAccount(null)
     setProfileError('')
+    let installationRetry: ReturnType<typeof setTimeout> | undefined
     markAuthStage('profile_open_start')
     const verifyAccount = async () => {
       if (await checkVerifiedAccountId(client) !== currentAccount) throw new Error('Account verification changed')
@@ -248,6 +242,23 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       const identity = await client.auth.getUser()
       if (cancelled) return
       if (identity.error || identity.data.user?.id.toLowerCase() !== currentAccount) throw new Error('Account verification changed')
+      if (deletionApi) {
+        try {
+          const device = await storage.readInstallationIdentity()
+          if (cancelled) return
+          await deletionApi.register(currentAccount, device)
+          installationFailures.current.delete(currentAccount)
+        } catch {
+          if (cancelled) return
+          const failures = installationFailures.current.get(currentAccount) ?? 0
+          installationFailures.current.set(currentAccount, Math.min(failures + 1, 4))
+          installationRetry = setTimeout(() => {
+            if (!cancelled) setProfileAttempt(value => value + 1)
+          }, Math.min(5000 * 2 ** failures, 60_000))
+          throw new Error('Could not register installation')
+        }
+        if (cancelled) return
+      }
       setVerifiedEmail(identity.data.user.email ?? '')
       const registry = await storage.readLocalProfiles()
       const source = registry?.profiles.find(p => p.id === registry.activeProfileId && !p.cloudAccountId)
@@ -340,8 +351,8 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       markAuthStage('profile_open_failed', cause)
       if (!cancelled) setProfileError(cause instanceof LocalProfileLimitError ? cause.message : 'Не удалось безопасно открыть локальный профиль аккаунта. Покупки сохранены; повторите открытие.')
     })
-    return () => { cancelled = true; transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
-  }, [client, currentAccount, offlineAccount, workspaceAccount, storage, profileAttempt])
+    return () => { cancelled = true; clearTimeout(installationRetry); transferAnswer.current?.('skip'); transferAnswer.current = null; setTransferPrompt(null) }
+  }, [client, currentAccount, deletionApi, offlineAccount, workspaceAccount, storage, profileAttempt])
   const activeAccount = useRef<string | null>(null)
   // A verified session is not enough: the account workspace must have a
   // durable local profile before any background sync or refresh may run.
@@ -468,7 +479,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (id && await traceSync('deletion-check', () => checkDeletedAccount(id), {}, deleted => !deleted)) return null
       return verifySessionIdentity(client, session)
     }, async session => {
-      if (navigator.onLine || guard.isPending()) return null
+      if (guard.isPending()) return null
       const id = session.user?.id?.toLowerCase()
       if (id && await storage.isDeletedAccount(id)) return null
       const registry = await storage.readLocalProfiles()
@@ -1110,14 +1121,14 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setAccountEmailNotice('')
     let submittingCredentials = false
     try {
-      if (target && await checkDeletedAccount(target, true)) {
+      if (target && await checkDeletedAccount(target)) {
         setDeletionNotice(true)
         return
       }
       if (!target && deletionApi) {
         const registry = await storage.readLocalProfiles()
         const oldCopy = registry?.profiles.find(row => row.cloudAccountId && row.login?.trim().toLowerCase() === address.toLowerCase())
-        if (oldCopy?.cloudAccountId) await checkDeletedAccount(oldCopy.cloudAccountId, true)
+        if (oldCopy?.cloudAccountId) await checkDeletedAccount(oldCopy.cloudAccountId)
       }
       offerTransfer.current = !target
       submittingCredentials = true
@@ -1874,7 +1885,9 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       <button type="button" onClick={() => setLocalCopyRemovalError('')}>Закрыть сообщение</button>
     </p>}
     {deletionApi && deleteDialogAccount === currentAccount && currentAccount && <AccountDeletionDialog
-      api={deletionApi} email={verifiedEmail} account={currentAccount} onClose={() => setDeleteDialogAccount(null)}
+      api={deletionApi} email={verifiedEmail} account={currentAccount}
+      checkDeleted={async account => await deletionApi.status(account, await storage.readInstallationIdentity()) === 'deleted'}
+      onClose={() => setDeleteDialogAccount(null)}
       onDeleted={account => {
         activeAccount.current = null
         setDeleteDialogAccount(null)
@@ -1960,7 +1973,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
         onSelectLocal: enterLocalWorkspace, onOpenLinked: openLinkedWorkspace, sessionAccount, removeAuthorizedLocalCopy,
         hiddenAccountIds: deletion.deleted,
         checkLocalProfile: deletionApi ? async account => {
-          const removed = await checkDeletedAccount(account, true)
+          const removed = await checkDeletedAccount(account)
           if (removed) setDeletionNotice(true)
           return removed
         } : undefined,

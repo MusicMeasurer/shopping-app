@@ -2,10 +2,11 @@ import { useRef, useState, type FormEvent } from 'react'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import type { AccountDeletionApi, DeletionChallenge } from './data/account-deletion'
 
-export function AccountDeletionDialog({ api, email, account, onClose, onDeleted }: {
+export function AccountDeletionDialog({ api, email, account, checkDeleted, onClose, onDeleted }: {
   api: AccountDeletionApi
   email: string
   account: string
+  checkDeleted: (account: string) => Promise<boolean>
   onClose: () => void
   onDeleted: (account: string) => void
 }) {
@@ -42,7 +43,7 @@ export function AccountDeletionDialog({ api, email, account, onClose, onDeleted 
         setError('Код больше не действует. Запросите новый.')
       } else setError('Код неверный. Проверьте письмо и повторите ввод.')
     } catch {
-      if (challenge && await api.isDeleted(account).catch(() => false)) {
+      if (challenge && await checkDeleted(account).catch(() => false)) {
         onDeleted(account)
         return
       }

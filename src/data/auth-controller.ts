@@ -62,7 +62,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       // Keep the already verified workspace mounted during a transient failure.
       // Cloud operations still verify identity before syncing.
       if (sameAccount) return
-      if (session && restoreOffline && typeof navigator !== 'undefined' && !navigator.onLine) {
+      if (session && restoreOffline) {
         const offlineId = await restoreOffline(session).catch(() => null)
         if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
         emit(offlineId && offlineId === accountIdFromSessionCandidate(session)

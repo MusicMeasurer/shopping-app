@@ -166,3 +166,8 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/040_e4_registration_email_status.sql
           psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/043_e4_private_registration.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_private_registration.sql
+
+      - name: Verify installation proof, revoked sessions and late deletion cleanup
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/044_e4_account_deletion_installation_proof.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_deletion_installation_proof.sql

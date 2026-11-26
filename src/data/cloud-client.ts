@@ -26,7 +26,7 @@ export function fetchWithCloudTimeout(authOrigin: string, fetcher: typeof fetch)
 export function createCloudClient(
   url: string | undefined = import.meta.env.VITE_SUPABASE_URL,
   key: string | undefined = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY,
-  mode: 'workspace' | 'email-code' = 'workspace',
+  mode: 'workspace' | 'email-code' | 'installation' = 'workspace',
 ): SupabaseClient | null {
   const config = parseCloudConfig(url, key)
   if (!config) return null
@@ -36,7 +36,7 @@ export function createCloudClient(
       persistSession: mode === 'workspace',
       autoRefreshToken: mode === 'workspace',
       detectSessionInUrl: mode === 'workspace',
-      ...(mode === 'email-code' ? { storageKey: 'shopping-auth-email-code-' + crypto.randomUUID() } : {}),
+      ...(mode !== 'workspace' ? { storageKey: 'shopping-auth-' + mode + '-' + crypto.randomUUID() } : {}),
     },
   })
 }
