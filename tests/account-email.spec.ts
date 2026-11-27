@@ -790,7 +790,7 @@ test('item indicators: offline add and update cancellation, independent item and
   await page.getByRole('button',{name:'Сохранить',exact:true}).click()
   const milk = page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})
   await expect(milk).toBeEnabled()
-  await milk.check()
+  await milk.click()
   await expect(milk).toBeChecked()
   await page.getByRole('button',{name:'Изменить Молоко',exact:true}).click()
   await page.getByLabel('Количество',{exact:true}).fill('4')
