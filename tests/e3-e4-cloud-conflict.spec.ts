@@ -126,3 +126,213 @@ test('two WebKit sessions retain a newer offline amount and a later cloud purcha
     await client.auth.signOut({ scope: 'local' })
   }
 })
+
+
+// Production incident A, 2026-11-28. Two independent regressions on the
+// existing hosted WebKit job; never point them at production.
+async function incidentLab() {
+  if (url !== 'https://gmrqeubhotjpmtwokfeq.supabase.co' || !key || !email || !password)
+    throw new Error('Refusing to run incident regression outside the disposable lab')
+  const client = createClient(url, key, { auth: { persistSession: false } })
+  const auth = await client.auth.signInWithPassword({ email, password })
+  if (auth.error || !auth.data.user) throw auth.error ?? new Error('Missing lab identity')
+  const accountId = auth.data.user.id
+  const fixtures: string[] = []
+  async function create(name: string) {
+    const { data, error } = await client.rpc('create_e4_list', {
+      p_operation: crypto.randomUUID(), p_name: name, p_kind: 'permanent',
+    })
+    if (error) throw error
+    const id = data.list_id as string
+    fixtures.push(id)
+    return id
+  }
+  async function activeList(id: string) {
+    const { data, error } = await client.from('shopping_lists').select('id,revision')
+      .eq('id', id).eq('owner_id', accountId).is('deleted_at', null).maybeSingle()
+    if (error) throw error
+    return data
+  }
+  async function remove(id: string) {
+    const row = await activeList(id)
+    if (!row) return
+    const response = await client.rpc('complete_e4_list', {
+      p_operation: crypto.randomUUID(), p_list: id, p_expected_revision: row.revision, p_mode: 'delete_list',
+    })
+    if (response.error) throw response.error
+  }
+  async function seed(listId: string, name: string) {
+    const id = crypto.randomUUID()
+    const { error } = await client.rpc('apply_e4_item_change', {
+      p_operation: crypto.randomUUID(), p_list: listId, p_action: 'add', p_item: id,
+      p_name: name, p_purchased: false, p_expected_version: null, p_quantity: 1, p_unit: 'л',
+    })
+    if (error) throw error
+    return id
+  }
+  async function itemRows(listId: string) {
+    const { data, error } = await client.from('shopping_items')
+      .select('id,name,quantity,purchased').eq('list_id', listId).is('deleted_at', null).order('id')
+    if (error) throw error
+    return data
+  }
+  async function cleanup() {
+    try { for (const id of fixtures) await remove(id) }
+    finally { await client.auth.signOut({ scope: 'local' }) }
+  }
+  return { client, accountId, create, activeList, remove, seed, itemRows, cleanup }
+}
+
+async function incidentLocalQueue(page: Page, account: string, list: string) {
+  return page.evaluate(async ({ account, list }) => new Promise<{ requests: number; intents: number }>((resolve, reject) => {
+    const open = indexedDB.open('shopping-app')
+    open.onerror = () => reject(open.error)
+    open.onsuccess = () => {
+      const db = open.result
+      const tx = db.transaction(['accountCompletionRequests', 'accountCompletions'], 'readonly')
+      const requests = tx.objectStore('accountCompletionRequests').getAll()
+      const intents = tx.objectStore('accountCompletions').getAll()
+      tx.oncomplete = () => {
+        const result = {
+          requests: requests.result.filter(row => row.accountId === account && row.remoteListId === list).length,
+          intents: intents.result.filter(row => row.intent.accountId === account && row.intent.remoteListId === list).length,
+        }
+        db.close()
+        resolve(result)
+      }
+      tx.onabort = () => { db.close(); reject(tx.error) }
+      tx.onerror = () => { db.close(); reject(tx.error) }
+    }
+  }), { account, list })
+}
+
+test('INC-A1: remote deletion against an offline edit exposes review, converges and permits further writes', async ({ page, context, browser }) => {
+  test.setTimeout(180000)
+  const lab = await incidentLab()
+  const name = 'INC_A1_' + crypto.randomUUID()
+  const itemName = 'Молоко конфликт', keepName = 'Контроль остатка'
+  let other: Awaited<ReturnType<typeof browser.newContext>> | undefined
+  try {
+    const id = await lab.create(name)
+    const itemId = await lab.seed(id, itemName)
+    const keepId = await lab.seed(id, keepName)
+    await openList(page, name)
+    other = await browser.newContext({ ...devices['iPhone 13'], baseURL: 'http://127.0.0.1:4173', serviceWorkers: 'block' })
+    const online = await other.newPage()
+    await openList(online, name)
+    for (const p of [page, online]) {
+      await expect(p.getByRole('checkbox', { name: itemName + ' · 1 л', exact: true })).toBeVisible()
+      await expect(p.getByRole('checkbox', { name: keepName + ' · 1 л', exact: true })).toBeVisible()
+    }
+    await context.setOffline(true)
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false)
+    await editAmount(page, itemName, 2)
+    await expect(page.getByRole('checkbox', { name: itemName + ' · 2 л', exact: true })).toBeVisible()
+    const { data, error } = await lab.client.from('shopping_items').select('version').eq('id', itemId).single()
+    if (error) throw error
+    const deletion = await lab.client.rpc('apply_e4_item_change', {
+      p_operation: crypto.randomUUID(), p_list: id, p_action: 'delete', p_item: itemId,
+      p_name: null, p_purchased: null, p_expected_version: data.version, p_quantity: null, p_unit: null,
+    })
+    expect(deletion.error).toBeNull()
+    await expect.poll(() => lab.itemRows(id), { timeout: SERVER_WRITE_TIMEOUT }).toEqual([
+      { id: keepId, name: keepName, quantity: 1, purchased: false },
+    ])
+    await expect(online.getByRole('checkbox', { name: itemName + ' · 1 л', exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    await context.setOffline(false)
+    const conflict = page.getByRole('list', { name: 'Конфликты удаления' }).getByRole('button', { name: new RegExp(itemName) })
+    await expect(conflict).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    // Conflict must survive deferral, and the saved offline quantity must still be visible in the decision.
+    await conflict.click()
+    const review = page.getByRole('dialog', { name: 'Конфликт удаления' })
+    await expect(review).toContainText('2 л')
+    await review.getByRole('button', { name: 'Позже', exact: true }).click()
+    await expect(conflict).toBeVisible()
+    await conflict.click()
+    await review.getByRole('button', { name: 'Подтвердить удаление', exact: true }).click()
+    await expect(review).toHaveCount(0, { timeout: SERVER_WRITE_TIMEOUT })
+    await expect(conflict).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    await page.getByRole('checkbox', { name: keepName + ' · 1 л', exact: true }).click()
+    await expect.poll(() => lab.itemRows(id), { timeout: SERVER_WRITE_TIMEOUT }).toEqual([
+      { id: keepId, name: keepName, quantity: 1, purchased: true },
+    ])
+    await expect(online.getByRole('checkbox', { name: keepName + ' · 1 л', exact: true })).toBeChecked({ timeout: REMOTE_UPDATE_TIMEOUT })
+    for (const p of [page, online]) {
+      await expect(p.locator('li[data-item-id]')).toHaveCount(1, { timeout: REMOTE_UPDATE_TIMEOUT })
+      await expect(p.getByRole('checkbox', { name: keepName + ' · 1 л', exact: true })).toBeChecked()
+      await expect(p.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    }
+  } finally {
+    try { await context.setOffline(false); await other?.close() }
+    finally { await lab.cleanup() }
+  }
+})
+
+test('INC-A2: externally deleted list with a durable unsent deletion does not block the other list after recovery', async ({ page, context }) => {
+  test.setTimeout(180000)
+  const lab = await incidentLab()
+  const suffix = crypto.randomUUID(), lost = 'INC_A2_LOST_' + suffix, keep = 'INC_A2_KEEP_' + suffix
+  const keepItem = 'Независимая покупка'
+  try {
+    const lostId = await lab.create(lost), keepId = await lab.create(keep)
+    await lab.seed(lostId, 'Удаляемая покупка')
+    const keepItemId = await lab.seed(keepId, keepItem)
+    await openList(page, lost)
+    await expect(page.getByRole('checkbox', { name: 'Удаляемая покупка · 1 л', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: keep, exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: keepItem + ' · 1 л', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: lost, exact: true }).click()
+    await context.setOffline(true)
+    await expect.poll(() => page.evaluate(() => navigator.onLine)).toBe(false)
+    await page.getByRole('button', { name: 'Действия со списком', exact: true }).click()
+    await page.getByRole('menuitem', { name: /Удалить список/ }).click()
+    await page.getByRole('dialog', { name: 'Удалить список?' }).getByRole('button', { name: 'Удалить', exact: true }).click()
+    await expect.poll(() => incidentLocalQueue(page, lab.accountId, lostId), { timeout: 5000 }).toEqual({ requests: 1, intents: 0 })
+    expect(await lab.activeList(lostId)).not.toBeNull()
+    // Equivalent to the administrator's actual incident recovery: a separate,
+    // owner-authorized operation, not a forged receipt for the offline request.
+    await lab.remove(lostId)
+    expect(await lab.activeList(lostId)).toBeNull()
+    await context.setOffline(false)
+    const notice = page.getByRole('dialog', { name: 'Список удалён' })
+    const queueRow = page.getByRole('list', { name: 'Операции со списками' }).getByRole('listitem').filter({ hasText: lost })
+    const cancel = queueRow.getByRole('button', { name: 'Отменить операцию', exact: true })
+    // A semantic notice may need explicit acknowledgement before a queued action
+    // becomes accessible. Accept either safe automatic reconciliation or explicit cancel.
+    await expect.poll(async () => {
+      if (await notice.isVisible()) return 'notice'
+      if ((await incidentLocalQueue(page, lab.accountId, lostId)).requests === 0) return 'cleared'
+      if (await cancel.isVisible()) return 'cancel'
+      return 'blocked'
+    }, { timeout: REMOTE_UPDATE_TIMEOUT }).not.toBe('blocked')
+    if (await notice.isVisible()) await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
+    await expect.poll(async () => {
+      const q = await incidentLocalQueue(page, lab.accountId, lostId)
+      return q.requests === 0 && q.intents === 0 ? 'cleared' : await cancel.isVisible() ? 'cancel' : 'blocked'
+    }, { timeout: REMOTE_UPDATE_TIMEOUT }).not.toBe('blocked')
+    if (await cancel.isVisible()) {
+      // Cancel only an unsent local request; the DB deletion must remain.
+      expect((await incidentLocalQueue(page, lab.accountId, lostId)).intents).toBe(0)
+      await cancel.click()
+    }
+    await expect.poll(() => incidentLocalQueue(page, lab.accountId, lostId), { timeout: SERVER_WRITE_TIMEOUT }).toEqual({ requests: 0, intents: 0 })
+    await expect(page.getByRole('button', { name: lost, exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    await page.getByRole('button', { name: keep, exact: true }).click()
+    await page.getByRole('checkbox', { name: keepItem + ' · 1 л', exact: true }).click()
+    await expect.poll(() => lab.itemRows(keepId), { timeout: SERVER_WRITE_TIMEOUT }).toEqual([
+      { id: keepItemId, name: keepItem, quantity: 1, purchased: true },
+    ])
+    await page.reload()
+    await expect(page.getByRole('navigation', { name: 'Списки покупок' })).toBeVisible({ timeout: 30000 })
+    await expect(page.getByRole('button', { name: lost, exact: true })).toHaveCount(0)
+    await page.getByRole('button', { name: keep, exact: true }).click()
+    await expect(page.getByRole('checkbox', { name: keepItem + ' · 1 л', exact: true })).toBeChecked()
+    await expect(queueRow).toHaveCount(0)
+    await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    expect(await lab.activeList(lostId)).toBeNull()
+    expect(await incidentLocalQueue(page, lab.accountId, lostId)).toEqual({ requests: 0, intents: 0 })
+  } finally {
+    try { await context.setOffline(false) }
+    finally { await lab.cleanup() }
+  }
+})
