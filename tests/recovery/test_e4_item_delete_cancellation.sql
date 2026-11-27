@@ -68,11 +68,19 @@ begin
      or public.cancel_e4_item_delete(c,payload) is distinct from res then
     raise exception 'Committed deletion not reported accurately: %',res;
   end if;
-  if not exists(select from public.shopping_items where id=i and deleted_at is not null and version=3) then
-    raise exception 'Confirmed deletion resurrected';
+  if exists(select from public.shopping_items where id=i) then
+    raise exception 'Confirmed deletion visible through authenticated RLS';
   end if;
-end $$;
+end $;
 reset role;
+-- RLS intentionally hides deleted rows. Verify physical tombstone as fixture owner.
+do $
+begin
+  if (select count(*) from public.shopping_items where list_id='47000000-0000-4000-8000-000000000101'
+       and name='Newer' and deleted_at is not null and version=3) <> 1 then
+    raise exception 'Confirmed deletion not preserved in physical storage';
+  end if;
+end $;
 insert into shoppingapp_deletion.tombstones(account_id,completed_at) values
  ('47000000-0000-4000-8000-000000000001',now());
 set local role authenticated;
