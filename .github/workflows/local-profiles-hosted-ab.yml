@@ -2,7 +2,7 @@ name: Local profiles hosted A/B integration (disposable lab)
 
 on:
   push:
-    branches: [feature/local-profiles-foundation, feature/e4-accepted-reintegration]
+    branches: [feature/local-profiles-foundation, feature/e4-accepted-reintegration, rollback/e4-indexeddb21]
     paths:
       - 'cloud/drafts/042_e4_account_deletion_mail_acl.sql'
       - 'tests/recovery/test_e4_account_deletion_mail_acl.sql'
@@ -79,7 +79,7 @@ jobs:
           VITE_SUPABASE_URL: ${{ secrets.E3_LAB_URL }}
           VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
         run: |
-          if [[ "$GITHUB_REF_NAME" == feature/e4-accepted-reintegration ]]; then
+          if [[ "$GITHUB_REF_NAME" == feature/e4-accepted-reintegration || "$GITHUB_REF_NAME" == rollback/e4-indexeddb21 ]]; then
             npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts tests/profile-transfer.spec.ts --project=iphone-webkit --workers=1
           else
             npx playwright test tests/real-ab-lifecycle.spec.ts tests/real-cloud-offline-restart.spec.ts --project=iphone-webkit --workers=1
@@ -91,6 +91,6 @@ jobs:
 
   cloud-browser:
     needs: hosted-ab
-    if: ${{ !cancelled() && github.ref_name == 'feature/e4-accepted-reintegration' }}
+    if: ${{ !cancelled() && (github.ref_name == 'feature/e4-accepted-reintegration' || github.ref_name == 'rollback/e4-indexeddb21') }}
     uses: ./.github/workflows/e3-e4-cloud-browser.yml
     secrets: inherit

@@ -941,26 +941,18 @@ test('touch and dialog autofocus avoid focus rings while keyboard focus remains 
   await expect(page.locator('.item-sort')).toHaveCSS('outline-color', 'rgb(37, 99, 76)')
 })
 
-test('marks and clears all items in the active local list without completing it', async ({page}) => {
+
+test('v21 reserve hides new bulk actions but keeps ordinary local purchase state after reload', async ({page}) => {
   await page.goto('/shopping-app/')
-  const input = page.getByLabel('Что нужно купить?',{exact:false})
-  for (const name of ['Чай','Кофе']) {
-    await input.fill(name)
-    await page.getByRole('button',{name:'Добавить товар'}).click()
-    await expect(page.getByRole('checkbox',{name,exact:true})).toBeVisible()
-  }
-  const menu = page.getByRole('button',{name:'Действия со списком',exact:true})
-  const tea = page.getByRole('checkbox',{name:'Чай',exact:true})
-  const coffee = page.getByRole('checkbox',{name:'Кофе',exact:true})
-  await menu.click()
-  await page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true}).click()
-  await expect(tea).toBeChecked()
-  await expect(coffee).toBeChecked()
+  await page.getByLabel('Что нужно купить?',{exact:false}).fill('Резерв')
+  await page.getByRole('button',{name:'Добавить товар'}).click()
+  const item = page.getByRole('checkbox',{name:'Резерв',exact:true})
+  await expect(item).toBeVisible()
+  await item.click()
+  await expect(item).toBeChecked()
+  await page.getByRole('button',{name:'Действия со списком',exact:true}).click()
+  await expect(page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true})).toHaveCount(0)
+  await expect(page.getByRole('menuitem',{name:'Снять все отметки',exact:true})).toHaveCount(0)
   await page.reload()
-  await expect(tea).toBeChecked()
-  await expect(coffee).toBeChecked()
-  await menu.click()
-  await page.getByRole('menuitem',{name:'Снять все отметки',exact:true}).click()
-  await expect(tea).not.toBeChecked()
-  await expect(coffee).not.toBeChecked()
+  await expect(item).toBeChecked()
 })
