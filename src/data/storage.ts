@@ -2006,12 +2006,17 @@ export function createStorage(name = 'shopping-app') {
     },
     async applyAccountFeed(accountId: string, expected: string | undefined, position: string,
       changes: readonly AccountFeedChange[], snapshot: boolean, isActive: () => boolean, semanticBatch?: SemanticBatch): Promise<boolean> {
-      const observedWork = new Map<string, string>()
-      const observe = (listId: string, scope: 'lists' | 'items') => {
+      const observedWork = new Map<string, { listId: string; itemIds: string[] }>()
+      const observe = (listId: string, scope: 'lists' | 'items', itemId?: string) => {
         const id = 'feed:' + scope + ':' + listId
-        if (observedWork.has(id)) return
-        observedWork.set(id, listId)
-        listSyncLedger.begin(accountId, id, [listId], 'feed', false, scope)
+        const work = observedWork.get(id)
+        if (work) {
+          if (itemId) { work.itemIds.push(itemId); listSyncLedger.changed() }
+          return
+        }
+        const itemIds = itemId ? [itemId] : []
+        observedWork.set(id, { listId, itemIds })
+        listSyncLedger.begin(accountId, id, [listId], 'feed', false, scope, itemIds)
       }
       const tx = (await database).transaction(['accountDeletions', 'accountFeed', 'accountSyncEvents', 'accountListMappings', 'accountItems',
         'accountItemVersions', 'accountOperations', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
@@ -2125,14 +2130,14 @@ export function createStorage(name = 'shopping-app') {
           if (known && known.remoteListId !== change.listId) throw new Error('Account feed item mapping mismatch')
           if (!change.item) {
             if (known) {
-              if (await items.get(key)) observe(mapping?.localListId ?? change.listId, 'items')
+              if (await items.get(key)) observe(mapping?.localListId ?? change.listId, 'items', change.itemId)
               await items.delete(key)
             }
             continue
           }
           if (!mapping?.metadata || (known && known.version > change.item.version)) continue
           const { id, name, purchased, quantity, unit, createdAt, version } = change.item
-          if (!known || known.version < version) observe(mapping.localListId, 'items')
+          if (!known || known.version < version) observe(mapping.localListId, 'items', id)
           await items.put({ key, accountId, item: { id, listId: mapping.localListId, name, purchased, quantity, unit,
             createdAt: Date.parse(createdAt) } })
           await versions.put({ key, accountId, itemId: id, remoteListId: change.listId, version })
@@ -2177,8 +2182,8 @@ export function createStorage(name = 'shopping-app') {
         if (!isActive()) throw new Error('Account changed during feed synchronization')
         await feeds.put({ accountId, position, deferred })
         await done
-        for (const [id, listId] of observedWork) {
-          if (isActive()) listSyncLedger.confirm(accountId, id, [listId])
+        for (const [id, work] of observedWork) {
+          if (isActive()) listSyncLedger.confirm(accountId, id, [work.listId], Date.now(), 'items', work.itemIds)
           else listSyncLedger.cancel(accountId, id)
         }
         listSyncLedger.changed()
@@ -2894,7 +2899,7 @@ export function createStorage(name = 'shopping-app') {
         operation.kind === 'upsert' ? operation.item.id : operation.itemId))
       const items = tx.objectStore('accountItems')
       const versions = tx.objectStore('accountItemVersions')
-      let applied = 0
+      const appliedIds: string[] = []
       for (const entry of entries) {
         const itemId = entry.before.id
         if (pending.has(itemId) || entry.before.listId !== localListId ||
@@ -2907,10 +2912,11 @@ export function createStorage(name = 'shopping-app') {
         if (entry.after) await items.put({ key, accountId, item: entry.after })
         else await items.delete(key)
         await versions.put({ ...known, version: entry.version })
-        applied++
+        appliedIds.push(itemId)
       }
       await tx.done
-      return applied
+      if (appliedIds.length) listSyncLedger.recordItemSuccesses(accountId,appliedIds)
+      return appliedIds.length
     },
     /** Explicitly reviewed server deletions, committed atomically only if local evidence is unchanged. */
     async applyReviewedRemoteDeletions(accountId: string, remoteListId: string,

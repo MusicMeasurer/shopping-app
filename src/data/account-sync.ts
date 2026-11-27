@@ -199,7 +199,8 @@ export function createAccountSync(
       throw new Error('Remote list changed during import; retry comparison')
     }
     const feedId = 'legacy-feed:' + localListId
-    if (entries.length || remoteChanges.length) ledger?.begin(accountId, feedId, [localListId], 'feed', false, 'items')
+    if (entries.length || remoteChanges.length) ledger?.begin(accountId, feedId, [localListId], 'feed', false, 'items',
+      entries.map(entry => entry.item.id))
     let changed = 0
     try {
       await storage.importRemoteOnlyBatch(accountId, remoteListId, entries)
@@ -207,7 +208,7 @@ export function createAccountSync(
       changed = remoteChanges.length
         ? await storage.applyVersionedItemChanges(accountId, localListId, remoteListId, remoteChanges)
         : 0
-      if (entries.length || changed) ledger?.confirm(accountId, feedId, [localListId])
+      if (entries.length || changed) ledger?.confirm(accountId, feedId, [localListId], Date.now(), 'items', entries.map(entry => entry.item.id))
       else if (remoteChanges.length) ledger?.cancel(accountId, feedId)
     } catch (error) {
       if (isActive()) ledger?.fail(accountId, feedId)

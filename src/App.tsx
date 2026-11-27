@@ -831,7 +831,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     return () => { window.removeEventListener('online',update); window.removeEventListener('offline',update) }
   },[])
   const itemChange = syncView.work.find(row => row.itemIds?.includes(syncItemId ?? '') && row.itemChange)?.itemChange
-  const selectedSyncState = syncItemId ? syncView.items.get(syncItemId)?.state : undefined
+  const selectedSync = syncItemId ? syncView.items.get(syncItemId) : undefined
+  const selectedSyncState = selectedSync?.state
   function itemSyncLocked(item: typeof shopping.items[number]) {
     const state = syncView.items.get(item.id)?.state
     return (state !== undefined && state !== 'success') ||
@@ -1549,10 +1550,14 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         {itemChange.cancelling && <p>Отмена ожидает подтверждения сервера. До подтверждения товар недоступен для изменения.</p>}
         {selectedSyncState === 'error' && <p>Не удалось подтвердить {itemChange.cancelling ? 'отмену изменения' : 'сохранение изменения'} в облаке.</p>}
         {selectedSyncState === 'error' && <button type="button" disabled={!itemSyncOnline || cloudStatus !== 'connected' || !onRetryListSync || itemCancellationBusy || activeListLocked}
-          onClick={() => { onRetryListSync?.(itemChange.after.listId,['items'],syncItemId); setSyncItemId(undefined) }}>Повторить синхронизацию</button>}
+          onClick={() => { onRetryListSync?.(itemChange.after.listId,selectedSync?.errors.length ? selectedSync.errors : ['items'],syncItemId); setSyncItemId(undefined) }}>Повторить синхронизацию</button>}
         {!itemChange.cancelling && <button type="button" className="danger" disabled={!itemChange.canCancel || itemCancellationBusy || activeListLocked ||
           (selectedSyncState !== 'waiting' && selectedSyncState !== 'error')} onClick={() => void cancelItemChange()}>Отменить изменения</button>}
-      </> : <p>Проверьте актуальное состояние товара.</p>}
+      </> : <>
+        <p>{selectedSyncState === 'error' ? 'Не удалось применить данные из облака. Нет локального изменения для отмены.' : 'Проверьте актуальное состояние товара.'}</p>
+        {selectedSyncState === 'error' && <button type="button" disabled={!itemSyncOnline || cloudStatus !== 'connected' || !onRetryListSync || activeListLocked}
+          onClick={() => { onRetryListSync?.(active,selectedSync?.errors.length ? selectedSync.errors : ['feed'],syncItemId); setSyncItemId(undefined) }}>Повторить синхронизацию</button>}
+      </>}
       {itemCancellationError && <p role="alert">{itemCancellationError}</p>}
       <button type="button" disabled={itemCancellationBusy} onClick={() => setSyncItemId(undefined)}>Закрыть</button>
     </WorkspaceDialog>}

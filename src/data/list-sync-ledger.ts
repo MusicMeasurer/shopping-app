@@ -128,10 +128,15 @@ export class ListSyncLedger {
     const listSuccesses = this.listSuccesses.get(account)
     for (const [list, at] of listSuccesses ?? []) if (now - at >= 5000) listSuccesses?.delete(list)
     if (scope === 'lists') for (const listId of listIds) this.successesFor(account, this.listSuccesses).set(listId, now)
+    this.recordItemSuccesses(account, fallbackItemIds ?? work?.itemIds ?? [], now)
+    this.changed()
+  }
+  /** Mark only the item identities actually committed by an incoming transaction. */
+  recordItemSuccesses(account: string, itemIds: readonly string[], now = Date.now()) {
     const itemSuccesses = this.itemSuccesses.get(account)
     for (const [item, at] of itemSuccesses ?? []) if (now - at >= 5000) itemSuccesses?.delete(item)
-    for (const item of work?.itemIds ?? fallbackItemIds ?? []) this.successesFor(account, this.itemSuccesses).set(item, now)
-    this.changed()
+    for (const item of itemIds) this.successesFor(account, this.itemSuccesses).set(item, now)
+    if (itemIds.length) this.changed()
   }
   /** A fresh durable inventory prevents obsolete errors or old success from
    * surviving a cancellation, replacement, or a newer locally queued edit. */
