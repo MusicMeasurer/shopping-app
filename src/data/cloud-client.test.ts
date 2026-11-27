@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createCloudClient, fetchWithCloudTimeout } from './cloud-client'
+import { exportAuthStages } from './auth-flow-diagnostics'
+
+afterEach(() => vi.unstubAllGlobals())
 
 describe('Supabase browser client setup', () => {
   it('keeps the existing app local-only without cloud configuration', () => {
@@ -39,4 +42,38 @@ it('sets an abort deadline for Auth and preserves the caller signal', async () =
   } finally {
     spy.mockRestore()
   }
+})
+
+it('distinguishes a deadline before headers from an HTTP success without reading sensitive bodies', async () => {
+  const values = new Map<string, string>()
+  vi.stubGlobal('sessionStorage', { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) } })
+  const deadline = new AbortController()
+  const spy = vi.spyOn(AbortSignal, 'timeout').mockReturnValue(deadline.signal)
+  const response = new Response('private response', { status: 200 })
+  const request = vi.fn<typeof fetch>()
+    .mockImplementationOnce((_input, init) => new Promise((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+    }))
+    .mockResolvedValueOnce(response)
+  try {
+    const bounded = fetchWithCloudTimeout('https://example.supabase.co', request)
+    const pending = bounded('https://example.supabase.co/auth/v1/token?grant_type=password', { body: 'private password' })
+    deadline.abort(new DOMException('private cause', 'TimeoutError'))
+    await expect(pending).rejects.toMatchObject({ name: 'TimeoutError' })
+    spy.mockReturnValue(new AbortController().signal)
+    expect(await bounded('https://example.supabase.co/auth/v1/token?grant_type=password')).toBe(response)
+    expect(response.bodyUsed).toBe(false)
+    const raw = exportAuthStages()
+    const events = JSON.parse(raw).events
+    expect(events).toEqual([
+      expect.objectContaining({ stage: 'fetch_start', endpoint: 'password' }),
+      expect.objectContaining({ stage: 'fetch_timeout', request: events[0].request }),
+      expect.objectContaining({ stage: 'fetch_start', endpoint: 'password' }),
+      expect.objectContaining({ stage: 'fetch_headers', request: events[2].request, status: 200 }),
+    ])
+    expect(events[0].request).not.toBe(events[2].request)
+    expect(raw).not.toContain('private')
+    expect(raw).not.toContain('supabase.co')
+  } finally { spy.mockRestore() }
 })

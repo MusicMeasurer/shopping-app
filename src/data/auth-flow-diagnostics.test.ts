@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { exportAuthStages, markAuthStage } from './auth-flow-diagnostics'
+import { exportAuthStages, markAuthStage, markAuthTransport } from './auth-flow-diagnostics'
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -36,4 +36,28 @@ describe('privacy-safe account diagnostics', () => {
     expect(() => markAuthStage('session_recheck')).not.toThrow()
     expect(JSON.parse(exportAuthStages())).toEqual({ version: 1, events: [] })
   })
+})
+
+it('records only bounded transport metadata and strips unexpected persisted fields', () => {
+  const values = new Map<string, string>()
+  vi.stubGlobal('sessionStorage', {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => { values.set(key, value) },
+  })
+  markAuthTransport('fetch_start', { request: 1, endpoint: 'password', elapsedMs: 0 })
+  markAuthTransport('fetch_headers', { request: 1, endpoint: 'password', elapsedMs: 123, status: 200 })
+  markAuthStage('identity_unavailable', { name: 'TimeoutError', message: 'secret' })
+  const key = [...values.keys()][0]
+  const rows = JSON.parse(values.get(key)!)
+  rows[0].token = 'private-token'
+  rows[0].url = 'https://private.example'
+  values.set(key, JSON.stringify(rows))
+  const exported = exportAuthStages()
+  expect(JSON.parse(exported).events).toEqual(expect.arrayContaining([
+    expect.objectContaining({ stage: 'fetch_headers', request: 1, endpoint: 'password', elapsedMs: 123, status: 200 }),
+    expect.objectContaining({ stage: 'identity_unavailable', code: 'timeout' }),
+  ]))
+  expect(exported).not.toContain('private-token')
+  expect(exported).not.toContain('private.example')
+  expect(exported).not.toContain('secret')
 })

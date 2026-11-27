@@ -836,3 +836,58 @@ test('item indicators: error dialog, offline retry disabled and cancellation use
   expect(writes).toHaveLength(sent)
   await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeEnabled()
 })
+
+test('linked local edits survive a delayed successful password response and retry after visibility return', async ({ page }) => {
+  await mockCloud(page)
+  let delayNext = false
+  let delayed = false
+  await page.route(`**${fixturePath}/auth/v1/token**`, async route => {
+    if (!delayNext) return route.fallback()
+    delayNext = false
+    delayed = true
+    // Model a server that has accepted credentials but whose successful
+    // response is not available before the browser Auth deadline.
+    await new Promise(resolve => setTimeout(resolve, 8400))
+    await route.fulfill({ json: session, headers: { 'x-supabase-api-version': '2024-01-01' } }).catch(() => {})
+  })
+  await page.goto('/shopping-app/')
+  const profile = page.locator('.profile-menu-trigger')
+  await page.getByRole('button', { name: /Войти в аккаунт/ }).click()
+  await page.getByLabel('Email', { exact: true }).fill(email)
+  await page.getByLabel('Пароль', { exact: true }).fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await page.getByRole('dialog', { name: 'Синхронизация локального профиля' })
+    .getByRole('button', { name: 'Не синхронизировать', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud')
+  await profile.click()
+  await page.getByRole('button', { name: 'Выйти', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'linked')
+  await page.getByRole('button', { name: 'Новый список', exact: true }).click()
+  const create = page.getByRole('dialog', { name: 'Создать список' })
+  await create.getByLabel('Название списка').fill('Локальные изменения')
+  await create.getByRole('button', { name: 'Создать', exact: true }).click()
+  await page.getByLabel('Что нужно купить?', { exact: false }).fill('Сохранить после тайм-аута')
+  await page.getByRole('button', { name: 'Добавить товар' }).click()
+  const localItem = page.getByRole('checkbox', { name: 'Сохранить после тайм-аута' })
+  await expect(localItem).toBeVisible()
+  await profile.click()
+  await page.getByLabel('Пароль').fill(password)
+  delayNext = true
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('Не удалось', { timeout: AUTH_TIMEOUT })
+  expect(delayed).toBe(true)
+  await expect(profile).toHaveAttribute('data-profile-mode', 'linked')
+  await expect(localItem).toBeVisible()
+  const events = await page.evaluate(() => JSON.parse(sessionStorage.getItem('shopping-app:auth-stage-trace:v1') ?? '[]'))
+  expect(events).toEqual(expect.arrayContaining([
+    expect.objectContaining({ stage: 'fetch_start', endpoint: 'password' }),
+    expect.objectContaining({ stage: 'fetch_timeout', endpoint: 'password' }),
+  ]))
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+  })
+  await page.getByLabel('Пароль').fill(password)
+  await page.getByRole('button', { name: 'Войти', exact: true }).click()
+  await expect(profile).toHaveAttribute('data-profile-mode', 'cloud', { timeout: AUTH_TIMEOUT })
+})

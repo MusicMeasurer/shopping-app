@@ -25,6 +25,25 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   let pendingSignOut: ReturnType<AuthClient['signOut']> | undefined
   let signingOut = false
   let view: AuthView = { status: 'checking' }
+  // Share only a currently pending verification of the exact candidate in
+  // this controller generation. No positive/negative result cache. Each
+  // caller still independently checks its generation, guard and deadline.
+  let pendingIdentity: { generation: number; id: string; token: string; expiresAt?: number; task: Promise<string | null> } | undefined
+  function verifyCurrent(session: SessionCandidate, startedAt: number): Promise<string | null> {
+    const id = accountIdFromSessionCandidate(session)
+    if (!id || !verifyIdentity || !active || signingOut || guard?.isPending() || generation !== startedAt)
+      return Promise.resolve(null)
+    if (pendingIdentity?.generation === startedAt && pendingIdentity.id === id &&
+        pendingIdentity.token === session.access_token && pendingIdentity.expiresAt === session.expires_at) {
+      markAuthStage('identity_joined')
+      return pendingIdentity.task
+    }
+    const task = verifyIdentity(session).finally(() => {
+      if (pendingIdentity?.task === task) pendingIdentity = undefined
+    })
+    pendingIdentity = { generation: startedAt, id, token: session.access_token, expiresAt: session.expires_at, task }
+    return task
+  }
   const emit = (next: AuthView) => {
     if (!active) return
     view = next
@@ -41,7 +60,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       view.accountId === accountIdFromSessionCandidate(session)
     if (!sameAccount) emit({ status: 'checking' })
     try {
-      const verifiedId = await verifyIdentity(session)
+      const verifiedId = await verifyCurrent(session, startedAt)
       if (!active || signingOut || guard?.isPending() || generation !== startedAt || !stillCurrent()) return
       if (verifiedId && verifiedId === accountIdFromSessionCandidate(session)) {
         markAuthStage('identity_verified')
@@ -73,6 +92,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
   const subscription = client.onAuthStateChange((event, session) => {
     markAuthStage(event === 'SIGNED_OUT' || event === 'USER_DELETED' ? 'auth_event_signed_out' : 'auth_event')
     generation++
+    pendingIdentity = undefined
     if (signingOut || guard?.isPending()) return
     if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
       emit(transitionAuthView(view, { type: 'SIGNED_OUT' }))
@@ -123,7 +143,8 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       }
       let verifiedId: string | null
       try {
-        verifiedId = verifyIdentity ? await verifyIdentity(session) : accountId
+        if (generation !== startedAt) continue
+        verifiedId = verifyIdentity ? await verifyCurrent(session, startedAt) : accountId
       } catch (cause) {
         markAuthStage('identity_unavailable', cause)
         throw cause
@@ -135,7 +156,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
         // Never publish stale credentials; re-read the current session.
         continue
       }
-      if (verifiedId !== accountId) {
+      if (verifiedId !== accountId || accountIdFromSessionCandidate(session) !== accountId) {
         markAuthStage('identity_rejected')
         throw new Error('Не удалось проверить аккаунт на сервере. Повторите вход.')
       }
@@ -213,6 +234,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
       if (signingOut) return
       signingOut = true
       generation++
+      pendingIdentity = undefined
       emit({ status: 'checking' })
       let timeout: ReturnType<typeof setTimeout> | undefined
       try {
@@ -263,6 +285,7 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     },
     dispose() {
       active = false
+      pendingIdentity = undefined
       subscription.unsubscribe()
     },
   }

@@ -1,8 +1,23 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { parseCloudConfig } from './cloud-config'
+import { markAuthTransport, nextAuthRequest, type AuthEndpoint } from './auth-flow-diagnostics'
 
 const authRequestTimeoutMs = 8000
 const dataRequestTimeoutMs = 12000
+
+// Only fixed, privacy-safe labels. Never retain the URL or any request content.
+function diagnosticEndpoint(url: URL): AuthEndpoint | undefined {
+  switch (url.pathname) {
+    case '/auth/v1/token': return url.searchParams.get('grant_type') === 'password' ? 'password' : 'token'
+    case '/auth/v1/user': return 'user'
+    case '/auth/v1/logout': return 'logout'
+    case '/auth/v1/verify': return 'verify'
+    case '/auth/v1/recover': return 'recover'
+    case '/auth/v1/resend': return 'resend'
+    case '/rest/v1/rpc/account_deletion_installation_status': return 'installation_status'
+    default: return undefined
+  }
+}
 
 /** Bound Auth and Data API requests so their UI actions can be retried. */
 export function fetchWithCloudTimeout(authOrigin: string, fetcher: typeof fetch): typeof fetch {
@@ -15,7 +30,29 @@ export function fetchWithCloudTimeout(authOrigin: string, fetcher: typeof fetch)
     const inheritedSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined)
     const timeout = AbortSignal.timeout(timeoutMs)
     const signal = inheritedSignal ? AbortSignal.any([inheritedSignal, timeout]) : timeout
-    return fetcher(input, { ...init, signal })
+    const endpoint = diagnosticEndpoint(url)
+    if (!endpoint) return fetcher(input, { ...init, signal })
+    const request = nextAuthRequest()
+    const started = performance.now()
+    const fields = () => ({ request, endpoint, elapsedMs: Math.max(0, Math.round(performance.now() - started)) })
+    markAuthTransport('fetch_start', fields())
+    // Fetch resolves at headers, not at body consumption. Keep the existing
+    // SDK/body path intact; the higher-level Auth stages record its outcome.
+    // Do not clone, read or buffer the sensitive response.
+    const failure = (cause: unknown): never => {
+      markAuthTransport(signal.aborted
+        ? (timeout.aborted && signal.reason === timeout.reason ? 'fetch_timeout' : 'fetch_aborted')
+        : 'fetch_failed', fields())
+      throw cause
+    }
+    try {
+      return fetcher(input, { ...init, signal }).then(response => {
+        markAuthTransport('fetch_headers', { ...fields(), status: response.status })
+        return response
+      }, failure)
+    } catch (cause) {
+      return Promise.reject(cause).catch(failure)
+    }
   }
 }
 

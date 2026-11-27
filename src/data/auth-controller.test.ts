@@ -526,3 +526,43 @@ it('records a failed deleted-account SDK logout without lifting the guard, then 
     controller.dispose()
   } finally { vi.unstubAllGlobals() }
 })
+
+it('joins overlapping verification only within one generation and never caches a finished result', async () => {
+  const fake = fakeClient(session)
+  let finish!: (value: string | null) => void
+  const verify = vi.fn((_candidate: SessionCandidate) => new Promise<string | null>(resolve => { finish = resolve }))
+  const controller = createAuthController(fake.client, () => {}, undefined, verify)
+  const first = controller.initialize()
+  await Promise.resolve()
+  const second = controller.confirmSession(id)
+  await Promise.resolve()
+  expect(verify).toHaveBeenCalledTimes(1)
+  finish(id)
+  await first
+  await expect(second).resolves.toBe(id)
+  const third = controller.confirmSession(id)
+  await Promise.resolve()
+  expect(verify).toHaveBeenCalledTimes(2)
+  finish(id)
+  await expect(third).resolves.toBe(id)
+  controller.dispose()
+})
+
+it('does not reuse a pending verification after an auth event or reopen on its late completion', async () => {
+  const fake = fakeClient(session)
+  const resolvers: ((value: string | null) => void)[] = []
+  const verify = vi.fn((_candidate: SessionCandidate) => new Promise<string | null>(resolve => { resolvers.push(resolve) }))
+  const views: AuthView[] = []
+  const controller = createAuthController(fake.client, view => views.push(view), undefined, verify)
+  const first = controller.initialize()
+  await Promise.resolve()
+  fake.notify('TOKEN_REFRESHED', session)
+  await vi.waitFor(() => expect(verify).toHaveBeenCalledTimes(2))
+  fake.notify('SIGNED_OUT', null)
+  resolvers[0](id)
+  resolvers[1](id)
+  await first
+  await Promise.resolve()
+  expect(views.at(-1)).toEqual({ status: 'guest' })
+  controller.dispose()
+})
