@@ -954,7 +954,7 @@ test('marks and clears all items in the active local list without completing it'
   await listMenu.click()
   await expect(page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true})).toHaveCount(0)
   await expect(page.getByRole('menuitem',{name:'Снять все отметки',exact:true})).toHaveCount(0)
-  await page.getByRole('button',{name:'Закрыть меню',exact:true}).click()
+  await page.getByRole('button',{name:'Закрыть меню',exact:true}).click({ position: { x: 4, y: 4 } })
   const tea = page.getByRole('checkbox',{name:'Чай',exact:true})
   const coffee = page.getByRole('checkbox',{name:'Кофе',exact:true})
   await menu.click()
