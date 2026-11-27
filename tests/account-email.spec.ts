@@ -964,3 +964,26 @@ test('ordinary running update accepts bulk marks and a later edit before its imm
     await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeChecked()
   } finally { release() }
 })
+
+
+test('item indicators: unsent deletion remains visible and can be undone without cloud writes', async ({page}) => {
+  const calls = await openItemSyncFixture(page)
+  await fixtureOnline(page,false)
+  await page.getByRole('button',{name:'Удалить Молоко',exact:true}).click()
+  const pending = page.locator('.item-pending-delete').filter({hasText:'Молоко · 1 л'})
+  await expect(pending).toBeVisible()
+  await expect(pending.locator('.pending-delete-text')).toHaveCSS('text-decoration-style','double')
+  await expect(pending.getByRole('img',{name:'Удаление ожидает подтверждения'})).toBeVisible()
+  await expect(pending.getByRole('checkbox')).toHaveCount(0)
+  await expect(pending.getByRole('button',{name:'Изменить Молоко'})).toBeDisabled()
+  await expect(page.getByText('Осталось: 1',{exact:true})).toBeVisible()
+  await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeEnabled()
+  await pending.getByRole('button',{name:'Ожидание синхронизации — Молоко'}).click()
+  const dialog = page.getByRole('dialog',{name:'Ожидание синхронизации'})
+  await expect(dialog).toContainText('Молоко · 1 л')
+  await dialog.getByRole('button',{name:'Отменить удаление'}).click()
+  await expect(page.getByRole('checkbox',{name:'Молоко · 1 л',exact:true})).toBeEnabled()
+  await expect(pending).toHaveCount(0)
+  await expect(page.getByText('Осталось: 2',{exact:true})).toBeVisible()
+  expect(calls.filter(call=>call.path.endsWith('/push_e4_account_changes') || call.path.endsWith('/cancel_e4_item_edit'))).toHaveLength(0)
+})

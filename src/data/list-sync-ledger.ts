@@ -8,7 +8,7 @@ export interface SyncWork {
   listIds: readonly string[]
   /** Stable item identities, not a list-wide approximation. */
   itemIds?: readonly string[]
-  itemChange?: { operationId: string; before?: Item; after: Item; addition: boolean; cancelling: boolean; canCancel: boolean; editable?: boolean }
+  itemChange?: { operationId: string; before?: Item; after: Item; addition: boolean; deletion?: boolean; cancelling: boolean; canCancel: boolean; editable?: boolean }
   kind: SyncWorkKind
   /** Feed transport can carry either entity; retry still uses kind. */
   scope?: SyncScope

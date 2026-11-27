@@ -521,6 +521,12 @@ export function createStorage(name = 'shopping-app') {
             before: op.kind === 'cloud-update' ? op.base : undefined,
             addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId, editable: editableUpdate(row),
             canCancel: !row.conflict && (op.kind === 'cloud-add' || !!op.base) }
+        } else if (work && op.kind === 'cloud-delete' && op.base && !row.conflict) {
+          // Retain the deleted item's confirmed snapshot for display only. It
+          // must not enter the active item store, counters, bulk marks or archive.
+          work.itemChange = { operationId: op.operationId, after: op.base, before: op.base,
+            addition: false, deletion: true, cancelling: !!row.cancellationId,
+            canCancel: !!row.neverDispatched && !row.deferred && !row.cancellationId }
         }
       }
       for (const draft of drafts) add(draft.operationId, [draft.id], 'lists', !!draft.nameConflict)

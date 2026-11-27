@@ -563,3 +563,8 @@ nav .list-conflict-marker{
 .item-sort-row{display:flex;justify-content:flex-end;margin-top:4px}
 .item-sort-row:empty{display:none}
 .item-sort-row .item-sort{width:50px}
+
+/* Deletion snapshot is presentation-only; the item is no longer in the active store. */
+.shopping-e4 .item-pending-delete .item{cursor:default}
+.shopping-e4 .item-pending-delete .pending-delete-mark{display:grid;place-items:center;flex:0 0 24px;width:24px;color:#d64545;font-style:italic;font-weight:750;font-size:23px;line-height:1;text-decoration:none}
+.shopping-e4 .item-pending-delete .pending-delete-text{text-decoration-line:line-through;text-decoration-style:double;text-decoration-color:#d64545;text-decoration-thickness:1.5px}

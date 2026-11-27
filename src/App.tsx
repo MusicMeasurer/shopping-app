@@ -848,6 +848,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     try {
       const result = await storage.cancelUnsentAccountItemEdit(accountId,itemChange.operationId,id)
       if (result === 'requires-reconciliation') {
+        if (itemChange.deletion) {
+          setItemCancellationError('Удаление уже отправлено. Дождитесь подтверждения состояния товара.')
+          return
+        }
         const queued = await storage.requestAccountItemCancellation(accountId,itemChange.operationId,id)
         if (queued !== 'queued') throw new Error('Item changed')
         setSyncItemId(undefined)
@@ -892,7 +896,14 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     : undefined
   const hiddenIds = new Set([...listConflicts.map(conflict => conflict.item.id),
     ...activeNameConflicts.flatMap(group => group.map(item => item.id))])
-  const rows = sortShoppingItems(visibleItems.filter(item => item.listId === active && !hiddenIds.has(item.id) &&
+  const pendingDeletionItems = syncView.work.flatMap(work => {
+    const change = work.itemChange
+    if (!change?.deletion || change.after.listId !== active || visibleItems.some(item => item.id === change.after.id)) return []
+    const state = syncView.items.get(change.after.id)?.state
+    return state && state !== 'success' ? [change.after] : []
+  })
+  const pendingDeletionIds = new Set(pendingDeletionItems.map(item => item.id))
+  const rows = sortShoppingItems([...visibleItems, ...pendingDeletionItems].filter(item => item.listId === active && !hiddenIds.has(item.id) &&
     (!semanticEnabled || visibleLists.some(row => row.id === active)) &&
     (!semanticEnabled || item.id !== (semanticPresented?.origin.itemId ?? semanticPending?.origin.itemId))), sort)
   const [deleteListId, setDeleteListId] = useState<ListId | null>(null)
@@ -1549,10 +1560,13 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <button type="button" onClick={() => storage.listSyncLedger.dismissCancellationNotice(accountId)}>Понятно</button></p>}
       {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => {
         const sync = syncView.items.get(item.id)
-        const disabled = shopping.busy || activeListLocked || itemSyncLocked(item, true)
-        return <li key={item.id} data-item-id={item.id} className={item.purchased ? 'purchased' : ''}>
-          <label className="item"><input type="checkbox" checked={item.purchased} disabled={disabled}
-            onChange={() => { if (!disabled) void shopping.toggle(item) }}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>
+        const deleting = pendingDeletionIds.has(item.id)
+        const disabled = deleting || shopping.busy || activeListLocked || itemSyncLocked(item, true)
+        const itemText = item.name + (item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : '')
+        return <li key={item.id} data-item-id={item.id} className={deleting ? 'item-pending-delete' : item.purchased ? 'purchased' : ''}>
+          {deleting ? <div className="item"><span className="pending-delete-mark" role="img" aria-label="Удаление ожидает подтверждения">X</span><span className="pending-delete-text">{itemText}</span></div>
+            : <label className="item"><input type="checkbox" checked={item.purchased} disabled={disabled}
+              onChange={() => { if (!disabled) void shopping.toggle(item) }}/><span>{itemText}</span></label>}
           <button type="button" aria-label={`Изменить ${item.name}`} disabled={disabled}
             onClick={() => { if (disabled) return; shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }}
             className="e4-small item-pencil">✎</button>
@@ -1562,7 +1576,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
                 onClick={() => { if (!disabled && !itemSyncLocked(item)) void shopping.remove(item.id) }}>×</button>}
         </li>
       })}</ul>}
-      {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
+      {rows.some(item => !pendingDeletionIds.has(item.id)) && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
     {!showArchive && syncItemId && <WorkspaceDialog className="e4-editor item-sync-dialog"
       label={selectedSyncState ? syncIndicatorLabels[selectedSyncState] : 'Состояние синхронизации'}
@@ -1571,13 +1585,13 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       {itemChange ? <>
         <strong>{itemChange.after.name}</strong>
         <dl><dt>Последнее подтверждённое состояние</dt><dd>{itemChange.addition ? 'Товара ранее не было' : itemChange.before ? formatSyncItem(itemChange.before) : 'Нет подтверждённого снимка'}</dd>
-        <dt>Текущее состояние</dt><dd>{formatSyncItem(itemChange.after)}</dd></dl>
+        <dt>Текущее состояние</dt><dd>{itemChange.deletion ? 'Товар ожидает подтверждения удаления' : formatSyncItem(itemChange.after)}</dd></dl>
         {itemChange.cancelling && <p>Отмена ожидает подтверждения сервера. До подтверждения товар недоступен для изменения.</p>}
         {selectedSyncState === 'error' && <p>Не удалось подтвердить {itemChange.cancelling ? 'отмену изменения' : 'сохранение изменения'} в облаке.</p>}
         {selectedSyncState === 'error' && <button type="button" disabled={!itemSyncOnline || cloudStatus !== 'connected' || !onRetryListSync || itemCancellationBusy || activeListLocked}
           onClick={() => { onRetryListSync?.(itemChange.after.listId,selectedSync?.errors.length ? selectedSync.errors : ['items'],syncItemId); setSyncItemId(undefined) }}>Повторить синхронизацию</button>}
         {!itemChange.cancelling && <button type="button" className="danger" disabled={!itemChange.canCancel || itemCancellationBusy || activeListLocked ||
-          (selectedSyncState !== 'waiting' && selectedSyncState !== 'error')} onClick={() => void cancelItemChange()}>Отменить изменения</button>}
+          (selectedSyncState !== 'waiting' && selectedSyncState !== 'error')} onClick={() => void cancelItemChange()}>{itemChange.deletion ? 'Отменить удаление' : 'Отменить изменения'}</button>}
       </> : <>
         <p>{selectedSyncState === 'error' ? 'Не удалось применить данные из облака. Нет локального изменения для отмены.' : 'Проверьте актуальное состояние товара.'}</p>
         {selectedSyncState === 'error' && <button type="button" disabled={!itemSyncOnline || cloudStatus !== 'connected' || !onRetryListSync || activeListLocked}
