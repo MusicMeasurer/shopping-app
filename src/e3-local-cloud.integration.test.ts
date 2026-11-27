@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest'
 import { createClient } from '@supabase/supabase-js'
 import { createStorage } from './data/storage'
 import { createAccountSync } from './data/account-sync'
+import { flushAccountBatch } from './data/account-batch'
 import { createItem } from './domain/shopping'
 
 const labEnv = (globalThis as typeof globalThis & { process?: { env: Record<string, string | undefined> } }).process?.env ?? {}
@@ -237,5 +238,83 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
       await storage.close()
     }
   }, 30000)
+
+  it('cancels a claimed deletion through the real account batch and fences a late send', async () => {
+    const { E3_LAB_URL:url, E3_LAB_PUBLISHABLE_KEY:key, E3_USER_A_EMAIL:email, E3_USER_A_PASSWORD:password } = labEnv
+    if (!url || !key || !email || !password) throw new Error('E3 lab credentials required')
+    expect(new URL(url).hostname).toBe('gmrqeubhotjpmtwokfeq.supabase.co')
+    expect(key).toMatch(/^sb_publishable_/)
+    const client = createClient(url,key,{auth:{persistSession:false,autoRefreshToken:false,detectSessionInUrl:false}})
+    const login = await client.auth.signInWithPassword({email,password})
+    if (login.error) throw login.error
+    const identity = await client.auth.getUser()
+    if (identity.error || !identity.data.user) throw new Error('No verified lab identity')
+    const accountId = identity.data.user.id
+    const lists = await client.from('shopping_lists').select('id,owner_id').eq('owner_id',accountId).is('deleted_at',null)
+    if (lists.error) throw lists.error
+    const owned = lists.data?.find(row=>row.owner_id===accountId)
+    if (!owned) throw new Error('No owned disposable test list')
+    const storage = createStorage('e4-delete-cancel-hosted-'+crypto.randomUUID())
+    const fixtures: string[] = []
+    const flush = () => flushAccountBatch(storage,client,accountId,()=>true,()=>{},'groceries')
+    try {
+      await storage.bindAccountList(accountId,'groceries',owned.id)
+      for (const alreadyApplied of [false,true]) {
+        const item = {...createItem('groceries','E4_CANCEL_DELETE_'+crypto.randomUUID()),quantity:2,unit:'л',purchased:true}
+        fixtures.push(item.id)
+        await storage.saveAccountEdit(accountId,{kind:'cloud-add',operationId:crypto.randomUUID(),
+          localListId:'groceries',remoteListId:owned.id,itemId:item.id,item})
+        await flush()
+        const known = (await storage.readAccountItemVersions(accountId)).find(row=>row.itemId===item.id)
+        if (!known) throw new Error('Missing add receipt')
+        const operationId = crypto.randomUUID()
+        await storage.saveAccountEdit(accountId,{kind:'cloud-delete',operationId,
+          localListId:'groceries',remoteListId:owned.id,itemId:item.id,expectedVersion:known.version})
+        await storage.claimAccountPending(accountId,operationId)
+        const payload = {operation_id:operationId,list_id:owned.id,item_id:item.id,
+          kind:'delete',expected_version:known.version}
+        if (alreadyApplied) {
+          const sent = await client.rpc('push_e4_account_changes',{p_account:accountId,p_operations:[payload]})
+          if (sent.error) throw sent.error
+          expect(sent.data?.[0]?.receipt?.item_version).toBe(known.version+1)
+        }
+        expect(await storage.cancelUnsentAccountItemEdit(accountId,operationId,item.id)).toBe('requires-reconciliation')
+        expect(await storage.requestAccountItemCancellation(accountId,operationId,item.id)).toBe('queued')
+        expect(await storage.readSyncableAccountPending(accountId)).toEqual([])
+        await flush()
+        expect(await storage.readAccountPending(accountId)).toEqual([])
+        const late = await client.rpc('push_e4_account_changes',{p_account:accountId,p_operations:[payload]})
+        if (late.error) throw late.error
+        if (alreadyApplied) expect(late.data?.[0]?.receipt?.item_version).toBe(known.version+1)
+        else expect(late.data?.[0]?.receipt).toBeUndefined()
+        const live = await client.from('shopping_items').select('id,name,purchased,quantity,unit,version')
+          .eq('id',item.id).eq('list_id',owned.id).is('deleted_at',null)
+        if (live.error) throw live.error
+        const local = (await storage.readAccountItems(accountId)).find(row=>row.id===item.id)
+        if (alreadyApplied) {
+          expect(live.data).toEqual([])
+          expect(local).toBeUndefined()
+          expect(storage.listSyncLedger.cancellationNotice(accountId)).toContain('уже удалён')
+        } else {
+          expect(live.data).toEqual([{id:item.id,name:item.name,purchased:true,quantity:2,unit:'л',version:known.version}])
+          expect(local).toMatchObject(item)
+        }
+        expect((await storage.readAccountItemVersions(accountId)).find(row=>row.itemId===item.id)?.version)
+          .toBe(known.version+(alreadyApplied?1:0))
+      }
+    } finally {
+      try {
+        for (const id of fixtures) {
+          const rows = await client.from('shopping_items').select('version').eq('id',id).eq('list_id',owned.id).is('deleted_at',null)
+          if (rows.error) throw rows.error
+          if (rows.data?.length) {
+            const cleanup = await client.rpc('apply_item_change',{p_operation:crypto.randomUUID(),p_list:owned.id,
+              p_action:'delete',p_item:id,p_name:null,p_purchased:null,p_expected_version:rows.data[0].version})
+            if (cleanup.error) throw cleanup.error
+          }
+        }
+      } finally { await storage.close() }
+    }
+  }, 45000)
 
 })
