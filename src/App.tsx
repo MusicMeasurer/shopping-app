@@ -819,7 +819,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }, [storage, accountId, refreshRevision])
   const listConflicts = itemConflicts.filter(conflict => conflict.localListId === active)
   const selectedConflict = listConflicts.find(conflict => conflict.operationId === conflictId)
-  const syncView = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId), active)
+  const syncView = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId))
   const cardSync = syncView.lists
   const [syncItemId, setSyncItemId] = useState<string>()
   const [itemCancellationBusy, setItemCancellationBusy] = useState(false)
@@ -1181,6 +1181,35 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     onClick={() => { setNewListName(''); setNewListKind('permanent'); setNewListSymbol(defaultListSymbol); setNewListDialog(true) }}>
     <span className="create-plus" aria-hidden="true">+</span><span className="list-name">Новый список</span>
   </button>
+  function listIndicator(row: (typeof visibleLists)[number]) {
+    const indicator = cardSync.get(row.id)
+    const draftConflict = drafts.find(value => value.id === row.id && value.nameConflict)
+    const listOperation = operations.find(value => value.localListId === row.id)
+    const state = listOperation?.phase === 'error' || indicator?.state === 'error' ? 'error'
+      : listOperation?.phase === 'running' || indicator?.state === 'running' ? 'running'
+      : listOperation?.phase === 'queued' || indicator?.state === 'waiting' ? 'waiting' : indicator?.state
+    const action = state === 'error' && accountId ? () => {
+      // Recheck durable conflicts at the moment of the tap; a new conflict
+      // may have arrived before the visible workspace's next read.
+      void storage.readItemDeletionConflicts(accountId).then(latest => {
+        const current = latest.find(value => value.localListId === row.id)
+        if (current) {
+          setItemConflicts(latest); setShowArchive(false); setActive(row.id); setMenuTarget(null); setEditingId(null)
+          setConflictError(''); setConflictId(current.operationId)
+        } else if (draftConflict) {
+          setDraftRename(draftConflict); setDraftName(draftConflict.name); setListError(null)
+        } else if (onRetryListSync && !localCopy && (indicator?.errors.length || listOperation?.retry)) {
+          onRetryListSync(row.id, [...new Set([...(indicator?.errors ?? []), ...(listOperation?.retry ? ['lists' as const] : [])])])
+        } else {
+          // An explicitly rejected or offline operation has no safe
+          // automatic resend. Keep its existing explanation available.
+          setShowArchive(false); setActive(row.id)
+        }
+      }).catch(() => setListError('Не удалось прочитать состояние синхронизации.'))
+    } : undefined
+    return { indicator, state, action }
+  }
+  const openIndicator = list ? listIndicator(list) : undefined
   function menuTrigger(row: (typeof visibleLists)[number], source: 'card' | 'heading') {
     return <button type="button" className="menu-trigger"
       aria-label={source === 'heading' ? 'Действия со списком' : `Действия со списком «${row.name}»`}
@@ -1261,32 +1290,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {(accountId === null || cloudArchive) && <div className="section-switch" aria-label="Разделы приложения"><button type="button" aria-label="Основные списки" aria-current={!showArchive ? 'page' : undefined} className={!showArchive ? 'current' : ''} onClick={() => setShowArchive(false)}>●</button><button type="button" aria-label={`Архив, ${accountId === null ? archives.length : (cloudArchiveCount ?? 0)} завершённых списков`} aria-current={showArchive ? 'page' : undefined} className={showArchive ? 'current' : ''} onClick={openArchive}>●</button></div>}
     {!showArchive && <nav ref={listRail} className={`lists-grid ${cardSize} list-rail`} aria-label="Списки покупок">
       {visibleLists.map((row, index) => {
-        const indicator = cardSync.get(row.id)
-        const conflict = itemConflicts.find(value => value.localListId === row.id)
-        const draftConflict = drafts.find(value => value.id === row.id && value.nameConflict)
-        const listOperation = operations.find(value => value.localListId === row.id)
-        const state = listOperation?.phase === 'error' || indicator?.state === 'error' ? 'error'
-          : listOperation?.phase === 'running' || indicator?.state === 'running' ? 'running'
-          : listOperation?.phase === 'queued' || indicator?.state === 'waiting' ? 'waiting' : indicator?.state
-        const action = state === 'error' && accountId ? () => {
-          // Recheck durable conflicts at the moment of the tap; a new conflict
-          // may have arrived before the visible workspace's next read.
-          void storage.readItemDeletionConflicts(accountId).then(latest => {
-            const current = latest.find(value => value.localListId === row.id)
-            if (current) {
-              setItemConflicts(latest); setShowArchive(false); setActive(row.id); setMenuTarget(null); setEditingId(null)
-              setConflictError(''); setConflictId(current.operationId)
-            } else if (draftConflict) {
-              setDraftRename(draftConflict); setDraftName(draftConflict.name); setListError(null)
-            } else if (onRetryListSync && !localCopy && (indicator?.errors.length || listOperation?.retry)) {
-              onRetryListSync(row.id, [...new Set([...(indicator?.errors ?? []), ...(listOperation?.retry ? ['lists' as const] : [])])])
-            } else {
-              // An explicitly rejected or offline operation has no safe
-              // automatic resend. Keep its existing explanation available.
-              setShowArchive(false); setActive(row.id)
-            }
-          }).catch(() => setListError('Не удалось прочитать состояние синхронизации.'))
-        } : undefined
+        const { indicator, state, action } = listIndicator(row)
         return <div className="list-tile" data-list-id={row.id} key={row.id}>
         <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={() => { setActive(row.id);setName('');setItemNotice('');setMenuTarget(null) }}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
         {state && <SyncIndicator key={state + ':' + (state === 'success' ? indicator?.since : '')}
@@ -1371,8 +1375,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           disabled={listMutationBusy || listLocked(menuList.id) || !mergeTargets(menuList.id).length ||
             (accountId !== null && !cloudBoundLists[menuList.id])}
           onClick={() => { setMergeSourceId(menuList.id); setMenuTarget(null) }}>Объединить со списком</button>}
-        <button disabled={listMutationBusy || !canComplete(menuList.id)} role="menuitem"
-          onClick={() => requestCompletion(menuList.id)}>✓ Завершить список</button>
         <button disabled={listMutationBusy || !canDelete(menuList.id)} role="menuitem" className="danger"
           onClick={() => requestDeletion(menuList.id)}>▤ Удалить список</button>
       </div>}
@@ -1462,21 +1464,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         syncHint={!!list && cloudStatus === 'signed-out'}
         rename={list ? { disabled: !canEditList || isDraft(list.id) || !!listActionsBusy || activeListLocked, open: () => openRename(list) } : undefined}
         actions={list && <div className="list-toolbar" aria-label="Управление текущим списком">
+          <span className="open-list-sync-slot">{openIndicator?.state && <SyncIndicator openList state={openIndicator.state}
+            since={openIndicator.indicator?.since} name={list.name} onError={openIndicator.action}/>}</span>
           <button type="button" aria-label="Завершить список" title="Завершить список"
             aria-haspopup="menu" aria-expanded={menuTarget?.source === 'completion' && menuTarget.id === list.id}
             disabled={completionDisabled} onClick={event => toggleListMenu(list.id, 'completion', event.currentTarget)}>✓</button>
-          {(rows.length > 1 || sort !== 'recent') && <label className="item-sort" title="Сортировка товаров">
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 6h9M4 12h7M4 18h5M17 5v14m-3-3 3 3 3-3"/>
-            </svg>
-            <select aria-label="Сортировка товаров" value={sort} onChange={event => setItemSort(current => ({ ...current, [active]: event.target.value as ItemSort }))}>
-              <option value="recent">Сначала новые</option>
-              <option value="name-asc">По названию: А–Я</option>
-              <option value="name-desc">По названию: Я–А</option>
-              <option value="quantity-asc">По количеству: по возрастанию</option>
-              <option value="quantity-desc">По количеству: по убыванию</option>
-            </select>
-          </label>}
           {menuTrigger(list, 'heading')}
         </div>}/>
       {purchaseArchive && <WorkspaceDialog label="Завершить покупки" className="create-dialog" onDismiss={() => setPurchaseArchive(null)}>
@@ -1522,7 +1514,18 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         </div>}
 
       {list && !canWriteItems(active) && <p role="status">Облачный список доступен для просмотра. Добавление товаров станет доступно после подтверждённой привязки к локальному хранилищу.</p>}
-      <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemNotice('');setItemInputError('');shopping.clearError()}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy || activeListLocked}/><button className="add" disabled={shopping.loading || shopping.busy || activeListLocked || !name.trim() || !canWriteItems(active)} aria-label="Добавить товар">+</button></div>{itemInputError && <p className="field-error" role="alert">{itemInputError}</p>}{itemNotice && <p className="field-error" role="status">{itemNotice}</p>}</form>
+      <form onSubmit={submit}><div className="input-row"><textarea id="item-name" aria-label="Что нужно купить? (можно несколько строк)" value={name} onChange={event => {setName(event.target.value);setItemNotice('');setItemInputError('');shopping.clearError()}} placeholder="Добавьте покупку" rows={2} disabled={shopping.loading || shopping.busy || activeListLocked}/><button className="add" disabled={shopping.loading || shopping.busy || activeListLocked || !name.trim() || !canWriteItems(active)} aria-label="Добавить товар">+</button></div><div className="item-sort-row">{(rows.length > 1 || sort !== 'recent') && <label className="item-sort" title="Сортировка товаров">
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 6h9M4 12h7M4 18h5M17 5v14m-3-3 3 3 3-3"/>
+            </svg>
+            <select aria-label="Сортировка товаров" value={sort} onChange={event => setItemSort(current => ({ ...current, [active]: event.target.value as ItemSort }))}>
+              <option value="recent">Сначала новые</option>
+              <option value="name-asc">По названию: А–Я</option>
+              <option value="name-desc">По названию: Я–А</option>
+              <option value="quantity-asc">По количеству: по возрастанию</option>
+              <option value="quantity-desc">По количеству: по убыванию</option>
+            </select>
+          </label>}</div>{itemInputError && <p className="field-error" role="alert">{itemInputError}</p>}{itemNotice && <p className="field-error" role="status">{itemNotice}</p>}</form>
       {shopping.readError && !editingItem && <div role="alert" className="error">{shopping.readError}<button onClick={() => void shopping.reload()} disabled={shopping.busy || shopping.loading}>Повторить загрузку</button></div>}
       {writeNotice && !editingItem && <div role="alert" className="item-write-notice">{writeNotice}</div>}
       {listConflicts.length > 0 && <ul className="item-conflicts" aria-label="Конфликты удаления">

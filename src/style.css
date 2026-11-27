@@ -554,3 +554,12 @@ nav .list-conflict-marker{
 :root[data-input-modality="pointer"] :is(button,input[type="checkbox"],input[type="radio"],select,a[href]):focus {
   outline: none;
 }
+
+/* Open list shares the card's status/action without changing toolbar geometry. */
+.list-toolbar .open-list-sync-slot{display:grid;place-items:center;flex:none;width:34px;height:38px}
+.list-toolbar .open-list-sync{display:grid;place-items:center;width:100%;height:100%;min-width:0;padding:4px;border:0;border-radius:9px;background:#eef3eb;box-shadow:none}
+.list-toolbar .open-list-sync .sync-indicator-artwork{width:26px;height:26px}
+@media(max-width:380px){.list-toolbar .open-list-sync-slot{width:30px;height:36px}}
+.item-sort-row{display:flex;justify-content:flex-end;margin-top:4px}
+.item-sort-row:empty{display:none}
+.item-sort-row .item-sort{width:50px}
