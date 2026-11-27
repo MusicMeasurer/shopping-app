@@ -833,9 +833,9 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const itemChange = syncView.work.find(row => row.itemIds?.includes(syncItemId ?? '') && row.itemChange)?.itemChange
   const selectedSync = syncItemId ? syncView.items.get(syncItemId) : undefined
   const selectedSyncState = selectedSync?.state
-  function itemSyncLocked(item: typeof shopping.items[number], allowUnsentEdit = false) {
+  function itemSyncLocked(item: typeof shopping.items[number], allowPendingEdit = false) {
     const state = syncView.items.get(item.id)?.state
-    const editable = allowUnsentEdit && state === 'waiting' &&
+    const editable = allowPendingEdit && (state === 'waiting' || state === 'running') &&
       syncView.work.some(row => row.itemIds?.includes(item.id) && row.itemChange?.editable)
     return (state !== undefined && state !== 'success' && !editable) ||
       (accountId !== null && !!cloudBoundLists[item.listId] && !syncView.ready)

@@ -122,3 +122,22 @@ describe('IndexedDB v5 cloud edit migration', () => {
     await storage.close()
   })
 })
+
+it('upgrades v20 additively and rejects a pre-successor v20 client', async () => {
+  const name = 'v20-' + crypto.randomUUID()
+  const item = createItem('groceries','Хлеб')
+  const old = await openDB(name,20,{upgrade(db) {
+    const items = db.createObjectStore('accountItems',{keyPath:'key'})
+    items.createIndex('byAccount','accountId')
+    const operations = db.createObjectStore('accountOperations',{keyPath:'key'})
+    operations.createIndex('byAccount','accountId')
+  }})
+  await old.put('accountItems',{key:JSON.stringify(['a',item.id]),accountId:'a',item})
+  await old.put('accountOperations',{key:JSON.stringify(['a','legacy']),accountId:'a',operation:{kind:'upsert',operationId:'legacy',item}})
+  old.close()
+  const storage = createStorage(name)
+  expect(await storage.readAccountItems('a')).toEqual([item])
+  expect(await storage.readAccountPending('a')).toEqual([{kind:'upsert',operationId:'legacy',item}])
+  await storage.close()
+  await expect(openDB(name,20)).rejects.toMatchObject({name:'VersionError'})
+})

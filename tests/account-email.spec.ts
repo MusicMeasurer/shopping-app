@@ -916,3 +916,51 @@ test('bulk purchase marks coalesce offline for confirmed cloud items without sen
   await expect(bread).not.toBeChecked()
   expect(calls.filter(call=>call.path.endsWith('/push_e4_account_changes'))).toHaveLength(0)
 })
+
+test('ordinary running update accepts bulk marks and a later edit before its immutable receipt', async ({page}) => {
+  await openItemSyncFixture(page)
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const writes: Record<string,unknown>[] = []
+  const receipts = new Map<string,{operation_id:unknown;item_version:number;list_revision:number}>()
+  await page.route(`**${fixturePath}/rest/v1/rpc/push_e4_account_changes**`,async route => {
+    const ops = route.request().postDataJSON().p_operations as Record<string,unknown>[]
+    const first = writes.length === 0
+    writes.push(...ops)
+    if (first) await gate
+    const results = ops.map(op => {
+      const key = String(op.operation_id)
+      let receipt = receipts.get(key)
+      if (!receipt) {
+        receipt = {operation_id:op.operation_id,item_version:Number(op.expected_version)+1,list_revision:3+receipts.size}
+        receipts.set(key,receipt)
+      }
+      return {receipt}
+    })
+    await route.fulfill({json:results})
+  })
+  try {
+    await page.getByRole('button',{name:'Изменить Молоко',exact:true}).click()
+    await page.getByLabel('Количество',{exact:true}).fill('3')
+    await page.getByRole('button',{name:'Сохранить',exact:true}).click()
+    await expect.poll(()=>writes.length).toBeGreaterThan(0)
+    const head = writes.find(op=>op.item_id===syncMilk)!
+    expect(head).toMatchObject({expected_version:1,quantity:3,purchased:false})
+    await expect(page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})).toBeEnabled()
+    await page.getByRole('button',{name:'Действия со списком',exact:true}).click()
+    await page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true}).click()
+    await expect(page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})).toBeChecked()
+    await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeChecked()
+    await page.getByRole('button',{name:'Изменить Молоко',exact:true}).click()
+    await page.getByLabel('Количество',{exact:true}).fill('4')
+    await page.getByRole('button',{name:'Сохранить',exact:true}).click()
+    await expect(page.getByRole('checkbox',{name:'Молоко · 4 л',exact:true})).toBeChecked()
+    expect(writes.filter(op=>op.item_id===syncMilk)).toEqual([head])
+    release()
+    await expect.poll(()=>writes.filter(op=>op.item_id===syncMilk).length).toBeGreaterThan(1)
+    const next = writes.find(op=>op.item_id===syncMilk&&op.operation_id!==head.operation_id)
+    expect(next).toMatchObject({expected_version:2,quantity:4,purchased:true})
+    await expect(page.getByRole('checkbox',{name:'Молоко · 4 л',exact:true})).toBeChecked()
+    await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeChecked()
+  } finally { release() }
+})

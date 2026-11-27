@@ -2,7 +2,7 @@ import type { AccountFeedChange } from './account-feed'
 import { ListSyncLedger, type SyncWork } from './list-sync-ledger'
 import { newSemanticState, rememberContext, rememberOwnOperation, storeSemanticBatch, evaluateSemanticState, semanticReady, presentSemanticNotice, acknowledgeSemanticNotice, consumeSilentRecovery, type AccountSemanticState, type SemanticBatch } from './sync-event-state'
 import type { ReconciledSyncContext } from './sync-event-fate'
-import { recordEditTimes, type ItemDeletionConflict } from './item-conflict'
+import { mergeItemEdit, recordEditTimes, type EditTimes, type ItemDeletionConflict } from './item-conflict'
 import { openDB, type DBSchema, type IDBPObjectStore } from 'idb'
 import { MAX_LOCAL_PROFILES, profileName, addProfile, bindProfile, initializeProfiles, switchProfile, removeProfileMetadata, type LocalProfileRegistry } from './local-profiles'
 import { hasItemName, itemNameKey, matchingNamePair, sameItemSnapshot } from '../domain/item-names'
@@ -163,22 +163,29 @@ interface ScopedOperation {
   operation: PendingItemOperation
   queuedAt?: number
   neverDispatched?: boolean
+  following?: { operationId: string; item: Item; editTimes: EditTimes }
   cancellationId?: string
   syncError?: boolean
   conflict?: ItemDeletionConflict
   deferred?: boolean
 }
-/** Ordinary edits can be coalesced only before the original payload is claimed.
+/** The claimed payload is immutable; further edits live in a durable successor.
  * Cancellation, conflict, failed delivery and new-item semantics stay distinct. */
-function editableUnsentUpdate(row: ScopedOperation | undefined): row is ScopedOperation & {
+function editableUpdate(row: ScopedOperation | undefined): row is ScopedOperation & {
   operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }>
 } {
-  return !!row?.neverDispatched && !row.conflict && !row.deferred && !row.cancellationId &&
+  return !!row && !row.conflict && !row.deferred && !row.cancellationId &&
     !row.syncError && row.operation.kind === 'cloud-update' && !!row.operation.base
 }
-function mergeUnsentUpdate(row: ScopedOperation & { operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }> }, item: Item): ScopedOperation {
-  return { ...row, queuedAt: Date.now(), operation: { ...row.operation, item,
+function latestUpdate(row: ScopedOperation & { operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }> }): Item {
+  return row.following?.item ?? row.operation.item
+}
+function mergePendingUpdate(row: ScopedOperation & { operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }> }, item: Item): ScopedOperation {
+  if (row.neverDispatched) return { ...row, queuedAt: Date.now(), operation: { ...row.operation, item,
     editTimes: recordEditTimes(row.operation.item, item, row.operation.editTimes) } }
+  const following = row.following
+  return { ...row, following: { operationId: following?.operationId ?? crypto.randomUUID(), item,
+    editTimes: recordEditTimes(following?.item ?? row.operation.item, item, following?.editTimes) } }
 }
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
@@ -250,7 +257,8 @@ export function createStorage(name = 'shopping-app') {
   const listSyncLedger = new ListSyncLedger()
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 20, {
+  // v21 prevents a pre-successor client from opening and dropping durable follow-up edits.
+  const database = openDB<ShoppingDB>(name, 21, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('installationIdentity')) db.createObjectStore('installationIdentity')
       if (!db.objectStoreNames.contains('accountDeletions')) db.createObjectStore('accountDeletions', { keyPath: 'accountId' })
@@ -408,20 +416,21 @@ export function createStorage(name = 'shopping-app') {
       }
     }
     const updateRow = queued.length === 1 ? queued[0] : undefined
-    if (!mergeOnly && operation.kind === 'cloud-update' && editableUnsentUpdate(updateRow)) {
+    if (!mergeOnly && operation.kind === 'cloud-update' && editableUpdate(updateRow)) {
       const pending = updateRow.operation
       const version = await tx.objectStore('accountItemVersions').get(accountKey(accountId, operation.itemId))
       const current = await tx.objectStore('accountItems').get(accountKey(accountId, operation.itemId))
       if (pending.remoteListId !== operation.remoteListId || pending.localListId !== operation.localListId ||
           pending.expectedVersion !== operation.expectedVersion || version?.version !== pending.expectedVersion ||
-          version.remoteListId !== pending.remoteListId || !current || !sameItemSnapshot(current.item, pending.item)) {
+          version.remoteListId !== pending.remoteListId || !current || !sameItemSnapshot(current.item, latestUpdate(updateRow))) {
         tx.abort(); await tx.done.catch(() => {}); throw new ItemSaveError('Товар изменился. Повторите сохранение.')
       }
       await tx.objectStore('accountItems').put({ key: accountKey(accountId, operation.itemId), accountId, item: operation.item })
-      await operations.put(mergeUnsentUpdate(updateRow, operation.item))
+      await operations.put(mergePendingUpdate(updateRow, operation.item))
       await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
       await tx.done
-      listSyncLedger.queued(accountId, pending.operationId, [operation.localListId], 'items', [operation.itemId])
+      if (updateRow.neverDispatched) listSyncLedger.queued(accountId, pending.operationId, [operation.localListId], 'items', [operation.itemId])
+      else listSyncLedger.changed()
       return true
     }
     if (mergeOnly) {
@@ -508,9 +517,9 @@ export function createStorage(name = 'shopping-app') {
           [op.kind === 'upsert' ? op.item.id : op.itemId])
         const work = rows.get(op.operationId)
         if (work && (op.kind === 'cloud-add' || op.kind === 'cloud-update')) {
-          work.itemChange = { operationId: op.operationId, after: op.item,
+          work.itemChange = { operationId: op.operationId, after: row.following?.item ?? op.item,
             before: op.kind === 'cloud-update' ? op.base : undefined,
-            addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId, editable: editableUnsentUpdate(row),
+            addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId, editable: editableUpdate(row),
             canCancel: !row.conflict && (op.kind === 'cloud-add' || !!op.base) }
         }
       }
@@ -2287,7 +2296,7 @@ export function createStorage(name = 'shopping-app') {
     async reconcileRejectedEdit(
       accountId: string, operation: CloudPendingOperation,
       decision: { conflict: ItemDeletionConflict } | { defer: true } | {
-        serverVersion: number; serverItem?: Item; replacement?: CloudPendingOperation
+        serverVersion: number; serverItem?: Item; replacement?: CloudPendingOperation; fieldChangedAt?: EditTimes
       },
     ): Promise<void> {
       const tx = (await database).transaction(['accountDeletions', 'accountOperations', 'accountItems', 'accountItemVersions', 'accountListMappings'], 'readwrite')
@@ -2307,11 +2316,26 @@ export function createStorage(name = 'shopping-app') {
           return
         }
         if ('conflict' in decision) {
-          await queue.put({ ...current, conflict: decision.conflict })
+          await queue.put({ ...current, conflict: current.following && !current.conflict && decision.conflict.deleted === 'cloud'
+            ? { ...decision.conflict, item: current.following.item } : decision.conflict })
         } else if ('defer' in decision) {
           await queue.put({ ...current, deferred: true })
         } else {
-          const { serverVersion, serverItem, replacement } = decision
+          const { serverVersion, serverItem } = decision
+          let replacement = decision.replacement
+          // The rejected immutable head did not apply. Rebase the full latest
+          // intention with per-field timestamps against the actual server item.
+          if (current.following && !current.conflict) {
+            if (operation.kind !== 'cloud-update' || !operation.base || !operation.editTimes || !serverItem || !decision.fieldChangedAt)
+              throw new Error('Missing evidence for successor reconciliation')
+            const times = { ...operation.editTimes, ...current.following.editTimes }
+            const item = mergeItemEdit(operation.base, current.following.item, serverItem, times, decision.fieldChangedAt)
+            replacement = sameItemSnapshot(item, serverItem) ? undefined : {
+              ...operation, operationId: current.following.operationId, expectedVersion: serverVersion,
+              base: serverItem, item, editTimes: times,
+            }
+            decision = { ...decision, replacement }
+          }
           const itemKey = accountKey(accountId, operation.itemId)
           const versions = tx.objectStore('accountItemVersions')
           const known = await versions.get(itemKey)
@@ -2450,7 +2474,7 @@ export function createStorage(name = 'shopping-app') {
         const other = (await queue.index('byAccount').getAll(accountId)).some(entry =>
           entry.key !== key && (entry.operation.kind === 'upsert' ? entry.operation.item.id : entry.operation.itemId) === itemId)
         if (!mapping || mapping.remoteListId !== op.remoteListId || !current ||
-            !sameItemSnapshot(current.item,op.item) || other || request ||
+            !sameItemSnapshot(current.item,row.following?.item ?? op.item) || other || request ||
             mappings.some(entry => mergeTouches(entry.pendingMerge,op.localListId)) ||
             completions.some(entry => entry.intent.remoteListId === op.remoteListId)) {
           await done; return 'changed'
@@ -2773,7 +2797,7 @@ export function createStorage(name = 'shopping-app') {
         const itemStore = tx.objectStore('accountItems')
         if (!marksOnly) checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
         if (draft) await tx.objectStore('accountDraftLists').put({ ...draft, updatedAt: Date.now() })
-        const queuedItems: { operationId: string; itemId: string }[] = []
+        const queuedItems: { operationId: string; itemId: string; claimed?: boolean }[] = []
         const operations = tx.objectStore('accountOperations')
         const pending = marksOnly ? await operations.index('byAccount').getAll(accountId) : []
         for (const item of items) {
@@ -2790,12 +2814,12 @@ export function createStorage(name = 'shopping-app') {
               if (!version || version.remoteListId !== mapping.remoteListId)
                 throw new ItemSaveError('Версия товара ещё не подтверждена. Дождитесь синхронизации.')
               if (rows.length) {
-                if (!editableUnsentUpdate(row) || row.operation.remoteListId !== mapping.remoteListId ||
+                if (!editableUpdate(row) || row.operation.remoteListId !== mapping.remoteListId ||
                     row.operation.localListId !== listId || row.operation.expectedVersion !== version.version ||
-                    !sameItemSnapshot(previous, row.operation.item))
+                    !sameItemSnapshot(previous, latestUpdate(row)))
                   throw new ItemSaveError('Изменение товара ещё синхронизируется. Дождитесь подтверждения или отмените его.')
-                await operations.put(mergeUnsentUpdate(row, updated))
-                queuedItems.push({ operationId: row.operation.operationId, itemId: item.id })
+                await operations.put(mergePendingUpdate(row, updated))
+                queuedItems.push({ operationId: row.operation.operationId, itemId: item.id, claimed: !row.neverDispatched })
               } else {
                 const operation: CloudPendingOperation = { kind: 'cloud-update', operationId: crypto.randomUUID(),
                   localListId: listId, remoteListId: mapping.remoteListId, itemId: item.id,
@@ -2818,7 +2842,10 @@ export function createStorage(name = 'shopping-app') {
         }
         await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
         await tx.done
-        for (const op of queuedItems) listSyncLedger.queued(accountId, op.operationId, [listId], 'items', [op.itemId])
+        for (const op of queuedItems) {
+          if (op.claimed) listSyncLedger.changed()
+          else listSyncLedger.queued(accountId, op.operationId, [listId], 'items', [op.itemId])
+        }
       } catch (error) {
         try { tx.abort() } catch { /* closed */ }
         await tx.done.catch(() => {})
@@ -2863,6 +2890,25 @@ export function createStorage(name = 'shopping-app') {
         await tx.done
         listSyncLedger.queued(accountId, operationId, [pending.operation.localListId], 'items', [itemId])
         return
+      }
+      if (pending.following) {
+        const head = pending.operation
+        if (head.kind !== 'cloud-update' || pending.following.item.id !== itemId ||
+            pending.following.item.listId !== head.localListId || pending.neverDispatched)
+          { tx.abort(); await tx.done.catch(() => {}); throw new Error('Invalid successor for receipt') }
+        const next = pending.following
+        const queue = tx.objectStore('accountOperations')
+        if (!sameItemSnapshot(head.item, next.item)) {
+          const operation: CloudPendingOperation = { ...head, operationId: next.operationId,
+            expectedVersion: version, base: head.item, item: next.item, editTimes: next.editTimes }
+          await queue.add({ key: accountKey(accountId, next.operationId), accountId, operation,
+            queuedAt: Date.now(), neverDispatched: true })
+          await queue.delete(key)
+          await tx.done
+          listSyncLedger.discard(accountId, operationId, [itemId])
+          listSyncLedger.queued(accountId, next.operationId, [head.localListId], 'items', [itemId])
+          return
+        }
       }
       if (pending.operation.kind === 'cloud-delete') {
         const semantic = tx.objectStore('accountSyncEvents')

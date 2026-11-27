@@ -298,7 +298,7 @@ export function createAccountSync(
       const changed = item.name !== serverItem.name || item.purchased !== serverItem.purchased ||
         item.quantity !== serverItem.quantity || item.unit !== serverItem.unit
       await storage.reconcileRejectedEdit(accountId, operation, {
-        serverVersion, serverItem,
+        serverVersion, serverItem, fieldChangedAt: state.fieldChangedAt,
         replacement: changed ? {
           ...identifiers, kind: 'cloud-update', expectedVersion: serverVersion, item,
           base: serverItem, editTimes: operation.editTimes,
