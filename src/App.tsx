@@ -20,7 +20,7 @@ import { WorkspaceViewport } from './WorkspaceViewport'
 import { SyncIndicatorPreview } from './SyncIndicatorPreview'
 import { SyncIndicator, SyncIndicatorIcon, syncIndicatorLabels } from './SyncIndicator'
 import { useListSyncIndicators } from './hooks/useListSyncIndicators'
-import type { SyncWorkKind } from './data/list-sync-ledger'
+import type { SyncWorkKind, SyncIndicatorState } from './data/list-sync-ledger'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { placeList, orderLists, orderArchives } from './domain/ordering'
@@ -1185,7 +1185,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     const indicator = cardSync.get(row.id)
     const draftConflict = drafts.find(value => value.id === row.id && value.nameConflict)
     const listOperation = operations.find(value => value.localListId === row.id)
-    const state = listOperation?.phase === 'error' || indicator?.state === 'error' ? 'error'
+    const state: SyncIndicatorState | undefined = listOperation?.phase === 'error' || indicator?.state === 'error' ? 'error'
       : listOperation?.phase === 'running' || indicator?.state === 'running' ? 'running'
       : listOperation?.phase === 'queued' || indicator?.state === 'waiting' ? 'waiting' : indicator?.state
     const action = state === 'error' && accountId ? () => {
@@ -1291,6 +1291,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!showArchive && <nav ref={listRail} className={`lists-grid ${cardSize} list-rail`} aria-label="Списки покупок">
       {visibleLists.map((row, index) => {
         const { indicator, state, action } = listIndicator(row)
+        const conflict = itemConflicts.find(value => value.localListId === row.id)
         return <div className="list-tile" data-list-id={row.id} key={row.id}>
         <button className="list-select" title={row.name} aria-pressed={active===row.id} onClick={() => { setActive(row.id);setName('');setItemNotice('');setMenuTarget(null) }}><span className="list-symbol" aria-hidden="true">{row.symbol}</span><span className="list-name-wrap"><span className="list-name">{row.name}</span></span></button>
         {state && <SyncIndicator key={state + ':' + (state === 'success' ? indicator?.since : '')}
