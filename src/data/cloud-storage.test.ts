@@ -74,7 +74,7 @@ describe('IndexedDB v5 cloud edit migration', () => {
     const second = { kind: 'cloud-update' as const, operationId: crypto.randomUUID(),
       localListId: 'groceries' as const, remoteListId, itemId: item.id,
       expectedVersion: 1, item: { ...item, name: 'Молоко 2' } }
-    await expect(storage.saveAccountEdit('a', second)).rejects.toThrow('unconfirmed cloud change')
+    await expect(storage.saveAccountEdit('a', second)).rejects.toThrow('ещё синхронизируется')
     expect(await storage.readAccountPending('a')).toEqual([first])
     expect(await storage.readAccountItems('a')).toEqual([item])
     await storage.close()
