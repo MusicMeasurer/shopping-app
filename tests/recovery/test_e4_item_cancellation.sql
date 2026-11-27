@@ -66,7 +66,7 @@ begin
   perform public.push_e4_account_changes(a,jsonb_build_array(input));
   res := public.cancel_e4_item_edit(cancel,input,before_item);
   if res->>'status' is distinct from 'cancelled' or res->>'item_version' is distinct from '3'
-    or res->'item'->>'quantity' is distinct from '1' or res->'item'->>'purchased' is distinct from 'false'
+    or (res->'item'->>'quantity')::numeric is distinct from 1::numeric or res->'item'->>'purchased' is distinct from 'false'
     or public.cancel_e4_item_edit(cancel,input,before_item) is distinct from res then
     raise exception 'Confirmed update not reversed exactly once: %',res;
   end if;
@@ -80,7 +80,7 @@ begin
   perform public.apply_e4_item_change(gen_random_uuid(),l,'update',i,'Newer',false,4,7,'l');
   res := public.cancel_e4_item_edit(cancel,input,before_item);
   if res->>'status' is distinct from 'superseded' or res->>'item_version' is distinct from '5'
-    or res->'item'->>'name' is distinct from 'Newer' or res->'item'->>'quantity' is distinct from '7' then
+    or res->'item'->>'name' is distinct from 'Newer' or (res->'item'->>'quantity')::numeric is distinct from 7::numeric then
     raise exception 'Newer update overwritten: %',res;
   end if;
 
