@@ -902,7 +902,7 @@ test('linked local edits survive a delayed successful password response and retr
 test('bulk purchase marks coalesce offline for confirmed cloud items without sending new requests', async ({page}) => {
   const calls = await openItemSyncFixture(page)
   await fixtureOnline(page,false)
-  const menu = page.getByRole('button',{name:'Действия со списком',exact:true})
+  const menu = page.getByRole('button',{name:'Завершить список',exact:true})
   const milk = page.getByRole('checkbox',{name:'Молоко · 1 л',exact:true})
   const bread = page.getByRole('checkbox',{name:'Хлеб',exact:true})
   await menu.click()
@@ -947,7 +947,7 @@ test('ordinary running update accepts bulk marks and a later edit before its imm
     const head = writes.find(op=>op.item_id===syncMilk)!
     expect(head).toMatchObject({expected_version:1,quantity:3,purchased:false})
     await expect(page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})).toBeEnabled()
-    await page.getByRole('button',{name:'Действия со списком',exact:true}).click()
+    await page.getByRole('button',{name:'Завершить список',exact:true}).click()
     await page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true}).click()
     await expect(page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})).toBeChecked()
     await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeChecked()

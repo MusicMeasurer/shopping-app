@@ -947,7 +947,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       movingCard.current = false
     }
   }
-  const completionDisabled = listMutationBusy || !canComplete(active)
+  const completionDisabled = listMutationBusy || (!canComplete(active) && !canMarkAll(active, true) && !canMarkAll(active, false))
   function requestCompletion(id: ListId) {
     if (listMutationBusy || !canComplete(id)) return
     setMenuTarget(null)
@@ -1165,8 +1165,10 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   function toggleListMenu(id: ListId, source: 'card' | 'heading' | 'completion', anchor: HTMLElement) {
     const rect = anchor.getBoundingClientRect()
+    const completionMenuHeight = 208
     const top = source === 'completion'
-      ? (rect.bottom + 112 <= window.innerHeight ? rect.bottom + 8 : Math.max(8, rect.top - 112))
+      ? (rect.bottom + 8 + completionMenuHeight <= window.innerHeight - 8
+          ? rect.bottom + 8 : Math.max(8, rect.top - completionMenuHeight - 8))
       : Math.max(8, Math.min(rect.bottom + 8, window.innerHeight - 340))
     setMenuPosition({
       top,
@@ -1325,6 +1327,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     {!showArchive && menuTarget && menuList && createPortal(<>
       <button type="button" className="menu-dismiss" aria-label="Закрыть меню" onClick={() => setMenuTarget(null)}/>
       {menuTarget.source === 'completion' ? <div className="list-menu" role="menu" aria-label="Завершение" style={{ ...menuPosition, maxHeight: `calc(100dvh - ${menuPosition.top + 8}px)` }}>
+        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, true)}
+          onClick={() => void markAll(menuList.id, true)}>Отметить всё купленным</button>
+        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, false)}
+          onClick={() => void markAll(menuList.id, false)}>Снять все отметки</button>
+        <div className="menu-separator"/>
         <button type="button" role="menuitem" disabled={listMutationBusy || !canComplete(menuList.id) ||
           !itemsForList(visibleItems, menuList.id).some(item => item.purchased)} onClick={() => {
           const itemIds = itemsForList(visibleItems, menuList.id).filter(item => item.purchased).map(item => item.id)
@@ -1359,11 +1366,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             {menuList.kind === kind && <span className="menu-check" aria-hidden="true">✓</span>}
           </button>)}
         </div>
-        <div className="menu-separator"/>
-        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, true)}
-          onClick={() => void markAll(menuList.id, true)}>Отметить всё купленным</button>
-        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, false)}
-          onClick={() => void markAll(menuList.id, false)}>Снять все отметки</button>
         <div className="menu-separator"/>
         {mergeActions && <button type="button" role="menuitem"
           disabled={listMutationBusy || listLocked(menuList.id) || !mergeTargets(menuList.id).length ||
