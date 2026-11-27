@@ -732,3 +732,107 @@ test('recovers archive identity failure through common retry and resume without 
   await expect(load).toBeVisible()
   expect(calls.filter(call => call.path === '/auth/v1/logout')).toHaveLength(0)
 })
+
+const itemSyncList = '46000000-0000-4000-8000-000000000101'
+const syncMilk = '46000000-0000-4000-8000-000000000201'
+const syncBread = '46000000-0000-4000-8000-000000000202'
+const syncCreated = '2026-11-27T03:00:00Z'
+const syncSnapshot = {
+  position: '3', lists: [{ id:itemSyncList, owner_id:accountId, name:'Проверка товаров',
+    kind:'permanent', position:0, revision:2 }],
+  items: [
+    { id:syncMilk,list_id:itemSyncList,name:'Молоко',purchased:false,quantity:1,unit:'л',version:1,created_at:syncCreated },
+    { id:syncBread,list_id:itemSyncList,name:'Хлеб',purchased:false,quantity:null,unit:null,version:1,created_at:syncCreated },
+  ],
+}
+async function openItemSyncFixture(page: Page) {
+  const calls = await mockCloud(page)
+  await page.route(`**${fixturePath}/rest/v1/rpc/snapshot_e4_account_changes**`, route => route.fulfill({ json:syncSnapshot }))
+  await page.goto('/shopping-app/')
+  const profile = page.locator('.profile-menu-trigger')
+  await profile.click()
+  await page.getByLabel('Email', {exact:true}).fill(email)
+  await page.getByLabel('Пароль', {exact:true}).fill(password)
+  await page.getByRole('button', {name:'Войти',exact:true}).click()
+  await page.getByRole('button', {name:'Не синхронизировать',exact:true}).click()
+  await expect(profile).toHaveAttribute('data-profile-mode','cloud')
+  await page.getByRole('button', {name:'Проверка товаров',exact:true}).click()
+  await expect(page.getByRole('checkbox',{name:'Молоко · 1 л',exact:true})).toBeEnabled({timeout:UI_TIMEOUT})
+  return calls
+}
+async function fixtureOnline(page: Page, online: boolean) {
+  // The fake server is local; exercise the app's connectivity event without
+  // preventing the fixture's document from loading.
+  await page.evaluate(value => {
+    Object.defineProperty(navigator,'onLine',{configurable:true,get:()=>value})
+    window.dispatchEvent(new Event(value ? 'online' : 'offline'))
+  },online)
+}
+test('item indicators: offline add and update cancellation, independent item and stable slot', async ({page}) => {
+  const calls = await openItemSyncFixture(page)
+  await fixtureOnline(page,false)
+  await page.getByLabel('Что нужно купить?',{exact:false}).fill('Отменяемая покупка')
+  await page.getByRole('button',{name:'Добавить товар'}).click()
+  const pending = page.getByRole('button',{name:'Ожидание синхронизации — Отменяемая покупка',exact:true})
+  await expect(pending).toBeVisible()
+  await expect(page.getByRole('button',{name:'Удалить Отменяемая покупка',exact:true})).toHaveCount(0)
+  await expect(page.getByRole('button',{name:'Изменить Отменяемая покупка',exact:true})).toBeDisabled()
+  await expect(page.getByRole('checkbox',{name:'Отменяемая покупка',exact:true})).toBeDisabled()
+  await expect(page.getByRole('button',{name:'Изменить Хлеб',exact:true})).toBeEnabled()
+  await pending.click()
+  const dialog = page.getByRole('dialog',{name:'Ожидание синхронизации'})
+  await expect(dialog).toContainText('Товара ранее не было')
+  await expect(dialog.getByRole('button',{name:'Повторить синхронизацию'})).toHaveCount(0)
+  await dialog.getByRole('button',{name:'Отменить изменения'}).click()
+  await expect(page.getByRole('checkbox',{name:'Отменяемая покупка',exact:true})).toHaveCount(0)
+  await page.getByRole('button',{name:'Изменить Молоко',exact:true}).click()
+  await page.getByLabel('Количество',{exact:true}).fill('3')
+  await page.getByRole('button',{name:'Сохранить',exact:true}).click()
+  await expect(page.getByRole('checkbox',{name:'Молоко · 3 л',exact:true})).toBeDisabled()
+  await page.getByRole('button',{name:'Ожидание синхронизации — Молоко',exact:true}).click()
+  await expect(dialog).toContainText('Молоко · 1 л')
+  await expect(dialog).toContainText('Молоко · 3 л')
+  await dialog.getByRole('button',{name:'Отменить изменения'}).click()
+  await expect(page.getByRole('checkbox',{name:'Молоко · 1 л',exact:true})).toBeEnabled()
+  await expect(page.getByRole('button',{name:'Удалить Молоко',exact:true})).toBeEnabled()
+  await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeEnabled()
+  expect(calls.filter(call=>call.path.endsWith('/push_e4_account_changes') || call.path.endsWith('/cancel_e4_item_edit'))).toHaveLength(0)
+})
+test('item indicators: error dialog, offline retry disabled and cancellation uses server receipt', async ({page}) => {
+  await openItemSyncFixture(page)
+  const writes: Record<string,unknown>[] = []
+  await page.route(`**${fixturePath}/rest/v1/rpc/push_e4_account_changes**`, async route => {
+    const body = route.request().postDataJSON()
+    const operations = body.p_operations as Record<string,unknown>[]
+    writes.push(...operations)
+    await route.fulfill({json:operations.map(op=>({operation_id:op.operation_id,code:'P0001',message:'Test delivery failure'}))})
+  })
+  let cancelled: Record<string,unknown> | undefined
+  await page.route(`**${fixturePath}/rest/v1/rpc/cancel_e4_item_edit**`, async route => {
+    const body = route.request().postDataJSON()
+    cancelled = body
+    const op = body.p_original
+    await route.fulfill({json:{operation_id:op.operation_id,cancellation_id:body.p_cancel,list_id:op.list_id,
+      item_id:op.item_id,status:'cancelled',item_version:null,item:null}})
+  })
+  await page.getByLabel('Что нужно купить?',{exact:false}).fill('Ошибка доставки')
+  await page.getByRole('button',{name:'Добавить товар'}).click()
+  const failed = page.getByRole('button',{name:'Ошибка синхронизации — Ошибка доставки',exact:true})
+  await expect(failed).toBeVisible()
+  await failed.click()
+  const dialog = page.getByRole('dialog',{name:'Ошибка синхронизации'})
+  const retry = dialog.getByRole('button',{name:'Повторить синхронизацию'})
+  await expect(retry).toBeEnabled()
+  await fixtureOnline(page,false)
+  await expect(retry).toBeDisabled()
+  await dialog.getByRole('button',{name:'Отменить изменения'}).click()
+  await expect(page.getByRole('button',{name:'Ожидание синхронизации — Ошибка доставки',exact:true})).toBeVisible()
+  await expect(page.getByRole('checkbox',{name:'Ошибка доставки',exact:true})).toBeDisabled()
+  const sent = writes.length
+  await fixtureOnline(page,true)
+  await expect(page.getByRole('checkbox',{name:'Ошибка доставки',exact:true})).toHaveCount(0,{timeout:15000})
+  expect(cancelled).toBeDefined()
+  expect(cancelled?.p_original).toMatchObject(writes[0])
+  expect(writes).toHaveLength(sent)
+  await expect(page.getByRole('checkbox',{name:'Хлеб',exact:true})).toBeEnabled()
+})

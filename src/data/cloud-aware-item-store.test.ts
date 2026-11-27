@@ -126,13 +126,13 @@ describe('cloud-aware account item store', () => {
     await store.save(item)
     const [operation] = await storage.readAccountPending('account-a')
     await storage.claimAccountPending('account-a', operation.operationId)
-    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('Версия товара ещё не подтверждена')
+    await expect(store.save({ ...item, purchased: true })).rejects.toThrow('ещё синхронизируется')
     expect(await store.read()).toEqual([item])
     expect(await storage.readAccountPending('account-a')).toHaveLength(1)
     await storage.close()
   })
 
-  it('combines unsent edits across a restart while preserving the original cloud version', async () => {
+  it('blocks further edits of a pending item across restart but permits independent items and editing after cancellation', async () => {
     const databaseName = 'cloud-aware-' + crypto.randomUUID()
     const storage = createStorage(databaseName)
     await storage.bindAccountList('account-a', 'groceries', listId)
@@ -140,47 +140,21 @@ describe('cloud-aware account item store', () => {
     const item = createItem('groceries', 'Молоко')
     await store.save(item)
     const [add] = await storage.readAccountPending('account-a')
-    await storage.claimAccountPending('account-a', add.operationId)
-    await storage.commitAccountReceipt('account-a', add.operationId, listId, item.id, 1)
-    await store.save({ ...item, quantity: 2 }, true)
-    const [firstEdit] = await storage.readAccountPending('account-a')
-    const [edited] = await store.read()
-    await store.save({ ...edited, purchased: true })
-    expect(await store.read()).toEqual([{ ...item, quantity: 2, purchased: true }])
-    await store.save({ ...item, quantity: 2, purchased: true, unit: 'л' }, true)
+    await storage.commitAccountReceipt('account-a',add.operationId,listId,item.id,1)
+    await store.save({ ...item, quantity:2 },true)
+    const [edit] = await storage.readAccountPending('account-a')
+    await expect(store.save({...item,purchased:true})).rejects.toThrow('ещё синхронизируется')
     await storage.close()
-
     const reopened = createStorage(databaseName)
-    const reopenedStore = cloudAwareItemStore(reopened, 'account-a')
-    const [draft] = await reopenedStore.read()
-    const renamed = { ...draft, name: 'Молоко 2%' }
-    await reopenedStore.save(renamed, true)
-    await reopenedStore.save({ ...renamed, purchased: false })
-    const finalItem = { ...renamed, purchased: true }
-    await reopenedStore.save(finalItem)
-    const claimed = await reopened.claimAccountPending('account-a', firstEdit.operationId)
-    expect(claimed).toMatchObject({ ...firstEdit, editTimes: expect.objectContaining({ amount: expect.any(Number), name: expect.any(Number), purchased: expect.any(Number) }), expectedVersion: 1, item: { ...item, quantity: 2, unit: 'л', name: 'Молоко 2%', purchased: true } })
-    await expect(reopenedStore.save({ ...finalItem, quantity: 3 }, true)).rejects.toThrow('ещё синхронизируется')
-    expect(await reopenedStore.read()).toEqual([finalItem])
-    expect(await reopened.readAccountPending('account-a')).toEqual([claimed])
+    const reopenedStore = cloudAwareItemStore(reopened,'account-a')
+    await expect(reopenedStore.save({...item,name:'Молоко 2%'},true)).rejects.toThrow('ещё синхронизируется')
+    const other = createItem('groceries','Хлеб')
+    await reopenedStore.save(other)
+    expect(await reopened.cancelUnsentAccountItemEdit('account-a',edit.operationId,item.id)).toBe('cancelled')
+    await reopenedStore.save({...item,name:'Молоко 2%'},true)
+    expect(await reopened.readAccountPending('account-a')).toHaveLength(2)
+    expect(await reopenedStore.read()).toEqual(expect.arrayContaining([other,{...item,name:'Молоко 2%'}]))
     await reopened.close()
-  })
-
-  it('waits for an earlier add receipt when saving an item from the editor', async () => {
-    const storage = await setup()
-    const item = createItem('groceries', 'Молоко')
-    await cloudAwareItemStore(storage, 'account-a').save(item)
-    const [queued] = await storage.readAccountPending('account-a')
-    await storage.claimAccountPending('account-a', queued.operationId)
-    const store = cloudAwareItemStore(storage, 'account-a', () => {
-      void storage.commitAccountReceipt('account-a', queued.operationId, listId, item.id, 1).catch(() => {})
-    })
-    await store.save({ ...item, name: 'Молоко 2%' }, true)
-    expect(await store.read()).toEqual([{ ...item, name: 'Молоко 2%' }])
-    expect(await storage.readAccountPending('account-a')).toEqual([
-      expect.objectContaining({ kind: 'cloud-update', expectedVersion: 1 }),
-    ])
-    await storage.close()
   })
 
   it('queues a versioned update after a confirmed server receipt', async () => {

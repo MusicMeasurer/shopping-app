@@ -22,7 +22,7 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
       await storage.saveAccountItemsToSync(accountId, items)
       onQueued?.()
     },
-    async save(item: Item, waitForSync = false): Promise<void> {
+    async save(item: Item, _waitForSync = false): Promise<void> {
       validateCloudItem(item)
       if (await storage.writeDraftItem(accountId, item)) { onQueued?.(); return }
       const bindings = await storage.readAccountListMappings(accountId)
@@ -31,21 +31,11 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         await storage.saveAccountItem(accountId, item)
         return
       }
-      if (await storage.mergeUnsentAccountEdit(accountId, item, binding.remoteListId)) {
-        onQueued?.()
-        return
-      }
-      const hasPendingEdit = async () => (await storage.readAccountPending(accountId)).some(operation =>
-        operation.kind !== 'delete' && (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id)
-      if (waitForSync && await hasPendingEdit()) {
-        onQueued?.()
-        for (let attempt = 0; onQueued && attempt < 20 && await hasPendingEdit(); attempt++) {
-          await new Promise(resolve => setTimeout(resolve, 200))
-        }
-        if (await hasPendingEdit()) {
-          throw new ItemSaveError('Предыдущее изменение товара ещё синхронизируется. Повторите сохранение после синхронизации.')
-        }
-      }
+      // A stale event/render must not bypass the item-level UI lock. The
+      // storage transaction also rejects concurrent pending edits.
+      if ((await storage.readAccountPending(accountId)).some(operation =>
+        (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id))
+        throw new ItemSaveError('Предыдущее изменение товара ещё синхронизируется. Сначала отмените его или дождитесь подтверждения.')
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)
       if (known && known.remoteListId !== binding.remoteListId) {
