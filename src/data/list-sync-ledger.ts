@@ -1,3 +1,4 @@
+import type { Item } from '../domain/shopping'
 /** One account-scoped source for the state of operations, independent of UI size. */
 export type SyncIndicatorState = 'waiting' | 'running' | 'error' | 'success'
 export type SyncWorkKind = 'items' | 'lists' | 'feed'
@@ -7,6 +8,7 @@ export interface SyncWork {
   listIds: readonly string[]
   /** Stable item identities, not a list-wide approximation. */
   itemIds?: readonly string[]
+  itemChange?: { operationId: string; before?: Item; after: Item; addition: boolean; cancelling: boolean; canCancel: boolean }
   kind: SyncWorkKind
   /** Feed transport can carry either entity; retry still uses kind. */
   scope?: SyncScope
@@ -25,6 +27,10 @@ export class ListSyncLedger {
   private successes = new Map<string, Map<string, number>>()
   private listSuccesses = new Map<string, Map<string, number>>()
   private itemSuccesses = new Map<string, Map<string, number>>()
+  private cancellationNotices = new Map<string, string>()
+  notifyCancellation(account: string, message: string) { this.cancellationNotices.set(account,message); this.changed() }
+  cancellationNotice(account: string) { return this.cancellationNotices.get(account) }
+  dismissCancellationNotice(account: string) { if (this.cancellationNotices.delete(account)) this.changed() }
   private settled = new Map<string, Set<string>>()
   private retries = new Map<string, Map<string, () => Promise<unknown>>>()
   private listeners = new Set<() => void>()
@@ -142,7 +148,7 @@ export class ListSyncLedger {
     }
   }
   reset(account: string) {
-    this.accounts.delete(account); this.successes.delete(account); this.listSuccesses.delete(account); this.itemSuccesses.delete(account); this.settled.delete(account); this.retries.delete(account); this.changed()
+    this.accounts.delete(account); this.successes.delete(account); this.listSuccesses.delete(account); this.itemSuccesses.delete(account); this.cancellationNotices.delete(account); this.settled.delete(account); this.retries.delete(account); this.changed()
   }
   /** Only a confirmed operation starts the five-second success window. No
    * account-wide transport status, timer, or empty poll creates a success. */

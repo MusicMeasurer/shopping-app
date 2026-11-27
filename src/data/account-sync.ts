@@ -12,6 +12,7 @@ import { planVersionedTombstones } from './versioned-tombstone-plan'
 import { planReconciliation } from './reconciliation-plan'
 import { applyRemoteMutation, type RemoteMutation } from './remote-mutation'
 import { resolveVersionedMutation } from './versioned-mutation'
+import { flushItemCancellations, type CancellationStorage } from './item-cancellation'
 
 const itemFlushes = new WeakMap<object, Map<string, Promise<unknown>>>()
 
@@ -41,7 +42,7 @@ export async function serializeAccountItemFlush<T>(storage: object, accountId: s
  * versions, and account-list bindings must be explicitly verified.
  */
 export function createAccountSync(
-  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readSyncableAccountPending' | 'applyVersionedItemChanges'>,
+  storage: Pick<Storage, 'readAccountItems' | 'readAccountPending' | 'claimAccountPending' | 'acknowledgeAccountPending' | 'readAccountListMappings' | 'commitAccountReceipt' | 'importRemoteOnlyBatch' | 'readAccountItemVersions' | 'applyReviewedRemoteDeletions' | 'reconcileRejectedEdit' | 'readSyncableAccountPending' | 'applyVersionedItemChanges'> & Partial<CancellationStorage>,
   client: Pick<SupabaseClient, 'from' | 'rpc'>,
   options: {
     accountId: string
@@ -50,6 +51,7 @@ export function createAccountSync(
     isActive: () => boolean
     onReconciled?: () => void
     resolveMutation?: (operation: PendingItemOperation) => RemoteMutation
+    onlyItemId?: string
   },
 ) {
   const { accountId, remoteListId, localListId, isActive, resolveMutation = resolveVersionedMutation } = options
@@ -362,6 +364,7 @@ export function createAccountSync(
         throw new Error('Pending deletion requires a durable list mapping')
       }
       return rows.filter(operation => {
+        if (options.onlyItemId && (operation.kind === 'upsert' ? operation.item.id : operation.itemId) !== options.onlyItemId) return false
         if (operation.kind === 'upsert') return operation.item.listId === localListId
         if (operation.kind === 'delete') throw new Error('Pending deletion requires a durable list mapping')
         return operation.localListId === localListId && operation.remoteListId === remoteListId
@@ -377,14 +380,20 @@ export function createAccountSync(
       activeOperations.add(mutation.operationId)
       ledger?.begin(accountId, mutation.operationId, [localListId], 'items', true, undefined, [mutation.itemId])
       try { return await traceSync('batch-send', () => applyRemoteMutation(client, mutation), { count: 1 }) }
-      catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
+      catch (error) { if (isActive()) {
+        if (storage.markAccountItemSyncFailed) await storage.markAccountItemSyncFailed(accountId,mutation.operationId).catch(() => ledger?.fail(accountId,mutation.operationId))
+        else ledger?.fail(accountId, mutation.operationId)
+      } throw error }
     },
     commitReceipt: async (mutation, receipt) => {
       assertActive()
       try {
         await traceSync('receipt-store', () => storage.commitAccountReceipt(accountId, mutation.operationId, mutation.listId, mutation.itemId, receipt.itemVersion))
         activeOperations.delete(mutation.operationId)
-      } catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
+      } catch (error) { if (isActive()) {
+        if (storage.markAccountItemSyncFailed) await storage.markAccountItemSyncFailed(accountId,mutation.operationId).catch(() => ledger?.fail(accountId,mutation.operationId))
+        else ledger?.fail(accountId, mutation.operationId)
+      } throw error }
     },
     resolveMutation,
     handleRejected,
@@ -395,7 +404,15 @@ export function createAccountSync(
   return {
     ...coordinator,
     flush: () => serializeAccountItemFlush(storage, accountId, async () => {
-      try { return await coordinator.flush() }
+      try {
+        const failure = storage.readAccountItemCancellations && storage.beginAccountItemCancellation &&
+          storage.commitAccountItemCancellation && storage.markAccountItemSyncFailed
+          ? await flushItemCancellations(storage as CancellationStorage,client,accountId,isActive,
+              options.onReconciled ?? (() => {}),localListId,options.onlyItemId) : undefined
+        const count = await coordinator.flush()
+        if (failure) throw failure
+        return count
+      }
       finally {
         if (!isActive()) for (const id of activeOperations) ledger?.cancel(accountId, id)
         activeOperations.clear()

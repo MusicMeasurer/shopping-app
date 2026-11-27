@@ -14,6 +14,7 @@ import type { CloudListChange } from './e4-cloud-list-operations'
 import type { CloudListMetadata } from './e4-cloud-list-metadata'
 import type { CompletionMode } from './cloud-completion-rpc'
 import { PendingOperationMissingError, type PendingItemOperation, type CloudPendingOperation } from './pending-operations'
+import type { ItemCancellation, ItemCancellationReceipt } from './item-cancellation'
 
 function listNameKey(name: string) {
   return name.trim().toLowerCase()
@@ -162,6 +163,8 @@ interface ScopedOperation {
   operation: PendingItemOperation
   queuedAt?: number
   neverDispatched?: boolean
+  cancellationId?: string
+  syncError?: boolean
   conflict?: ItemDeletionConflict
   deferred?: boolean
 }
@@ -235,7 +238,7 @@ export function createStorage(name = 'shopping-app') {
   const listSyncLedger = new ListSyncLedger()
   const blockedListeners = new Set<() => void>()
   let upgradeBlocked = false
-  const database = openDB<ShoppingDB>(name, 19, {
+  const database = openDB<ShoppingDB>(name, 20, {
     upgrade(db, oldVersion, _newVersion, tx) {
       if (!db.objectStoreNames.contains('installationIdentity')) db.createObjectStore('installationIdentity')
       if (!db.objectStoreNames.contains('accountDeletions')) db.createObjectStore('accountDeletions', { keyPath: 'accountId' })
@@ -471,8 +474,15 @@ export function createStorage(name = 'shopping-app') {
       for (const row of operations) {
         const op = row.operation
         add(op.operationId, [op.kind === 'upsert' ? op.item.listId : op.kind === 'delete' ?
-          local.get(known.get(op.itemId) ?? '') : op.localListId], 'items', !!row.conflict || !!row.deferred, undefined,
+          local.get(known.get(op.itemId) ?? '') : op.localListId], 'items', !!row.conflict || !!row.deferred || !!row.syncError, undefined,
           [op.kind === 'upsert' ? op.item.id : op.itemId])
+        const work = rows.get(op.operationId)
+        if (work && (op.kind === 'cloud-add' || op.kind === 'cloud-update')) {
+          work.itemChange = { operationId: op.operationId, after: op.item,
+            before: op.kind === 'cloud-update' ? op.base : undefined,
+            addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId,
+            canCancel: !row.conflict && (op.kind === 'cloud-add' || !!op.base) }
+        }
       }
       for (const draft of drafts) add(draft.operationId, [draft.id], 'lists', !!draft.nameConflict)
       for (const row of mappings) {
@@ -2227,7 +2237,7 @@ export function createStorage(name = 'shopping-app') {
     },
     async readSyncableAccountPending(accountId: string): Promise<PendingItemOperation[]> {
       const rows = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
-      return rows.filter(row => !row.conflict && !row.deferred).map(row => row.operation)
+      return rows.filter(row => !row.conflict && !row.deferred && !row.cancellationId).map(row => row.operation)
     },
     async readItemDeletionConflicts(accountId: string): Promise<ItemDeletionConflict[]> {
       const rows = await (await database).getAllFromIndex('accountOperations', 'byAccount', accountId)
@@ -2250,6 +2260,11 @@ export function createStorage(name = 'shopping-app') {
             mapping?.remoteListId !== operation.remoteListId ||
             (current.conflict && 'serverVersion' in decision && current.conflict.remoteVersion !== decision.serverVersion))
           throw new Error('Cloud item changed during reconciliation')
+        if (current.cancellationId) {
+          await tx.done
+          listSyncLedger.queued(accountId, operation.operationId, [operation.localListId], 'items', [operation.itemId])
+          return
+        }
         if ('conflict' in decision) {
           await queue.put({ ...current, conflict: decision.conflict })
         } else if ('defer' in decision) {
@@ -2287,11 +2302,11 @@ export function createStorage(name = 'shopping-app') {
       const key = accountKey(accountId, operationId)
       const tx = (await database).transaction('accountOperations', 'readwrite')
       const row = await tx.store.get(key)
-      if (!row) {
+      if (!row || row.cancellationId) {
         await tx.done
         throw new PendingOperationMissingError()
       }
-      if (row.neverDispatched) await tx.store.put({ ...row, neverDispatched: false })
+      if (row.neverDispatched || row.syncError) await tx.store.put({ ...row, neverDispatched: false, syncError: false })
       await tx.done
       return row.operation
     },
@@ -2321,7 +2336,7 @@ export function createStorage(name = 'shopping-app') {
             op.item.id !== itemId || op.item.listId !== op.localListId || row.accountId !== accountId) {
           await done; return 'changed'
         }
-        if (!row.neverDispatched || row.conflict || row.deferred) {
+        if (!row.neverDispatched || row.conflict || row.deferred || row.cancellationId) {
           await done; return 'requires-reconciliation'
         }
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, op.localListId))
@@ -2365,6 +2380,114 @@ export function createStorage(name = 'shopping-app') {
         await done.catch(() => {})
         throw error
       }
+    },
+
+    /** Mark an uncertain cancellation durably. The original operation stays
+     * immutable and cannot be claimed again by the regular sender. */
+    async requestAccountItemCancellation(accountId: string, operationId: string, itemId: string):
+      Promise<'queued' | 'missing' | 'changed'> {
+      const key = accountKey(accountId, operationId)
+      const tx = (await database).transaction(['accountDeletions','accountOperations','accountItems',
+        'accountListMappings','accountCompletions','accountCompletionRequests'], 'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
+        const queue = tx.objectStore('accountOperations')
+        const row = await queue.get(key)
+        if (!row) { await done; return 'missing' }
+        const op = row.operation
+        if ((op.kind !== 'cloud-add' && op.kind !== 'cloud-update') || op.itemId !== itemId ||
+            row.accountId !== accountId || op.item.id !== itemId || op.item.listId !== op.localListId ||
+            (op.kind === 'cloud-update' && (!op.base || op.base.id !== itemId || op.base.listId !== op.localListId)) ||
+            row.conflict) { await done; return 'changed' }
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, op.localListId))
+        const mappings = await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)
+        const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId,op.remoteListId))
+        const completions = await tx.objectStore('accountCompletions').index('byAccount').getAll(accountId)
+        const current = await tx.objectStore('accountItems').get(accountKey(accountId,itemId))
+        const other = (await queue.index('byAccount').getAll(accountId)).some(entry =>
+          entry.key !== key && (entry.operation.kind === 'upsert' ? entry.operation.item.id : entry.operation.itemId) === itemId)
+        if (!mapping || mapping.remoteListId !== op.remoteListId || !current ||
+            !sameItemSnapshot(current.item,op.item) || other || request ||
+            mappings.some(entry => mergeTouches(entry.pendingMerge,op.localListId)) ||
+            completions.some(entry => entry.intent.remoteListId === op.remoteListId)) {
+          await done; return 'changed'
+        }
+        if (!row.cancellationId) await queue.put({ ...row, cancellationId: crypto.randomUUID(),
+          neverDispatched: false, syncError: false, deferred: false })
+        await done
+        listSyncLedger.queued(accountId, operationId, [op.localListId], 'items', [itemId])
+        return 'queued'
+      } catch (error) { try { tx.abort() } catch {} await done.catch(() => {}); throw error }
+    },
+    async readAccountItemCancellations(accountId: string): Promise<ItemCancellation[]> {
+      const rows = await (await database).getAllFromIndex('accountOperations','byAccount',accountId)
+      return rows.flatMap(row => row.cancellationId && !row.conflict &&
+        (row.operation.kind === 'cloud-add' || row.operation.kind === 'cloud-update')
+        ? [{ operation: row.operation, cancellationId: row.cancellationId }] : [])
+    },
+    async markAccountItemSyncFailed(accountId: string, operationId: string, cancellationId?: string): Promise<void> {
+      const tx = (await database).transaction('accountOperations','readwrite')
+      const row = await tx.store.get(accountKey(accountId,operationId))
+      if (row && row.cancellationId === cancellationId) await tx.store.put({ ...row, syncError: true })
+      await tx.done
+      if (row && row.cancellationId === cancellationId) listSyncLedger.fail(accountId,operationId)
+    },
+    async beginAccountItemCancellation(accountId: string, cancellation: ItemCancellation): Promise<boolean> {
+      const op = cancellation.operation
+      const tx = (await database).transaction(['accountDeletions','accountOperations'],'readwrite')
+      const deleted = await tx.objectStore('accountDeletions').get(accountId)
+      const queue = tx.objectStore('accountOperations')
+      const row = await queue.get(accountKey(accountId,op.operationId))
+      const active = !deleted && row?.cancellationId === cancellation.cancellationId &&
+        JSON.stringify(row.operation) === JSON.stringify(op)
+      if (active && row?.syncError) await queue.put({ ...row, syncError: false })
+      await tx.done
+      if (active) listSyncLedger.begin(accountId,op.operationId,[op.localListId],'items',true,undefined,[op.itemId])
+      return active
+    },
+    async commitAccountItemCancellation(accountId: string, cancellation: ItemCancellation, receipt: ItemCancellationReceipt): Promise<void> {
+      const op = cancellation.operation
+      if (receipt.operationId !== op.operationId || receipt.cancellationId !== cancellation.cancellationId ||
+          receipt.remoteListId !== op.remoteListId || receipt.itemId !== op.itemId ||
+          !['cancelled','superseded'].includes(receipt.status) ||
+          (receipt.version !== null && (!Number.isSafeInteger(receipt.version) || receipt.version < 1)) ||
+          (receipt.item && (receipt.version === null || receipt.item.id !== op.itemId || receipt.item.listId !== op.localListId)))
+        throw new Error('Invalid item cancellation receipt')
+      const key = accountKey(accountId,op.operationId), itemKey = accountKey(accountId,op.itemId)
+      const tx = (await database).transaction(['accountDeletions','accountOperations','accountItems','accountItemVersions',
+        'accountListMappings','accountSyncEvents','localProfileRegistry'],'readwrite')
+      const done = tx.done
+      void done.catch(() => {})
+      try {
+        if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
+        const queue = tx.objectStore('accountOperations')
+        const row = await queue.get(key)
+        const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId,op.localListId))
+        const versions = tx.objectStore('accountItemVersions')
+        const known = await versions.get(itemKey)
+        if (!row || row.cancellationId !== cancellation.cancellationId ||
+            JSON.stringify(row.operation) !== JSON.stringify(op) || mapping?.remoteListId !== op.remoteListId ||
+            (known && (known.remoteListId !== op.remoteListId || receipt.version === null || known.version > receipt.version)))
+          throw new Error('Cancellation receipt does not match pending item/version')
+        const other = (await queue.index('byAccount').getAll(accountId)).some(entry =>
+          entry.key !== key && (entry.operation.kind === 'upsert' ? entry.operation.item.id : entry.operation.itemId) === op.itemId)
+        if (other) throw new Error('A newer local operation exists')
+        const items = tx.objectStore('accountItems')
+        if (receipt.item) await items.put({ key: itemKey, accountId, item: receipt.item })
+        else await items.delete(itemKey)
+        if (receipt.version !== null) await versions.put({ key: itemKey, accountId, itemId: op.itemId,
+          remoteListId: op.remoteListId, version: receipt.version })
+        const semantic = tx.objectStore('accountSyncEvents')
+        await semantic.put(rememberOwnOperation(await semantic.get(accountId) ?? newSemanticState(accountId), cancellation.cancellationId))
+        await queue.delete(key)
+        await markListsChanged(tx.objectStore('localProfileRegistry'),{accountId})
+        await done
+        listSyncLedger.discard(accountId,op.operationId,[op.itemId])
+        if (receipt.status === 'superseded') listSyncLedger.notifyCancellation(accountId,
+          'Отмена не выполнена: товар уже изменён на другом устройстве. Загружено актуальное состояние.')
+      } catch (error) { try { tx.abort() } catch {} await done.catch(() => {}); throw error }
     },
     async acknowledgeAccountPending(accountId: string, operationId: string): Promise<void> {
       await (await database).delete('accountOperations', accountKey(accountId, operationId))
@@ -2662,6 +2785,11 @@ export function createStorage(name = 'shopping-app') {
         throw new Error('Server version regression or list mismatch')
       }
       await versions.put({ key: versionKey, accountId, remoteListId, itemId, version })
+      if (pending.cancellationId) {
+        await tx.done
+        listSyncLedger.queued(accountId, operationId, [pending.operation.localListId], 'items', [itemId])
+        return
+      }
       if (pending.operation.kind === 'cloud-delete') {
         const semantic = tx.objectStore('accountSyncEvents')
         await semantic.put(rememberOwnOperation(await semantic.get(accountId) ?? newSemanticState(accountId), operationId))

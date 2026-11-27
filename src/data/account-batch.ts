@@ -2,34 +2,23 @@ import { markSync, traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAccountSync, serializeAccountItemFlush } from './account-sync'
 import { PendingOperationMissingError, type CloudPendingOperation } from './pending-operations'
-import { parseRemoteMutationReceipt, type RemoteMutation } from './remote-mutation'
+import { parseRemoteMutationReceipt, remoteMutationPayload } from './remote-mutation'
 import type { Storage } from './storage'
 import { syncLedger } from './list-sync-ledger'
 import { resolveVersionedMutation } from './versioned-mutation'
+import { flushItemCancellations } from './item-cancellation'
 
-function payload(mutation: RemoteMutation) {
-  return {
-    operation_id: mutation.operationId, item_id: mutation.itemId, list_id: mutation.listId, kind: mutation.kind,
-    ...(mutation.kind !== 'add' ? { expected_version: mutation.expectedVersion } : {}),
-    ...(mutation.kind !== 'delete' ? {
-      name: mutation.name, purchased: mutation.purchased,
-      ...(mutation.attributes ? { quantity: mutation.attributes.quantity, unit: mutation.attributes.unit } : {}),
-    } : {}),
-    ...(mutation.kind === 'add' && mutation.createdAt !== undefined
-      ? { created_at: new Date(mutation.createdAt).toISOString() } : {}),
-  }
-}
 
 /** Keep dependent edits to one item in separate waves. Independent items get individual receipts. */
 export function flushAccountBatch(
   storage: Storage, client: SupabaseClient, accountId: string, isActive: () => boolean, onReconciled: () => void,
-  onlyListId?: string,
+  onlyListId?: string, onlyItemId?: string,
 ) {
   return serializeAccountItemFlush(storage, accountId, async () => {
     const ledger = syncLedger(storage)
     const blocked = new Set<string>()
     const reconciled = new Set<string>()
-    let failure: Error | undefined
+    let failure: unknown = await flushItemCancellations(storage,client,accountId,isActive,onReconciled,onlyListId,onlyItemId)
     while (isActive()) {
       const pending = await storage.readSyncableAccountPending(accountId)
       markSync('queue', 'ok', { count: pending.length })
@@ -42,6 +31,7 @@ export function flushAccountBatch(
           failure ??= new Error('Legacy operation requires explicit reconciliation before cloud upload')
           continue
         }
+        if (onlyItemId && operation.itemId !== onlyItemId) continue
         if (items.has(operation.itemId) || blocked.has(operation.itemId)) continue
         items.add(operation.itemId)
         batch.push(operation)
@@ -60,7 +50,7 @@ export function flushAccountBatch(
       const unresolved = new Set(claimed.map(op => op.operationId))
       for (const op of claimed) ledger?.begin(accountId, op.operationId, [op.localListId], 'items', true, undefined, [op.itemId])
       try {
-      const { data, error } = await traceSync('batch-send', () => client.rpc('push_e4_account_changes', { p_account: accountId, p_operations: mutations.map(payload) }), { count: mutations.length }, result => !result.error)
+      const { data, error } = await traceSync('batch-send', () => client.rpc('push_e4_account_changes', { p_account: accountId, p_operations: mutations.map(remoteMutationPayload) }), { count: mutations.length }, result => !result.error)
       if (!isActive()) return
       if (error) throw error
       if (!Array.isArray(data) || data.length !== mutations.length) {
@@ -88,13 +78,15 @@ export function flushAccountBatch(
           unresolved.delete(mutation.operationId)
         } else {
           blocked.add(mutation.itemId)
-          ledger?.fail(accountId, mutation.operationId)
+          await storage.markAccountItemSyncFailed(accountId, mutation.operationId)
           unresolved.delete(mutation.operationId)
           failure ??= new Error(outcome.message)
         }
       }
       } catch (error) {
-        for (const id of unresolved) if (isActive()) ledger?.fail(accountId, id)
+        for (const id of unresolved) if (isActive()) {
+          try { await storage.markAccountItemSyncFailed(accountId,id) } catch { ledger?.fail(accountId,id) }
+        }
         throw error
       } finally {
         if (!isActive()) for (const id of unresolved) ledger?.cancel(accountId, id)

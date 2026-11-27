@@ -88,3 +88,17 @@ export function parseRemoteMutationReceipt(data: unknown, operationId: string): 
     itemVersion: receipt.item_version as number,
   }
 }
+
+export function remoteMutationPayload(mutation: RemoteMutation) {
+  return {
+    operation_id: mutation.operationId, item_id: mutation.itemId, list_id: mutation.listId, kind: mutation.kind,
+    ...(mutation.kind !== 'add' ? { expected_version: mutation.expectedVersion } : {}),
+    ...(mutation.kind !== 'delete' ? {
+      name: mutation.name, purchased: mutation.purchased,
+      ...(mutation.attributes ? { quantity: mutation.attributes.quantity, unit: mutation.attributes.unit } : {}),
+    } : {}),
+    ...(mutation.kind === 'add' && mutation.createdAt !== undefined
+      ? { created_at: new Date(mutation.createdAt).toISOString() } : {}),
+  }
+}
+
