@@ -7,8 +7,8 @@ returns jsonb language plpgsql security definer set search_path = '' as $$
 declare
   actor uuid := auth.uid();
   original_id uuid := (p_original->>'operation_id')::uuid;
-  list_id uuid := (p_original->>'list_id')::uuid;
-  item_id uuid := (p_original->>'item_id')::uuid;
+  target_list uuid := (p_original->>'list_id')::uuid;
+  target_item uuid := (p_original->>'item_id')::uuid;
   kind text := p_original->>'kind';
   original_name text := p_original->>'name';
   original_purchased boolean := (p_original->>'purchased')::boolean;
@@ -32,7 +32,7 @@ begin
     raise exception 'Operation requires READ COMMITTED isolation' using errcode = '0A000';
   end if;
   if actor is null or p_cancel is null or original_id is null or p_cancel=original_id
-     or list_id is null or item_id is null or kind is null or kind not in ('add','update')
+     or target_list is null or target_item is null or kind is null or kind not in ('add','update')
      or original_name is null or length(btrim(original_name)) not between 1 and 120
      or original_purchased is null or jsonb_typeof(p_original) is distinct from 'object'
      or (kind='add' and (expected is not null or p_before is not null))
@@ -51,20 +51,20 @@ begin
   end if;
   -- All three original write RPCs take this exact lock before checking receipts.
   -- Owner-only matches the current personal-list account batch contract.
-  perform 1 from public.shopping_lists l where l.id=list_id and l.owner_id=actor and l.deleted_at is null for update;
+  perform 1 from public.shopping_lists l where l.id=target_list and l.owner_id=actor and l.deleted_at is null for update;
   if not found then raise exception 'List unavailable' using errcode='42501'; end if;
 
-  fingerprint := case when attributes then md5(jsonb_build_array('e4-attributes',list_id,kind,item_id,
+  fingerprint := case when attributes then md5(jsonb_build_array('e4-attributes',target_list,kind,target_item,
     original_name,original_purchased,expected,qty,unit_text)::text)
-    else md5(jsonb_build_array(list_id,kind,item_id,original_name,original_purchased,expected)::text) end;
+    else md5(jsonb_build_array(target_list,kind,target_item,original_name,original_purchased,expected)::text) end;
   if created is not null then
-    ordered_hash := md5(jsonb_build_array('ordered-add',list_id,item_id,original_name,original_purchased,
+    ordered_hash := md5(jsonb_build_array('ordered-add',target_list,target_item,original_name,original_purchased,
       qty,unit_text,extract(epoch from created))::text);
   end if;
   cancel_hash := md5(jsonb_build_array('cancel-e4-item-v1',p_original,p_before)::text);
   select * into prior from public.e4_list_operations o where o.actor_id=actor and o.operation_id=p_cancel;
   if found then
-    if prior.list_id<>list_id or prior.payload_hash<>cancel_hash then
+    if prior.list_id<>target_list or prior.payload_hash<>cancel_hash then
       raise exception 'Cancellation ID payload mismatch';
     end if;
     return prior.result;
@@ -73,12 +73,12 @@ begin
     raise exception 'Cancellation ID already used';
   end if;
   select * into ordered from public.e4_list_operations o where o.actor_id=actor and o.operation_id=original_id;
-  if found and (ordered_hash is null or ordered.payload_hash<>ordered_hash or ordered.list_id<>list_id) then
+  if found and (ordered_hash is null or ordered.payload_hash<>ordered_hash or ordered.list_id<>target_list) then
     raise exception 'Operation ID payload mismatch';
   end if;
   select * into original from public.item_operations o where o.actor_id=actor and o.operation_id=original_id;
   if found then
-    if original.list_id<>list_id or original.payload_hash not in (fingerprint,'cancelled:'||fingerprint) then
+    if original.list_id<>target_list or original.payload_hash not in (fingerprint,'cancelled:'||fingerprint) then
       raise exception 'Operation ID payload mismatch';
     end if;
     if original.payload_hash=fingerprint then
@@ -96,11 +96,11 @@ begin
     -- ordered add entry points. Ordered add sees this row and invokes the
     -- existing attribute RPC, which rejects the mismatched fingerprint.
     insert into public.item_operations(actor_id,operation_id,list_id,payload_hash,result)
-      values(actor,original_id,list_id,'cancelled:'||fingerprint,
+      values(actor,original_id,target_list,'cancelled:'||fingerprint,
         jsonb_build_object('operation_id',original_id,'cancelled',true));
   end if;
 
-  select * into current_item from public.shopping_items i where i.id=item_id and i.list_id=list_id for update;
+  select * into current_item from public.shopping_items i where i.id=target_item and i.list_id=target_list for update;
   if applied_version is null then
     status := 'cancelled';
   elsif current_item.id is null or current_item.deleted_at is not null or current_item.version<>applied_version then
@@ -108,25 +108,25 @@ begin
     status := 'superseded';
   else
     if kind='add' then
-      perform public.apply_item_change(p_cancel,list_id,'delete',item_id,null,null,applied_version);
+      perform public.apply_item_change(p_cancel,target_list,'delete',target_item,null,null,applied_version);
     elsif attributes then
-      perform public.apply_e4_item_change(p_cancel,list_id,'update',item_id,p_before->>'name',
+      perform public.apply_e4_item_change(p_cancel,target_list,'update',target_item,p_before->>'name',
         (p_before->>'purchased')::boolean,applied_version,(p_before->>'quantity')::numeric,p_before->>'unit');
     else
-      perform public.apply_item_change(p_cancel,list_id,'update',item_id,p_before->>'name',
+      perform public.apply_item_change(p_cancel,target_list,'update',target_item,p_before->>'name',
         (p_before->>'purchased')::boolean,applied_version);
     end if;
     status := 'cancelled';
-    select * into current_item from public.shopping_items i where i.id=item_id and i.list_id=list_id;
+    select * into current_item from public.shopping_items i where i.id=target_item and i.list_id=target_list;
   end if;
 
-  result := jsonb_build_object('operation_id',original_id,'cancellation_id',p_cancel,'list_id',list_id,'item_id',item_id,
+  result := jsonb_build_object('operation_id',original_id,'cancellation_id',p_cancel,'list_id',target_list,'item_id',target_item,
     'status',status,'item_version',current_item.version,
     'item',case when current_item.id is null or current_item.deleted_at is not null then null
       else jsonb_build_object('id',current_item.id,'name',current_item.name,'purchased',current_item.purchased,
         'quantity',current_item.quantity,'unit',current_item.unit,'created_at',current_item.created_at) end);
   insert into public.e4_list_operations(actor_id,operation_id,list_id,payload_hash,result)
-    values(actor,p_cancel,list_id,cancel_hash,result);
+    values(actor,p_cancel,target_list,cancel_hash,result);
   return result;
 end;
 $$;
