@@ -17,7 +17,7 @@ test('bound account queues an offline add across browser restart and syncs after
   const api = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } })
   const { error: authError } = await api.auth.signInWithPassword({ email, password })
   if (authError) throw authError
-  const integrated = process.env.GITHUB_REF_NAME === 'feature/e4-accepted-reintegration'
+  const integrated = ['feature/e4-accepted-reintegration', 'rollback/e4-indexeddb21'].includes(process.env.GITHUB_REF_NAME ?? '')
   let listId = ''
   if (!integrated) {
     const { data: list, error } = await api.from('shopping_lists').select('id').eq('name', 'SHOPPINGAPP_HTTP_TEST_A').single()
