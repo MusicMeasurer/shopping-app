@@ -526,7 +526,7 @@ export function createStorage(name = 'shopping-app') {
           // must not enter the active item store, counters, bulk marks or archive.
           work.itemChange = { operationId: op.operationId, after: op.base, before: op.base,
             addition: false, deletion: true, cancelling: !!row.cancellationId,
-            canCancel: !!row.neverDispatched && !row.deferred && !row.cancellationId }
+            canCancel: !row.deferred && !row.cancellationId }
         }
       }
       for (const draft of drafts) add(draft.operationId, [draft.id], 'lists', !!draft.nameConflict)
@@ -2470,10 +2470,11 @@ export function createStorage(name = 'shopping-app') {
         const row = await queue.get(key)
         if (!row) { await done; return 'missing' }
         const op = row.operation
-        if ((op.kind !== 'cloud-add' && op.kind !== 'cloud-update') || op.itemId !== itemId ||
-            row.accountId !== accountId || op.item.id !== itemId || op.item.listId !== op.localListId ||
-            (op.kind === 'cloud-update' && (!op.base || op.base.id !== itemId || op.base.listId !== op.localListId)) ||
-            row.conflict) { await done; return 'changed' }
+        if ((op.kind !== 'cloud-add' && op.kind !== 'cloud-update' && op.kind !== 'cloud-delete') || op.itemId !== itemId ||
+            row.accountId !== accountId ||
+            (op.kind !== 'cloud-delete' && (op.item.id !== itemId || op.item.listId !== op.localListId)) ||
+            (op.kind !== 'cloud-add' && (!op.base || op.base.id !== itemId || op.base.listId !== op.localListId)) ||
+            row.conflict || (op.kind === 'cloud-delete' && row.deferred)) { await done; return 'changed' }
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, op.localListId))
         const mappings = await tx.objectStore('accountListMappings').index('byAccount').getAll(accountId)
         const request = await tx.objectStore('accountCompletionRequests').get(accountKey(accountId,op.remoteListId))
@@ -2481,8 +2482,8 @@ export function createStorage(name = 'shopping-app') {
         const current = await tx.objectStore('accountItems').get(accountKey(accountId,itemId))
         const other = (await queue.index('byAccount').getAll(accountId)).some(entry =>
           entry.key !== key && (entry.operation.kind === 'upsert' ? entry.operation.item.id : entry.operation.itemId) === itemId)
-        if (!mapping || mapping.remoteListId !== op.remoteListId || !current ||
-            !sameItemSnapshot(current.item,row.following?.item ?? op.item) || other || request ||
+        if (!mapping || mapping.remoteListId !== op.remoteListId ||
+            (op.kind === 'cloud-delete' ? !!current : !current || !sameItemSnapshot(current.item,row.following?.item ?? op.item)) || other || request ||
             mappings.some(entry => mergeTouches(entry.pendingMerge,op.localListId)) ||
             completions.some(entry => entry.intent.remoteListId === op.remoteListId)) {
           await done; return 'changed'
@@ -2497,7 +2498,7 @@ export function createStorage(name = 'shopping-app') {
     async readAccountItemCancellations(accountId: string): Promise<ItemCancellation[]> {
       const rows = await (await database).getAllFromIndex('accountOperations','byAccount',accountId)
       return rows.flatMap(row => row.cancellationId && !row.conflict &&
-        (row.operation.kind === 'cloud-add' || row.operation.kind === 'cloud-update')
+        (row.operation.kind === 'cloud-add' || row.operation.kind === 'cloud-update' || row.operation.kind === 'cloud-delete')
         ? [{ operation: row.operation, cancellationId: row.cancellationId }] : [])
     },
     async markAccountItemSyncFailed(accountId: string, operationId: string, cancellationId?: string): Promise<void> {
@@ -2559,6 +2560,7 @@ export function createStorage(name = 'shopping-app') {
         await done
         listSyncLedger.discard(accountId,op.operationId,[op.itemId])
         if (receipt.status === 'superseded') listSyncLedger.notifyCancellation(accountId,
+          op.kind === 'cloud-delete' ? 'Отмена удаления не выполнена: товар уже удалён или изменился. Загружено актуальное состояние.' :
           'Отмена не выполнена: товар уже изменён на другом устройстве. Загружено актуальное состояние.')
       } catch (error) { try { tx.abort() } catch {} await done.catch(() => {}); throw error }
     },

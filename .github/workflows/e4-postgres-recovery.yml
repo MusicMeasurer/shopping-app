@@ -191,6 +191,11 @@ jobs:
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_item_cancellation.sql
           psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_account_change_feed.sql
 
+      - name: Verify cancellation of unconfirmed deletion and late-send fence
+        run: |
+          psql -X -v ON_ERROR_STOP=1 -f cloud/drafts/047_e4_item_delete_cancellation.sql
+          psql -X -v ON_ERROR_STOP=1 -f tests/recovery/test_e4_item_delete_cancellation.sql
+
       - name: Rehearse encrypted account recovery from an older isolated snapshot
         env:
           RECOVERY_PG_CONTAINER: ${{ job.services.postgres.id }}

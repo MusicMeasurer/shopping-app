@@ -195,3 +195,36 @@ describe('atomic cancellation of a confirmed item deletion before dispatch', () 
     await storage.close()
   })
 })
+
+
+describe('durable cancellation of a claimed delete', () => {
+  for (const applied of [false,true]) it('reconciles claimed deletion (already committed: '+applied+') without retrying the original', async () => {
+    const {storage,name,item,add} = await setup()
+    await storage.saveAccountEdit('a',add)
+    await storage.commitAccountReceipt('a',add.operationId,remote,item.id,1)
+    const deletion = {kind:'cloud-delete' as const,operationId:crypto.randomUUID(),localListId:item.listId,
+      remoteListId:remote,itemId:item.id,expectedVersion:1}
+    await storage.saveAccountEdit('a',deletion)
+    await storage.claimAccountPending('a',deletion.operationId)
+    expect(await storage.cancelUnsentAccountItemEdit('a',deletion.operationId,item.id)).toBe('requires-reconciliation')
+    expect(await storage.requestAccountItemCancellation('a',deletion.operationId,item.id)).toBe('queued')
+    const cancellation = (await storage.readAccountItemCancellations('a'))[0]
+    if (applied) await storage.commitAccountReceipt('a',deletion.operationId,remote,item.id,2)
+    expect(await storage.readSyncableAccountPending('a')).toEqual([])
+    await storage.close()
+    const reopened = createStorage(name)
+    expect(await reopened.readAccountItemCancellations('a')).toEqual([cancellation])
+    await expect(reopened.claimAccountPending('a',deletion.operationId)).rejects.toBeInstanceOf(PendingOperationMissingError)
+    const rpc = vi.fn(async () => ({data:{operation_id:deletion.operationId,cancellation_id:cancellation.cancellationId,
+      list_id:remote,item_id:item.id,status:applied?'superseded':'cancelled',item_version:applied?2:1,
+      item:applied?null:{id:item.id,name:item.name,purchased:item.purchased,quantity:null,unit:null,created_at:new Date(item.createdAt).toISOString()}},error:null}))
+    expect(await flushItemCancellations(reopened,{rpc} as unknown as Pick<SupabaseClient,'rpc'>,'a',()=>true,()=>{})).toBeUndefined()
+    expect(rpc).toHaveBeenCalledWith('cancel_e4_item_delete',{p_cancel:cancellation.cancellationId,
+      p_original:{operation_id:deletion.operationId,item_id:item.id,list_id:remote,kind:'delete',expected_version:1}})
+    expect(await reopened.readAccountPending('a')).toEqual([])
+    expect(await reopened.readAccountItems('a')).toEqual(applied?[]:[item])
+    expect((await reopened.readAccountItemVersions('a'))[0].version).toBe(applied?2:1)
+    if (applied) expect(reopened.listSyncLedger.cancellationNotice('a')).toContain('уже удалён')
+    await reopened.close()
+  })
+})

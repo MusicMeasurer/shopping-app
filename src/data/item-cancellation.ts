@@ -8,7 +8,7 @@ import { parseRemoteItems } from './remote-snapshot'
 
 export interface ItemCancellation {
   cancellationId: string
-  operation: Extract<CloudPendingOperation, { kind: 'cloud-add' | 'cloud-update' }>
+  operation: Extract<CloudPendingOperation, { kind: 'cloud-add' | 'cloud-update' | 'cloud-delete' }>
 }
 export interface ItemCancellationReceipt {
   operationId: string; cancellationId: string; remoteListId: string; itemId: string
@@ -43,9 +43,10 @@ export async function sendItemCancellation(client: Pick<SupabaseClient,'rpc'>, c
   if (op.kind === 'cloud-update' && !op.base) throw new Error('Missing confirmed item snapshot')
   const before = op.kind === 'cloud-update' && op.base ? { name: op.base.name, purchased: op.base.purchased,
     quantity: op.base.quantity ?? null, unit: op.base.unit ?? null } : null
-  const {data,error} = await client.rpc('cancel_e4_item_edit',{
-    p_cancel: cancellation.cancellationId, p_original: remoteMutationPayload(resolveVersionedMutation(op)), p_before: before,
-  })
+  const payload = { p_cancel: cancellation.cancellationId, p_original: remoteMutationPayload(resolveVersionedMutation(op)) }
+  const {data,error} = op.kind === 'cloud-delete'
+    ? await client.rpc('cancel_e4_item_delete',payload)
+    : await client.rpc('cancel_e4_item_edit',{ ...payload, p_before: before })
   if (error) throw error
   return parseItemCancellationReceipt(data,cancellation)
 }

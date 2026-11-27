@@ -848,10 +848,6 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
     try {
       const result = await storage.cancelUnsentAccountItemEdit(accountId,itemChange.operationId,id)
       if (result === 'requires-reconciliation') {
-        if (itemChange.deletion) {
-          setItemCancellationError('Удаление уже отправлено. Дождитесь подтверждения состояния товара.')
-          return
-        }
         const queued = await storage.requestAccountItemCancellation(accountId,itemChange.operationId,id)
         if (queued !== 'queued') throw new Error('Item changed')
         setSyncItemId(undefined)
