@@ -2377,7 +2377,7 @@ export function createStorage(name = 'shopping-app') {
     },
 
     /**
-     * Roll back only a versioned add/update which has never been claimed.
+     * Roll back only a versioned item change which has never been claimed.
      * The queue, item and version checks share one IndexedDB transaction with
      * claimAccountPending's accountOperations store. Unknown server outcomes
      * deliberately remain queued; this method must never be used for them.
@@ -2397,8 +2397,9 @@ export function createStorage(name = 'shopping-app') {
         const row = await queue.get(key)
         if (!row) { await done; return 'missing' }
         const op = row.operation
-        if ((op.kind !== 'cloud-add' && op.kind !== 'cloud-update') || op.itemId !== itemId ||
-            op.item.id !== itemId || op.item.listId !== op.localListId || row.accountId !== accountId) {
+        if ((op.kind !== 'cloud-add' && op.kind !== 'cloud-update' && op.kind !== 'cloud-delete') ||
+            op.itemId !== itemId || row.accountId !== accountId ||
+            (op.kind !== 'cloud-delete' && (op.item.id !== itemId || op.item.listId !== op.localListId))) {
           await done; return 'changed'
         }
         if (!row.neverDispatched || row.conflict || row.deferred || row.cancellationId) {
@@ -2416,7 +2417,8 @@ export function createStorage(name = 'shopping-app') {
         if (!mapping || mapping.remoteListId !== op.remoteListId ||
             mappings.some(entry => mergeTouches(entry.pendingMerge, op.localListId)) ||
             request || completions.some(entry => entry.intent.remoteListId === op.remoteListId) || other ||
-            !current || !sameItemSnapshot(current.item, op.item) || current.item.createdAt !== op.item.createdAt) {
+            (op.kind === 'cloud-delete' ? !!current :
+              !current || !sameItemSnapshot(current.item, op.item) || current.item.createdAt !== op.item.createdAt)) {
           await done; return 'changed'
         }
         if (op.kind === 'cloud-add') {
@@ -2425,7 +2427,7 @@ export function createStorage(name = 'shopping-app') {
         } else {
           const before = op.base
           if (!before || before.id !== itemId || before.listId !== op.localListId ||
-              before.createdAt !== current.item.createdAt || !version ||
+              (op.kind !== 'cloud-delete' && before.createdAt !== current?.item.createdAt) || !version ||
               version.remoteListId !== op.remoteListId || version.version !== op.expectedVersion) {
             await done; return 'requires-reconciliation'
           }

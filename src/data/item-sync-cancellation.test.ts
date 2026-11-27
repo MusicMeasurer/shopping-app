@@ -144,3 +144,54 @@ describe('durable uncertain cancellation', () => {
     await storage.close()
   })
 })
+
+
+describe('atomic cancellation of a confirmed item deletion before dispatch', () => {
+  it('restores the original item and version after restart, without touching other accounts or rows', async () => {
+    const {storage,name,item,add} = await setup()
+    const original = {...item, quantity: 2, unit: 'л', purchased: true}
+    await storage.saveAccountEdit('a', {...add,item:original})
+    await storage.commitAccountReceipt('a',add.operationId,remote,item.id,1)
+    const other = createItem('groceries','Хлеб')
+    await storage.saveAccountItem('a',other)
+    await storage.saveAccountItem('b',original)
+    const deletion = {kind:'cloud-delete' as const,operationId:crypto.randomUUID(),localListId:item.listId,
+      remoteListId:remote,itemId:item.id,expectedVersion:1}
+    await storage.saveAccountEdit('a',deletion)
+    expect(await storage.readAccountItems('a')).toEqual([other])
+    await storage.close()
+    const reopened = createStorage(name)
+    expect(await reopened.cancelUnsentAccountItemEdit('b',deletion.operationId,item.id)).toBe('missing')
+    expect(await reopened.cancelUnsentAccountItemEdit('a',deletion.operationId,item.id)).toBe('cancelled')
+    expect(await reopened.readAccountItems('a')).toEqual(expect.arrayContaining([original,other]))
+    expect(await reopened.readAccountItems('a')).toHaveLength(2)
+    expect(await reopened.readAccountItems('b')).toEqual([original])
+    expect(await reopened.readAccountPending('a')).toEqual([])
+    expect((await reopened.readAccountItemVersions('a'))[0].version).toBe(1)
+    await expect(reopened.claimAccountPending('a',deletion.operationId)).rejects.toBeInstanceOf(PendingOperationMissingError)
+    await reopened.close()
+  })
+  it('does not restore or discard an already claimed delete, even during a race', async () => {
+    const {storage,item,add} = await setup()
+    await storage.saveAccountEdit('a',add)
+    await storage.commitAccountReceipt('a',add.operationId,remote,item.id,1)
+    const deletion = {kind:'cloud-delete' as const,operationId:crypto.randomUUID(),localListId:item.listId,
+      remoteListId:remote,itemId:item.id,expectedVersion:1}
+    await storage.saveAccountEdit('a',deletion)
+    const [claimed,cancelled] = await Promise.allSettled([
+      storage.claimAccountPending('a',deletion.operationId),
+      storage.cancelUnsentAccountItemEdit('a',deletion.operationId,item.id)
+    ])
+    if (claimed.status === 'fulfilled') {
+      expect(cancelled).toEqual({status:'fulfilled',value:'requires-reconciliation'})
+      expect(await storage.readAccountItems('a')).toEqual([])
+      expect(await storage.readAccountPending('a')).toHaveLength(1)
+    } else {
+      expect(claimed.reason).toBeInstanceOf(PendingOperationMissingError)
+      expect(cancelled).toEqual({status:'fulfilled',value:'cancelled'})
+      expect(await storage.readAccountItems('a')).toEqual([item])
+      expect(await storage.readAccountPending('a')).toEqual([])
+    }
+    await storage.close()
+  })
+})
