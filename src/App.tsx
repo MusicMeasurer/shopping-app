@@ -18,7 +18,7 @@ import { ListHeading } from './ListHeading'
 import { WorkspaceDialog } from './WorkspaceDialog'
 import { WorkspaceViewport } from './WorkspaceViewport'
 import { SyncIndicatorPreview } from './SyncIndicatorPreview'
-import { SyncIndicator } from './SyncIndicator'
+import { SyncIndicator, SyncIndicatorIcon, syncIndicatorLabels } from './SyncIndicator'
 import { useListSyncIndicators } from './hooks/useListSyncIndicators'
 import type { SyncWorkKind } from './data/list-sync-ledger'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef, type FormEvent, type ReactNode, type TouchEvent as ReactTouchEvent } from 'react'
@@ -48,7 +48,7 @@ export interface ListOperationStatus {
 }
 
 type ResolveItemDeletion = (conflict: ItemDeletionConflict, keepItem: boolean) => Promise<void>
-export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, onRetryListSync, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null; removeAuthorizedLocalCopy?: (profileId: string, accountId: string) => Promise<void>; checkLocalProfile?: (account: string) => Promise<boolean>; hiddenAccountIds?: ReadonlySet<string> }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onRetryListSync?: (id: string, kinds: readonly SyncWorkKind[]) => void; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+export function App({ storage, accountId = null, cloudOffline = false, onQueued, refreshRevision = 0, headerActions, accountMenu, onCompleteCloudList, cloudBoundLists = {}, listOperations = [], completionNotice, completionError, accountCloudLists = [], onCreateCloudList, onChangeCloudList, cloudListBusy = false, cloudListError, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, onRetryListSync, cloudMerge }: { storage: Storage; accountId?: string | null; cloudOffline?: boolean; onQueued?: () => void; refreshRevision?: number; headerActions?: ReactNode; accountMenu?: { open: boolean; setOpen: (open: boolean) => void; content: (profile: LocalProfile | undefined) => ReactNode; busy: boolean; name?: string; syncState?: ProfileSyncState; onSelectLocal: () => void; onOpenLinked: (profile: LocalProfile, previousProfileId?: string) => void; sessionAccount?: string | null; removeAuthorizedLocalCopy?: (profileId: string, accountId: string) => Promise<void>; checkLocalProfile?: (account: string) => Promise<boolean>; hiddenAccountIds?: ReadonlySet<string> }; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists?: Record<string, string>; listOperations?: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onRetryListSync?: (id: string, kinds: readonly SyncWorkKind[], itemId?: string) => void; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists?: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   // Never mount a legacy guest workspace before resolving the durable cutover
   // marker. Otherwise a stale guest view could attempt writes after cutover.
   const [guestProfile, setGuestProfile] = useState<string | null | undefined>(undefined)
@@ -419,7 +419,7 @@ export function App({ storage, accountId = null, cloudOffline = false, onQueued,
   </>
 }
 
-function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, onRetryListSync, cloudMerge, localCompletions, queuedMerges = [] }: { queuedMerges?: Awaited<ReturnType<Storage['readQueuedListMerges']>>; localCompletions?: Awaited<ReturnType<Storage['readLocalCompletionView']>>['operations']; storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onRetryListSync?: (id: string, kinds: readonly SyncWorkKind[]) => void; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
+function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, onQueued, refreshRevision, headerActions, onCompleteCloudList, cloudBoundLists, listOperations, completionNotice, completionError, accountCloudLists, onCreateCloudList, onChangeCloudList, cloudListBusy, cloudListError, onOpenProfileMenu, cloudArchive, cloudArchiveCount, onOpenCloudArchive, onResolveItemDeletion, onResolveItemName, onRetryListSync, cloudMerge, localCompletions, queuedMerges = [] }: { queuedMerges?: Awaited<ReturnType<Storage['readQueuedListMerges']>>; localCompletions?: Awaited<ReturnType<Storage['readLocalCompletionView']>>['operations']; storage: Storage; accountId: string | null; cloudStatus?: CloudStatus; guestProfileId: string | null; onQueued?: () => void; refreshRevision: number; headerActions?: ReactNode; onCompleteCloudList?: (listId: ListId, mode: CompletionMode, confirmedMarked?: boolean, confirmedItemIds?: readonly string[]) => void; cloudBoundLists: Record<string, string>; listOperations: ListOperationStatus[]; completionNotice?: ListActionMessage; completionError?: string; onCreateCloudList?: (name: string, kind: 'permanent' | 'oneoff', symbol: string) => Promise<ListId | undefined>; onChangeCloudList?: (id: string, action: 'rename' | 'kind' | 'reorder', value: string) => Promise<boolean>; cloudListBusy?: boolean; cloudListError?: string; onOpenProfileMenu: () => void; cloudArchive?: ReactNode; cloudArchiveCount?: number; onOpenCloudArchive?: () => void; cloudMerge?: ListMergeActions; onResolveItemDeletion?: ResolveItemDeletion; onRetryListSync?: (id: string, kinds: readonly SyncWorkKind[], itemId?: string) => void; onResolveItemName?: (decision: ItemNameDecision) => Promise<void>; accountCloudLists: { id: string; name: string; kind: 'permanent' | 'oneoff' }[] }) {
   const workspaceKey = 'shopping-workspace:' + (accountId ?? guestProfileId ?? 'guest')
   const cardSizeKey = workspaceKey + ':card-size'
   const [cardSize, setCardSize] = useState<'large' | 'standard'>(() => {
@@ -819,7 +819,52 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }, [storage, accountId, refreshRevision])
   const listConflicts = itemConflicts.filter(conflict => conflict.localListId === active)
   const selectedConflict = listConflicts.find(conflict => conflict.operationId === conflictId)
-  const cardSync = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId), active)
+  const syncView = useListSyncIndicators(storage, accountId, refreshRevision, draftRevision, itemConflicts.map(row => row.localListId), active)
+  const cardSync = syncView.lists
+  const [syncItemId, setSyncItemId] = useState<string>()
+  const [itemCancellationBusy, setItemCancellationBusy] = useState(false)
+  const [itemCancellationError, setItemCancellationError] = useState('')
+  const [itemSyncOnline, setItemSyncOnline] = useState(() => typeof navigator !== 'undefined' && navigator.onLine)
+  useEffect(() => {
+    const update = () => setItemSyncOnline(navigator.onLine)
+    window.addEventListener('online',update); window.addEventListener('offline',update)
+    return () => { window.removeEventListener('online',update); window.removeEventListener('offline',update) }
+  },[])
+  const itemChange = syncView.work.find(row => row.itemIds?.includes(syncItemId ?? '') && row.itemChange)?.itemChange
+  const selectedSyncState = syncItemId ? syncView.items.get(syncItemId)?.state : undefined
+  function itemSyncLocked(item: typeof shopping.items[number]) {
+    const state = syncView.items.get(item.id)?.state
+    return (state !== undefined && state !== 'success') ||
+      (accountId !== null && !!cloudBoundLists[item.listId] && !syncView.ready)
+  }
+  function openItemSync(itemId: string) { setItemCancellationError(''); setSyncItemId(itemId) }
+  async function cancelItemChange() {
+    if (!accountId || !syncItemId || !itemChange || !itemChange.canCancel || itemChange.cancelling || itemCancellationBusy || activeListLocked) return
+    const id = syncItemId
+    setItemCancellationBusy(true); setItemCancellationError('')
+    try {
+      const result = await storage.cancelUnsentAccountItemEdit(accountId,itemChange.operationId,id)
+      if (result === 'requires-reconciliation') {
+        const queued = await storage.requestAccountItemCancellation(accountId,itemChange.operationId,id)
+        if (queued !== 'queued') throw new Error('Item changed')
+        setSyncItemId(undefined)
+        if (itemSyncOnline && cloudStatus === 'connected' && onRetryListSync)
+          onRetryListSync(itemChange.after.listId,['items'],id)
+        else onQueued?.()
+      } else if (result === 'cancelled') {
+        await shopping.refresh()
+        onQueued?.()
+        setSyncItemId(undefined)
+      } else {
+        setItemCancellationError('Состояние товара изменилось. Проверьте актуальные данные.')
+        await shopping.refresh()
+      }
+    } catch { setItemCancellationError('Не удалось отменить изменение. Операция сохранена в очереди.') }
+    finally { setItemCancellationBusy(false) }
+  }
+  const formatSyncItem = (item: typeof shopping.items[number]) =>
+    item.name + (item.quantity !== undefined || item.unit ? ' · ' + [item.quantity,item.unit].filter(value => value !== undefined).join(' ') : '') + (item.purchased ? ' · Куплено' : ' · Не куплено')
+
   async function resolveConflict(conflict: ItemDeletionConflict, keepItem: boolean) {
     if (!onResolveItemDeletion || resolvingConflict || listLocked(conflict.localListId)) return
     setResolvingConflict(true)
@@ -1142,14 +1187,14 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   async function saveEdit(event: FormEvent, item: typeof shopping.items[number]) {
     event.preventDefault()
-    if (activeListLocked) return
+    if (activeListLocked || itemSyncLocked(item)) return
     if (await shopping.edit(item, editingName, editingQuantity.trim() ? Number(editingQuantity) : undefined, editingUnit)) {
       setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
     }
   }
   return <WorkspaceViewport scope={JSON.stringify([workspaceKey, active, showArchive, sort, cardSize, contentSize])}
     overlay={JSON.stringify([editingId, renaming, newListDialog, settingsOpen, mergeSourceId, deleteListId,
-      completionListId, !!purchaseArchive, conflictId, nameConflict])}
+      completionListId, !!purchaseArchive, conflictId, nameConflict, syncItemId])}
     layoutKey={JSON.stringify([refreshRevision, draftRevision, cloudStatus, visibleLists.map(row => [row.id, row.name, row.kind, row.symbol]),
       rows.map(row => [row.id, row.name, row.quantity, row.unit, row.purchased]), listConflicts.map(row => [row.operationId, row.item.name]),
       activeNameConflicts.map(group => group.map(row => [row.id, row.name])), notice?.at, completionError, cloudListError,
@@ -1462,7 +1507,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         {listConflicts.map(conflict => <li key={conflict.operationId}><button type="button" onClick={() => {
           setConflictError('')
           setConflictId(conflict.operationId)
-        }}><strong>{conflict.item.name}</strong><span>{conflict.deleted === 'cloud'
+        }}><span className="item-conflict-sync"><SyncIndicatorIcon state="error"/></span><strong>{conflict.item.name}</strong><span>{conflict.deleted === 'cloud'
           ? 'Удалён в облаке, изменён здесь' : 'Удалён здесь, изменён в облаке'}</span></button></li>)}
       </ul>}
       {activeNameConflicts.length > 0 && <ul className="item-conflicts" aria-label="Совпадения названий">
@@ -1470,13 +1515,47 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
           const key = itemNameKey(group[0].name)
           return <li key={key}><button type="button" disabled={listMutationBusy || activeListLocked}
             onClick={() => setNameConflict({ listId: active, key })}>
-            <strong>{group[0].name}</strong><span>Совпадение названий · {group.length} позиции</span>
+            <span className="item-conflict-sync"><SyncIndicatorIcon state="error"/></span><strong>{group[0].name}</strong><span>Совпадение названий · {group.length} позиции</span>
           </button></li>
         })}
       </ul>}
-      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => <li key={item.id} data-item-id={item.id} className={item.purchased ? 'purchased' : ''}><label className="item"><input type="checkbox" checked={item.purchased} disabled={shopping.busy || activeListLocked} onChange={() => void shopping.toggle(item)}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>{<button type="button" aria-label={`Изменить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => { shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }} className="e4-small">✎</button>}<button className="delete" aria-label={`Удалить ${item.name}`} disabled={shopping.busy || activeListLocked} onClick={() => void shopping.remove(item.id)}>×</button></li>)}</ul>}
+      {syncView.cancellationNotice && accountId && <p role="status">{syncView.cancellationNotice}
+        <button type="button" onClick={() => storage.listSyncLedger.dismissCancellationNotice(accountId)}>Понятно</button></p>}
+      {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => {
+        const sync = syncView.items.get(item.id)
+        const disabled = shopping.busy || activeListLocked || itemSyncLocked(item)
+        return <li key={item.id} data-item-id={item.id} className={item.purchased ? 'purchased' : ''}>
+          <label className="item"><input type="checkbox" checked={item.purchased} disabled={disabled}
+            onChange={() => { if (!disabled) void shopping.toggle(item) }}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>
+          <button type="button" aria-label={`Изменить ${item.name}`} disabled={disabled}
+            onClick={() => { if (disabled) return; shopping.clearError(); setEditingId(item.id); setEditingName(item.name); setEditingQuantity(item.quantity?.toString() ?? ''); setEditingUnit(item.unit ?? '') }}
+            className="e4-small item-pencil">✎</button>
+          {sync ? <SyncIndicator item state={sync.state} since={sync.since} name={item.name}
+              onWaiting={() => openItemSync(item.id)} onError={() => openItemSync(item.id)}/>
+            : <button className="delete" aria-label={`Удалить ${item.name}`} disabled={disabled}
+                onClick={() => { if (!disabled) void shopping.remove(item.id) }}>×</button>}
+        </li>
+      })}</ul>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
     </section>}
+    {!showArchive && syncItemId && <WorkspaceDialog className="e4-editor item-sync-dialog"
+      label={selectedSyncState ? syncIndicatorLabels[selectedSyncState] : 'Состояние синхронизации'}
+      onDismiss={() => { if (!itemCancellationBusy) setSyncItemId(undefined) }}>
+      <h2>{selectedSyncState ? syncIndicatorLabels[selectedSyncState] : 'Состояние изменилось'}</h2>
+      {itemChange ? <>
+        <strong>{itemChange.after.name}</strong>
+        <dl><dt>Последнее подтверждённое состояние</dt><dd>{itemChange.addition ? 'Товара ранее не было' : itemChange.before ? formatSyncItem(itemChange.before) : 'Нет подтверждённого снимка'}</dd>
+        <dt>Текущее состояние</dt><dd>{formatSyncItem(itemChange.after)}</dd></dl>
+        {itemChange.cancelling && <p>Отмена ожидает подтверждения сервера. До подтверждения товар недоступен для изменения.</p>}
+        {selectedSyncState === 'error' && <p>Не удалось подтвердить {itemChange.cancelling ? 'отмену изменения' : 'сохранение изменения'} в облаке.</p>}
+        {selectedSyncState === 'error' && <button type="button" disabled={!itemSyncOnline || cloudStatus !== 'connected' || !onRetryListSync || itemCancellationBusy || activeListLocked}
+          onClick={() => { onRetryListSync?.(itemChange.after.listId,['items'],syncItemId); setSyncItemId(undefined) }}>Повторить синхронизацию</button>}
+        {!itemChange.cancelling && <button type="button" className="danger" disabled={!itemChange.canCancel || itemCancellationBusy || activeListLocked ||
+          (selectedSyncState !== 'waiting' && selectedSyncState !== 'error')} onClick={() => void cancelItemChange()}>Отменить изменения</button>}
+      </> : <p>Проверьте актуальное состояние товара.</p>}
+      {itemCancellationError && <p role="alert">{itemCancellationError}</p>}
+      <button type="button" disabled={itemCancellationBusy} onClick={() => setSyncItemId(undefined)}>Закрыть</button>
+    </WorkspaceDialog>}
     {!showArchive && selectedNameConflict && <ItemNameConflictDialog
       key={JSON.stringify(selectedNameConflict.map(item => item.id))}
       group={selectedNameConflict} items={visibleItems}
@@ -1506,7 +1585,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <div className="item-unit-options" role="group" aria-label="Быстрый выбор единицы измерения">
         {['шт.', 'уп.'].map(unit => <button type="button" key={unit} aria-pressed={editingUnit === unit}
           disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}
-      </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
+      </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || itemSyncLocked(editingItem) || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     {semanticNotice && semanticNoticeKey && <SyncContextNotice key={semanticNoticeKey} notice={semanticNotice}
       itemRemoval={semanticPresented?.fate.itemRemoval}
       busy={semanticBusy || (!semanticLoaded && !semanticError)} error={semanticError}

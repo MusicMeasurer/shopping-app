@@ -1856,10 +1856,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setDismissedSyncError(false)
     requestRecovery.current?.(true)
   }
-  async function retryListSync(listId: string, kinds: readonly SyncWorkKind[]) {
+  async function retryListSync(listId: string, kinds: readonly SyncWorkKind[], itemId?: string) {
     if (!client || !currentAccount || readyAccount !== currentAccount || !navigator.onLine || cloudMutationBusy) return
     const account = currentAccount
-    const key = account + ':' + listId
+    const key = account + ':' + listId + (itemId ? ':' + itemId : '')
     if (cardRetries.current.has(key)) return
     cardRetries.current.add(key)
     const stillActive = () => activeAccount.current === account
@@ -1869,10 +1869,10 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (!stillActive()) return
       if (kinds.includes('items')) {
         if (await storage.readAccountFeedPosition(account) !== undefined) {
-          await flushAccountBatch(storage, client, account, stillActive, () => setWorkspaceRevision(value => value + 1), listId)
+          await flushAccountBatch(storage, client, account, stillActive, () => setWorkspaceRevision(value => value + 1), listId, itemId)
         } else {
           const remoteListId = cloudBindings[listId]
-          if (remoteListId) await createAccountSync(storage, client, { accountId: account, localListId: listId, remoteListId, isActive: stillActive }).flush()
+          if (remoteListId) await createAccountSync(storage, client, { accountId: account, localListId: listId, remoteListId, isActive: stillActive, onlyItemId: itemId, onReconciled: () => setWorkspaceRevision(value => value + 1) }).flush()
         }
       }
       if (stillActive() && kinds.includes('items') && !(await storage.readAccountPending(account)).length) {
@@ -1927,7 +1927,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       }} />}
     {client && offlineAccount && <p role="status">Локальный профиль: нет сети. Облако недоступно до повторной проверки аккаунта.</p>}
     <App key={workspaceAccount ?? 'local:' + deletion.revision} storage={storage} accountId={workspaceAccount} cloudOffline={!!offlineAccount} onQueued={workspaceAccount ? onQueued : undefined} refreshRevision={workspaceRevision}
-      onRetryListSync={currentAccount && readyAccount === currentAccount ? (id, kinds) => void retryListSync(id, kinds) : undefined}
+      onRetryListSync={currentAccount && readyAccount === currentAccount ? (id, kinds, itemId) => void retryListSync(id, kinds, itemId) : undefined}
       onResolveItemName={client && currentAccount && readyAccount === currentAccount && syncOnline ? async decision => {
         const listId = decision.change.listId
         const remoteListId = cloudBindings[listId]

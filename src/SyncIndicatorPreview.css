@@ -45,3 +45,14 @@
 
 /* Keep the pictogram's actual box at the same width as the status artwork. */
 .shopping-e4 nav.lists-grid .list-symbol { justify-self: start; width: var(--card-symbol-size); }
+
+/* Item slot matches the 44px delete hit area without changing the row layout. */
+.shopping-e4 .item-pencil { font-size: 26px; }
+.shopping-e4 .item-card-sync { display: grid; place-items: center; flex: 0 0 44px;
+  width: 44px; height: 44px; min-width: 44px; min-height: 44px; padding: 9px;
+  margin: 0; background: transparent; border: 0; box-shadow: none; }
+.shopping-e4 .item-card-sync .sync-indicator-artwork { width: 26px; height: 26px; }
+.shopping-e4 .item-conflict-sync { float: right; width: 26px; height: 26px; }
+.item-sync-dialog dl { margin: 12px 0; }
+.item-sync-dialog dt { color: #64766d; font-size: 13px; }
+.item-sync-dialog dd { margin: 4px 0 14px; overflow-wrap: anywhere; }

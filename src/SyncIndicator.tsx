@@ -26,14 +26,16 @@ export function SyncIndicatorIcon({ state, preview = false }: { state: SyncIndic
   </svg>
 }
 
-export function SyncIndicator({ state, since, onError, name }: {
-  state: SyncIndicatorState; since?: number; onError?: () => void; name: string
+export function SyncIndicator({ state, since, onError, onWaiting, name, item = false }: {
+  state: SyncIndicatorState; since?: number; onError?: () => void; onWaiting?: () => void; name: string; item?: boolean
 }) {
   const label = syncIndicatorLabels[state] + ' — ' + name
   const style = useMemo(() => state === 'success' && since !== undefined ? { animationDelay: '-' + Math.max(0, Date.now() - since) + 'ms' } : undefined, [state, since])
   const artwork = <span className="sync-indicator-artwork" key={state + ":" + (since ?? "")} style={style}><SyncIndicatorIcon state={state}/></span>
-  return state === 'error' && onError
-    ? <button type="button" className="list-card-sync" data-sync-state={state} aria-label={label} title={label}
-        onClick={onError}>{artwork}</button>
-    : <span role="img" aria-label={label} title={label} className="list-card-sync" data-sync-state={state}>{artwork}</span>
+  const action = state === 'error' ? onError : state === 'waiting' ? onWaiting : undefined
+  const className = item ? 'item-card-sync' : 'list-card-sync'
+  return action
+    ? <button type="button" className={className} data-sync-state={state} aria-label={label} title={label}
+        onClick={action}>{artwork}</button>
+    : <span role="img" aria-label={label} title={label} className={className} data-sync-state={state}>{artwork}</span>
 }

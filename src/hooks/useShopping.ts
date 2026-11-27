@@ -50,7 +50,7 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
       }
     }
   }
-  return { items, loading, busy, error: error || readError, writeError: error, readError, reload, clearError: () => { setError(''); setReadError('') },
+  return { items, loading, busy, error: error || readError, writeError: error, readError, reload, refresh: () => read(), clearError: () => { setError(''); setReadError('') },
     add: async (listId: ListId, name: string) => {
       let entries: ParsedItem[]
       try { entries = storage.saveMany ? parseItems(name) : [{ name: normalizeItemName(name) }] }

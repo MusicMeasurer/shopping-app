@@ -2440,7 +2440,7 @@ export function createStorage(name = 'shopping-app') {
       const deleted = await tx.objectStore('accountDeletions').get(accountId)
       const queue = tx.objectStore('accountOperations')
       const row = await queue.get(accountKey(accountId,op.operationId))
-      const active = !deleted && row?.cancellationId === cancellation.cancellationId &&
+      const active = !deleted && !!row && row.cancellationId === cancellation.cancellationId &&
         JSON.stringify(row.operation) === JSON.stringify(op)
       if (active && row?.syncError) await queue.put({ ...row, syncError: false })
       await tx.done
