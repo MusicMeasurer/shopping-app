@@ -34,3 +34,8 @@ export function acknowledgeOperation(
 ): PendingItemOperation[] {
   return queue.filter(entry => entry.operationId !== operationId)
 }
+
+/** The inventory can become stale when an unsent operation is cancelled before claim. */
+export class PendingOperationMissingError extends Error {
+  constructor() { super('Cloud operation no longer pending'); this.name = 'PendingOperationMissingError' }
+}

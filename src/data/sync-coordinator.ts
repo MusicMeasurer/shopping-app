@@ -1,5 +1,5 @@
 import type { Item } from '../domain/shopping'
-import type { PendingItemOperation } from './pending-operations'
+import { PendingOperationMissingError, type PendingItemOperation } from './pending-operations'
 import type { RemoteItem, fetchRemoteItems } from './remote-snapshot'
 import type { RemoteMutation, RemoteMutationReceipt, applyRemoteMutation } from './remote-mutation'
 import { drainConfirmedQueue } from './confirmed-queue'
@@ -79,7 +79,11 @@ export function createSyncCoordinator(
           dependencies.readPending,
           async operation => {
             assertActive()
-            const claimed = dependencies.claimPending ? await dependencies.claimPending(operation.operationId) : operation
+            const claimed = dependencies.claimPending ? await dependencies.claimPending(operation.operationId).catch(error => {
+              if (error instanceof PendingOperationMissingError) return undefined
+              throw error
+            }) : operation
+            if (!claimed) return false
             assertActive()
             const mutation = dependencies.resolveMutation(claimed)
             if (mutation.operationId !== operation.operationId || mutation.listId !== dependencies.listId) {

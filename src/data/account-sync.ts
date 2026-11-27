@@ -375,7 +375,7 @@ export function createAccountSync(
     fetch: () => fetchRemoteItems(client, remoteListId),
     send: async mutation => {
       activeOperations.add(mutation.operationId)
-      ledger?.begin(accountId, mutation.operationId, [localListId], 'items')
+      ledger?.begin(accountId, mutation.operationId, [localListId], 'items', true, undefined, [mutation.itemId])
       try { return await traceSync('batch-send', () => applyRemoteMutation(client, mutation), { count: 1 }) }
       catch (error) { if (isActive()) ledger?.fail(accountId, mutation.operationId); throw error }
     },

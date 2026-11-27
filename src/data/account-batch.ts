@@ -1,7 +1,7 @@
 import { markSync, traceSync } from './sync-diagnostics'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { createAccountSync, serializeAccountItemFlush } from './account-sync'
-import type { CloudPendingOperation } from './pending-operations'
+import { PendingOperationMissingError, type CloudPendingOperation } from './pending-operations'
 import { parseRemoteMutationReceipt, type RemoteMutation } from './remote-mutation'
 import type { Storage } from './storage'
 import { syncLedger } from './list-sync-ledger'
@@ -48,11 +48,17 @@ export function flushAccountBatch(
         if (batch.length === 50) break
       }
       if (!batch.length) break
-      const claimed = await traceSync('batch-claim', () => Promise.all(batch.map(operation => storage.claimAccountPending(accountId, operation.operationId))), { count: batch.length })
+      const claims = await traceSync('batch-claim', () => Promise.all(batch.map(async operation => {
+        try { return await storage.claimAccountPending(accountId, operation.operationId) }
+        catch (error) { if (error instanceof PendingOperationMissingError) return undefined; throw error }
+      })), { count: batch.length })
       if (!isActive()) return
+      const claimed = claims.filter((op): op is CloudPendingOperation =>
+        op !== undefined && op.kind !== 'upsert' && op.kind !== 'delete')
+      if (!claimed.length) continue
       const mutations = claimed.map(resolveVersionedMutation)
-      const unresolved = new Set(batch.map(op => op.operationId))
-      for (const op of batch) ledger?.begin(accountId, op.operationId, [op.localListId], 'items')
+      const unresolved = new Set(claimed.map(op => op.operationId))
+      for (const op of claimed) ledger?.begin(accountId, op.operationId, [op.localListId], 'items', true, undefined, [op.itemId])
       try {
       const { data, error } = await traceSync('batch-send', () => client.rpc('push_e4_account_changes', { p_account: accountId, p_operations: mutations.map(payload) }), { count: mutations.length }, result => !result.error)
       if (!isActive()) return
@@ -73,7 +79,7 @@ export function flushAccountBatch(
         if (outcome?.operation_id !== mutation.operationId || typeof outcome.message !== 'string')
           throw new Error('Batch outcome does not match the operation')
         markSync('batch-rejected', 'rejected')
-        const operation = batch[index]
+        const operation = claimed[index]
         const sync = createAccountSync(storage, client, {
           accountId, isActive, localListId: operation.localListId, remoteListId: operation.remoteListId, onReconciled,
         })

@@ -50,7 +50,7 @@ describe('list sync state is aggregated by actual operation and scoped account',
     const operation = { kind: 'cloud-add' as const, operationId: crypto.randomUUID(), localListId: list,
       remoteListId: list, itemId: item.id, item }
     await storage.saveAccountEdit(account, operation)
-    expect(await storage.readListSyncWork(account)).toEqual([waiting(operation.operationId, list)])
+    expect(await storage.readListSyncWork(account)).toEqual([{ ...waiting(operation.operationId, list), itemIds: [item.id] }])
     expect(await storage.readListSyncWork(other)).toEqual([])
     await storage.close()
     const reopened = createStorage(name)
