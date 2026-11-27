@@ -201,7 +201,13 @@ export function createAuthController(client: AuthClient, onChange: (view: AuthVi
     try {
       const result = await Promise.race([
         verify(),
-        new Promise<boolean>(resolve => { timeout = setTimeout(() => { expired = true; resolve(false) }, 20_000) }),
+        new Promise<boolean>(resolve => { timeout = setTimeout(() => {
+          expired = true
+          // Do not let a stalled verification trap subsequent recovery attempts.
+          // Existing waiters retain their own generation/deadline guards.
+          pendingIdentity = undefined
+          resolve(false)
+        }, 20_000) }),
       ])
       finish(expired ? 'timeout' : result ? 'ok' : 'rejected')
       return result
