@@ -267,6 +267,10 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
         await flush()
         const known = (await storage.readAccountItemVersions(accountId)).find(row=>row.itemId===item.id)
         if (!known) throw new Error('Missing add receipt')
+        const before = await client.from('shopping_items').select('id,name,purchased,quantity,unit,version,created_at')
+          .eq('id',item.id).eq('list_id',owned.id).is('deleted_at',null).single()
+        if (before.error) throw before.error
+        expect(before.data).toMatchObject({id:item.id,name:item.name,purchased:true,quantity:2,unit:'л',version:known.version})
         const operationId = crypto.randomUUID()
         await storage.saveAccountEdit(accountId,{kind:'cloud-delete',operationId,
           localListId:'groceries',remoteListId:owned.id,itemId:item.id,expectedVersion:known.version})
@@ -287,7 +291,7 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
         if (late.error) throw late.error
         if (alreadyApplied) expect(late.data?.[0]?.receipt?.item_version).toBe(known.version+1)
         else expect(late.data?.[0]?.receipt).toBeUndefined()
-        const live = await client.from('shopping_items').select('id,name,purchased,quantity,unit,version')
+        const live = await client.from('shopping_items').select('id,name,purchased,quantity,unit,version,created_at')
           .eq('id',item.id).eq('list_id',owned.id).is('deleted_at',null)
         if (live.error) throw live.error
         const local = (await storage.readAccountItems(accountId)).find(row=>row.id===item.id)
@@ -296,8 +300,8 @@ describe.skipIf(labEnv.E3_LAB_URL === undefined)('real cloud-to-local receipt in
           expect(local).toBeUndefined()
           expect(storage.listSyncLedger.cancellationNotice(accountId)).toContain('уже удалён')
         } else {
-          expect(live.data).toEqual([{id:item.id,name:item.name,purchased:true,quantity:2,unit:'л',version:known.version}])
-          expect(local).toMatchObject(item)
+          expect(live.data).toEqual([before.data])
+          expect(local).toMatchObject({...item,createdAt:Date.parse(before.data.created_at)})
         }
         expect((await storage.readAccountItemVersions(accountId)).find(row=>row.itemId===item.id)?.version)
           .toBe(known.version+(alreadyApplied?1:0))
