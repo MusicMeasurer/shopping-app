@@ -1,0 +1,167 @@
+name: SYNC-UI 046 managed RPC acceptance
+on:
+  push:
+    branches: [test/sync-ui-046-managed-20261127]
+    paths: ['.github/workflows/sync-ui-046-managed.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: shoppingapp-migration-lab-account-a
+  queue: max
+jobs:
+  managed-046:
+    name: 046 real HTTP and scoped cleanup
+    runs-on: ubuntu-latest
+    environment: e3-lab
+    timeout-minutes: 8
+    env:
+      LAB_URL: ${{ secrets.E3_LAB_URL }}
+      LAB_KEY: ${{ secrets.E3_LAB_PUBLISHABLE_KEY }}
+      A_EMAIL: ${{ secrets.E3_USER_A_EMAIL }}
+      A_PASSWORD: ${{ secrets.E3_USER_A_PASSWORD }}
+      B_EMAIL: ${{ secrets.E3_USER_B_EMAIL }}
+      B_PASSWORD: ${{ secrets.E3_USER_B_PASSWORD }}
+    steps:
+      - name: Pinned laboratory and real RPC
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import os, json, uuid, urllib.request, urllib.error, urllib.parse
+          from concurrent.futures import ThreadPoolExecutor
+          from datetime import datetime, timezone
+
+          def uid(): return str(uuid.uuid4())
+          base=os.environ.get('LAB_URL','')
+          key=os.environ.get('LAB_KEY','')
+          if base != 'https://gmrqeubhotjpmtwokfeq.supabase.co' or not key.startswith('sb_publishable_'):
+              raise SystemExit('FAIL pinned target or key')
+          if not all(os.environ.get(x) for x in ('A_EMAIL','A_PASSWORD','B_EMAIL','B_PASSWORD')) or os.environ['A_EMAIL']==os.environ['B_EMAIL']:
+              raise SystemExit('FAIL missing or identical test accounts')
+          name='SHOPPINGAPP_046_'+os.environ['GITHUB_RUN_ID']+'_'+uid()[:8]
+          a=b=lid=actor=None
+          count=0
+          cleanup_ok=False
+          def api(path,token=None,payload=None,method=None):
+              headers={'apikey':key,'Accept':'application/json'}
+              if token: headers['Authorization']='Bearer '+token
+              if payload is not None: headers['Content-Type']='application/json'
+              req=urllib.request.Request(base+path,headers=headers,data=None if payload is None else json.dumps(payload).encode(),method=method or ('POST' if payload is not None else 'GET'))
+              try:
+                  with urllib.request.urlopen(req,timeout=20) as r:
+                      raw=r.read(131072)
+                      return r.status,json.loads(raw) if raw else None
+              except urllib.error.HTTPError as e:
+                  return e.code,None
+          def check(label,ok):
+              global count
+              if not ok: raise AssertionError(label)
+              count+=1
+              print('PASS '+label,flush=True)
+          def rpc(token,fn,payload): return api('/rest/v1/rpc/'+fn,token,payload)
+          def success(result):
+              status,body=result
+              if status!=200 or not isinstance(body,dict): raise AssertionError('RPC unexpected HTTP '+str(status))
+              return body
+          def login(prefix):
+              body=success(api('/auth/v1/token?grant_type=password',payload={'email':os.environ[prefix+'_EMAIL'],'password':os.environ[prefix+'_PASSWORD']}))
+              return body['access_token'],body['user']['id']
+          def lists(token,**filters):
+              status,rows=api('/rest/v1/shopping_lists?'+urllib.parse.urlencode(dict(select='id,name,owner_id,revision,deleted_at',**filters)),token)
+              if status!=200 or not isinstance(rows,list): raise AssertionError('list read HTTP '+str(status))
+              return rows
+          def items(i):
+              status,rows=api('/rest/v1/shopping_items?'+urllib.parse.urlencode({'select':'id,list_id,name,purchased,quantity,unit,version,deleted_at','list_id':'eq.'+lid,'id':'eq.'+i}),a)
+              if status!=200 or not isinstance(rows,list): raise AssertionError('item read HTTP '+str(status))
+              return rows
+          def cancel(token,orig,cid,before=None): return rpc(token,'cancel_e4_item_edit',{'p_cancel':cid,'p_original':orig,'p_before':before})
+          def ordered(orig):
+              return rpc(a,'add_e4_ordered_item',{'p_operation':orig['operation_id'],'p_list':lid,'p_item':orig['item_id'],'p_name':orig['name'],'p_purchased':orig['purchased'],'p_quantity':orig.get('quantity'),'p_unit':orig.get('unit'),'p_created_at':orig['created_at']})
+          def write(orig):
+              return rpc(a,'apply_e4_item_change',{'p_operation':orig['operation_id'],'p_list':lid,'p_action':orig['kind'],'p_item':orig['item_id'],'p_name':orig['name'],'p_purchased':orig['purchased'],'p_expected_version':orig.get('expected_version'),'p_quantity':orig.get('quantity'),'p_unit':orig.get('unit')})
+          def batch(orig): return rpc(a,'push_e4_account_changes',{'p_account':actor,'p_operations':[orig]})
+          def rejected(result):
+              return result[0] in (400,401,403,409,422)
+          def add(i,label):
+              return dict(operation_id=uid(),list_id=lid,item_id=i,kind='add',name=label,purchased=False,quantity=None,unit=None,created_at=datetime.now(timezone.utc).isoformat())
+          def upd(i,ver,qty,label='Milk',bought=True):
+              return dict(operation_id=uid(),list_id=lid,item_id=i,kind='update',name=label,purchased=bought,expected_version=ver,quantity=qty,unit='l')
+          failed=False
+          try:
+              a,actor=login('A')
+              b,other=login('B')
+              check('real A/B authentication',actor!=other)
+              data=success(rpc(a,'create_e4_list',{'p_operation':uid(),'p_name':name,'p_kind':'oneoff'}))
+              lid=data['list_id']
+              rows=lists(a,id='eq.'+lid)
+              check('exact synthetic list owned by A',len(rows)==1 and rows[0]['name']==name and rows[0]['owner_id']==actor)
+              check('B cannot read A list',lists(b,id='eq.'+lid)==[])
+              i=uid(); orig=add(i,'Late 046'); cid=uid()
+              check('anon RPC denied',cancel(None,orig,cid)[0] in (401,403,404))
+              check('B RPC denied',cancel(b,orig,uid())[0]==403)
+              receipt=success(cancel(a,orig,cid))
+              check('A cancellation before dispatch',receipt['status']=='cancelled' and receipt['item'] is None and receipt['operation_id']==orig['operation_id'] and receipt['cancellation_id']==cid)
+              check('exact cancellation replay',success(cancel(a,orig,cid))==receipt)
+              check('changed cancellation payload denied',rejected(cancel(a,dict(orig,name='wrong'),cid)))
+              check('late ordered original denied',rejected(ordered(orig)))
+              check('late attribute original denied',rejected(write(orig)))
+              check('late legacy original denied',rejected(rpc(a,'apply_item_change',{'p_operation':orig['operation_id'],'p_list':lid,'p_action':'add','p_item':i,'p_name':orig['name'],'p_purchased':False,'p_expected_version':None})))
+              status,data=batch(orig)
+              check('late batch original denied',status==200 and isinstance(data,list) and len(data)==1 and 'receipt' not in data[0] and data[0].get('operation_id')==orig['operation_id'])
+              check('late write did not create item',items(i)==[])
+              i=uid(); orig=add(i,'Milk'); orig['quantity']=1; orig['unit']='l'
+              v=success(ordered(orig))['item_version']
+              before={'name':'Milk','purchased':False,'quantity':1,'unit':'l'}
+              edit=upd(i,v,3); ev=success(write(edit))['item_version']; cid=uid()
+              rec=success(cancel(a,edit,cid,before))
+              check('applied update compensated',rec['status']=='cancelled' and rec['item_version']==ev+1 and rec['item']['quantity']==1 and rec['item']['purchased']==False)
+              check('compensation replay no duplicate',success(cancel(a,edit,cid,before))==rec and items(i)[0]['version']==ev+1)
+              edit=upd(i,ev+1,5); v2=success(write(edit))['item_version']
+              v3=success(write(upd(i,v2,7,'Newer',False)))['item_version']
+              rec=success(cancel(a,edit,uid(),before))
+              row=items(i)[0]
+              check('newer version preserved',rec['status']=='superseded' and rec['item_version']==v3 and row['version']==v3 and row['name']=='Newer' and row['quantity']==7)
+              pending=upd(i,v3,99); rec=success(cancel(a,pending,uid(),before)); status,data=batch(pending)
+              check('unapplied update returns current and fences late request',rec['status']=='cancelled' and rec['item']['name']=='Newer' and status==200 and 'receipt' not in data[0] and items(i)[0]['quantity']==7)
+              i=uid(); orig=add(i,'Bread'); av=success(ordered(orig))['item_version']; cid=uid()
+              rec=success(cancel(a,orig,cid))
+              check('applied add removed',rec['status']=='cancelled' and rec['item'] is None and rec['item_version']==av+1)
+              check('replay of applied add cannot resurrect',success(cancel(a,orig,cid))==rec and success(ordered(orig))['item_version']==av and not any(x['deleted_at'] is None for x in items(i)))
+              i=uid(); orig=add(i,'Race'); cid=uid()
+              with ThreadPoolExecutor(max_workers=2) as pool:
+                  f1=pool.submit(ordered,orig); f2=pool.submit(cancel,a,orig,cid)
+                  original_result=f1.result(); rec=success(f2.result())
+              check('concurrent original/cancel resolves without active item',rec['status']=='cancelled' and (original_result[0]==200 or rejected(original_result)) and not any(x['deleted_at'] is None for x in items(i)))
+              check('concurrent cancellation replay',success(cancel(a,orig,cid))==rec)
+          except Exception as e:
+              print('FAIL '+(str(e) if isinstance(e,AssertionError) else type(e).__name__),flush=True)
+              failed=True
+          finally:
+              if a:
+                  try:
+                      matches=lists(a,name='eq.'+name,owner_id='eq.'+actor)
+                      if len(matches)>1: raise AssertionError('multiple synthetic lists')
+                      if matches:
+                          row=matches[0]
+                          if lid is not None and row['id']!=lid: raise AssertionError('cleanup identity mismatch')
+                          if row['deleted_at'] is None:
+                              receipt=success(rpc(a,'complete_e4_list',{'p_operation':uid(),'p_list':row['id'],'p_expected_revision':row['revision'],'p_mode':'delete_list'}))
+                              if receipt['list_id']!=row['id'] or receipt['archive_id'] is not None: raise AssertionError('cleanup receipt mismatch')
+                          remaining=lists(a,name='eq.'+name,owner_id='eq.'+actor)
+                          if any(x['deleted_at'] is None for x in remaining): raise AssertionError('active synthetic list remains')
+                      elif lid is not None: raise AssertionError('synthetic list disappeared before cleanup')
+                      cleanup_ok=True
+                      print('PASS scoped synthetic list cleanup',flush=True)
+                  except Exception as e:
+                      print('FAIL cleanup; inspect exact synthetic prefix '+name,flush=True)
+              for token in (a,b):
+                  if token:
+                      try:
+                          status,_=api('/auth/v1/logout?scope=local',token,method='POST')
+                          if status not in (200,204): failed=True; print('FAIL test session logout HTTP '+str(status),flush=True)
+                      except Exception:
+                          failed=True; print('FAIL test session logout',flush=True)
+          print('RPC assertions passed: '+str(count),flush=True)
+          if failed or not cleanup_ok: raise SystemExit(1)
+          PY
