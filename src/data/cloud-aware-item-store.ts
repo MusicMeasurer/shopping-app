@@ -17,9 +17,9 @@ function validateCloudItem(item: Item) {
 export function cloudAwareItemStore(storage: Storage, accountId: string, onQueued?: () => void) {
   return {
     read: () => storage.readAccountItems(accountId),
-    async saveMany(items: Item[]): Promise<void> {
-      items.forEach(validateCloudItem)
-      await storage.saveAccountItemsToSync(accountId, items)
+    async saveMany(items: Item[], marksOnly = false): Promise<void> {
+      if (!marksOnly) items.forEach(validateCloudItem)
+      await storage.saveAccountItemsToSync(accountId, items, marksOnly)
       onQueued?.()
     },
     async save(item: Item, _waitForSync = false): Promise<void> {
@@ -31,10 +31,11 @@ export function cloudAwareItemStore(storage: Storage, accountId: string, onQueue
         await storage.saveAccountItem(accountId, item)
         return
       }
-      // A stale event/render must not bypass the item-level UI lock. The
-      // storage transaction also rejects concurrent pending edits.
-      if ((await storage.readAccountPending(accountId)).some(operation =>
-        (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id))
+      // The write transaction, not a stale queue read, decides whether
+      // an existing unsent update can be coalesced or must remain immutable.
+      const pending = (await storage.readAccountPending(accountId)).filter(operation =>
+        (operation.kind === 'upsert' ? operation.item.id : operation.itemId) === item.id)
+      if (pending.some(operation => operation.kind !== 'cloud-update'))
         throw new ItemSaveError('Предыдущее изменение товара ещё синхронизируется. Сначала отмените его или дождитесь подтверждения.')
       const versions = await storage.readAccountItemVersions(accountId)
       const known = versions.find(row => row.itemId === item.id)

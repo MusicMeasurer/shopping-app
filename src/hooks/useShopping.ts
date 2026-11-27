@@ -97,6 +97,16 @@ export function useShopping(storage: ItemStore, refreshRevision = 0) {
       return mutate(() => storage.remove(decision.change.id, decision),
         current => current.filter(item => item.id !== decision.change.id))
     },
+    setPurchasedMany: async (target: readonly Item[], purchased: boolean) => {
+      const save = storage.saveMany
+      if (!save) return false
+      const changed = target.filter(item => item.purchased !== purchased).map(item => ({ ...item, purchased }))
+      if (!changed.length) return true
+      const ids = new Set(changed.map(item => item.id))
+      const result = await mutate(() => save(changed, true), current => current.map(item => ids.has(item.id) ? { ...item, purchased } : item))
+      if (result) await read()
+      return result
+    },
     toggle: (item: Item) => { const updated = { ...item, purchased: !item.purchased }; return mutate(() => storage.save(updated), current => current.map(row => row.id === item.id ? updated : row)) },
     remove: (id: string) => mutate(() => storage.remove(id), current => current.filter(item => item.id !== id)),
   }

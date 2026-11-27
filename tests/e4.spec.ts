@@ -940,3 +940,27 @@ test('touch and dialog autofocus avoid focus rings while keyboard focus remains 
   await expect(page.locator('.item-sort')).toHaveCSS('outline-style', 'solid')
   await expect(page.locator('.item-sort')).toHaveCSS('outline-color', 'rgb(37, 99, 76)')
 })
+
+test('marks and clears all items in the active local list without completing it', async ({page}) => {
+  await page.goto('/shopping-app/')
+  const input = page.getByLabel('Что нужно купить?',{exact:false})
+  for (const name of ['Чай','Кофе']) {
+    await input.fill(name)
+    await page.getByRole('button',{name:'Добавить товар'}).click()
+    await expect(page.getByRole('checkbox',{name,exact:true})).toBeVisible()
+  }
+  const menu = page.getByRole('button',{name:'Действия со списком',exact:true})
+  const tea = page.getByRole('checkbox',{name:'Чай',exact:true})
+  const coffee = page.getByRole('checkbox',{name:'Кофе',exact:true})
+  await menu.click()
+  await page.getByRole('menuitem',{name:'Отметить всё купленным',exact:true}).click()
+  await expect(tea).toBeChecked()
+  await expect(coffee).toBeChecked()
+  await page.reload()
+  await expect(tea).toBeChecked()
+  await expect(coffee).toBeChecked()
+  await menu.click()
+  await page.getByRole('menuitem',{name:'Снять все отметки',exact:true}).click()
+  await expect(tea).not.toBeChecked()
+  await expect(coffee).not.toBeChecked()
+})

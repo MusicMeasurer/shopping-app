@@ -16,10 +16,10 @@ export function itemStoreForAccount(storage: Storage, accountId: string | null) 
     save: (item: Item, _wait?: boolean, pair?: { keep: Item; change: Item }): Promise<void> => accountId === null
       ? storage.save(item, pair)
       : storage.saveAccountItem(accountId, item),
-    saveMany: accountId === null ? (items: Item[]): Promise<void> => storage.saveItems(items) : undefined,
+    saveMany: accountId === null ? (items: Item[], marksOnly = false): Promise<void> => storage.saveItems(items, marksOnly) : undefined,
     remove: (id: string, pair?: { keep: Item; change: Item }): Promise<void> => accountId === null
       ? storage.remove(id, pair)
       : storage.removeAccountItem(accountId, id),
   }
 }
-export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'remove'> & { save: (item: Item, waitForSync?: boolean, pair?: { keep: Item; change: Item }) => Promise<void>; saveMany?: (items: Item[]) => Promise<void> }
+export type ItemStore = Pick<ReturnType<typeof itemStoreForAccount>, 'read' | 'remove'> & { save: (item: Item, waitForSync?: boolean, pair?: { keep: Item; change: Item }) => Promise<void>; saveMany?: (items: Item[], marksOnly?: boolean) => Promise<void> }

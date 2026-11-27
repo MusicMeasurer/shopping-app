@@ -8,7 +8,7 @@ export function profileItemStore(storage: Storage, profileId: string): ItemStore
   return {
     read: (): Promise<Item[]> => storage.readProfileItems(profileId),
     save: (item: Item, _wait?: boolean, pair?: { keep: Item; change: Item }): Promise<void> => storage.saveProfileItem(profileId, item, pair),
-    saveMany: (items: Item[]): Promise<void> => storage.saveProfileItems(profileId, items),
+    saveMany: (items: Item[], marksOnly = false): Promise<void> => storage.saveProfileItems(profileId, items, marksOnly),
     remove: (id: string, pair?: { keep: Item; change: Item }): Promise<void> => storage.removeProfileItem(profileId, id, pair),
   }
 }

@@ -833,9 +833,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   const itemChange = syncView.work.find(row => row.itemIds?.includes(syncItemId ?? '') && row.itemChange)?.itemChange
   const selectedSync = syncItemId ? syncView.items.get(syncItemId) : undefined
   const selectedSyncState = selectedSync?.state
-  function itemSyncLocked(item: typeof shopping.items[number]) {
+  function itemSyncLocked(item: typeof shopping.items[number], allowUnsentEdit = false) {
     const state = syncView.items.get(item.id)?.state
-    return (state !== undefined && state !== 'success') ||
+    const editable = allowUnsentEdit && state === 'waiting' &&
+      syncView.work.some(row => row.itemIds?.includes(item.id) && row.itemChange?.editable)
+    return (state !== undefined && state !== 'success' && !editable) ||
       (accountId !== null && !!cloudBoundLists[item.listId] && !syncView.ready)
   }
   function openItemSync(itemId: string) { setItemCancellationError(''); setSyncItemId(itemId) }
@@ -907,6 +909,18 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   const displayedOperations = operations.filter(operation => !operation.fromLocalCopy || operation.phase === 'error')
   const activeListLocked = listLocked(active)
+  function canMarkAll(id: ListId, purchased: boolean) {
+    const changing = itemsForList(visibleItems, id).filter(item => item.purchased !== purchased)
+    return !listMutationBusy && canWriteItems(id) && !listLocked(id) &&
+      changing.length > 0 && changing.every(item => !itemSyncLocked(item, true)) &&
+      !itemConflicts.some(conflict => conflict.localListId === id)
+  }
+  async function markAll(id: ListId, purchased: boolean) {
+    if (!canMarkAll(id, purchased)) return
+    const target = itemsForList(visibleItems, id)
+    setMenuTarget(null)
+    await shopping.setPurchasedMany(target, purchased)
+  }
   function canComplete(id: ListId) {
     return !listLocked(id) && (accountId === null || isDraft(id) ||
       (!!cloudBoundLists[id] && (localCopy || !!onCompleteCloudList)))
@@ -1188,7 +1202,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
   }
   async function saveEdit(event: FormEvent, item: typeof shopping.items[number]) {
     event.preventDefault()
-    if (activeListLocked || itemSyncLocked(item)) return
+    if (activeListLocked || itemSyncLocked(item, true)) return
     if (await shopping.edit(item, editingName, editingQuantity.trim() ? Number(editingQuantity) : undefined, editingUnit)) {
       setEditingId(null); setEditingName(''); setEditingQuantity(''); setEditingUnit('')
     }
@@ -1345,6 +1359,11 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             {menuList.kind === kind && <span className="menu-check" aria-hidden="true">✓</span>}
           </button>)}
         </div>
+        <div className="menu-separator"/>
+        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, true)}
+          onClick={() => void markAll(menuList.id, true)}>Отметить всё купленным</button>
+        <button type="button" role="menuitem" disabled={!canMarkAll(menuList.id, false)}
+          onClick={() => void markAll(menuList.id, false)}>Снять все отметки</button>
         <div className="menu-separator"/>
         {mergeActions && <button type="button" role="menuitem"
           disabled={listMutationBusy || listLocked(menuList.id) || !mergeTargets(menuList.id).length ||
@@ -1524,7 +1543,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
         <button type="button" onClick={() => storage.listSyncLedger.dismissCancellationNotice(accountId)}>Понятно</button></p>}
       {shopping.loading ? <p role="status">Загружаем покупки…</p> : rows.length === 0 ? (listConflicts.length || activeNameConflicts.length ? null : <div className="empty"><h3>Здесь начинается ваш список</h3><p>Добавьте первый товар в поле выше.</p></div>) : <ul>{rows.map(item => {
         const sync = syncView.items.get(item.id)
-        const disabled = shopping.busy || activeListLocked || itemSyncLocked(item)
+        const disabled = shopping.busy || activeListLocked || itemSyncLocked(item, true)
         return <li key={item.id} data-item-id={item.id} className={item.purchased ? 'purchased' : ''}>
           <label className="item"><input type="checkbox" checked={item.purchased} disabled={disabled}
             onChange={() => { if (!disabled) void shopping.toggle(item) }}/><span>{item.name}{item.quantity !== undefined || item.unit ? ` · ${[item.quantity, item.unit].filter(value => value !== undefined).join(' ')}` : ''}</span></label>
@@ -1533,8 +1552,8 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
             className="e4-small item-pencil">✎</button>
           {sync ? <SyncIndicator item state={sync.state} since={sync.since} name={item.name}
               onWaiting={() => openItemSync(item.id)} onError={() => openItemSync(item.id)}/>
-            : <button className="delete" aria-label={`Удалить ${item.name}`} disabled={disabled}
-                onClick={() => { if (!disabled) void shopping.remove(item.id) }}>×</button>}
+            : <button className="delete" aria-label={`Удалить ${item.name}`} disabled={disabled || itemSyncLocked(item)}
+                onClick={() => { if (!disabled && !itemSyncLocked(item)) void shopping.remove(item.id) }}>×</button>}
         </li>
       })}</ul>}
       {rows.length > 0 && remaining === 0 && <p className="complete" role="status">Всё куплено. Можно завершить список!</p>}
@@ -1590,7 +1609,7 @@ function ShoppingWorkspace({ storage, accountId, cloudStatus, guestProfileId, on
       <div className="item-unit-options" role="group" aria-label="Быстрый выбор единицы измерения">
         {['шт.', 'уп.'].map(unit => <button type="button" key={unit} aria-pressed={editingUnit === unit}
           disabled={shopping.busy} onClick={() => setEditingUnit(unit)}>{unit}</button>)}
-      </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || itemSyncLocked(editingItem) || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
+      </div>{shopping.error && <p role="alert">{shopping.error}</p>}<button type="submit" disabled={shopping.loading || shopping.busy || itemSyncLocked(editingItem, true) || !editingName.trim()}>Сохранить</button><button type="button" onClick={() => { shopping.clearError(); setEditingId(null) }} disabled={shopping.busy}>Отмена</button></form></WorkspaceDialog>}
     {semanticNotice && semanticNoticeKey && <SyncContextNotice key={semanticNoticeKey} notice={semanticNotice}
       itemRemoval={semanticPresented?.fate.itemRemoval}
       busy={semanticBusy || (!semanticLoaded && !semanticError)} error={semanticError}

@@ -132,7 +132,7 @@ describe('cloud-aware account item store', () => {
     await storage.close()
   })
 
-  it('blocks further edits of a pending item across restart but permits independent items and editing after cancellation', async () => {
+  it('coalesces repeated unsent updates across restart and cancels the whole unconfirmed edit', async () => {
     const databaseName = 'cloud-aware-' + crypto.randomUUID()
     const storage = createStorage(databaseName)
     await storage.bindAccountList('account-a', 'groceries', listId)
@@ -143,11 +143,13 @@ describe('cloud-aware account item store', () => {
     await storage.commitAccountReceipt('account-a',add.operationId,listId,item.id,1)
     await store.save({ ...item, quantity:2 },true)
     const [edit] = await storage.readAccountPending('account-a')
-    await expect(store.save({...item,purchased:true})).rejects.toThrow('ещё синхронизируется')
+    await store.save({...item,quantity:2,purchased:true})
+    expect(await storage.readAccountPending('account-a')).toEqual([expect.objectContaining({operationId:edit.operationId,item:{...item,quantity:2,purchased:true},base:item})])
     await storage.close()
     const reopened = createStorage(databaseName)
     const reopenedStore = cloudAwareItemStore(reopened,'account-a')
-    await expect(reopenedStore.save({...item,name:'Молоко 2%'},true)).rejects.toThrow('ещё синхронизируется')
+    await reopenedStore.save({...item,quantity:3,purchased:true,name:'Молоко 2%'},true)
+    expect(await reopened.readAccountPending('account-a')).toEqual([expect.objectContaining({operationId:edit.operationId,item:{...item,quantity:3,purchased:true,name:'Молоко 2%'},base:item})])
     const other = createItem('groceries','Хлеб')
     await reopenedStore.save(other)
     expect(await reopened.cancelUnsentAccountItemEdit('account-a',edit.operationId,item.id)).toBe('cancelled')
@@ -182,4 +184,29 @@ describe('cloud-aware account item store', () => {
     expect(await storage.readAccountPending('account-a')).toHaveLength(1)
     await storage.close()
   })
+})
+
+it('marks and clears a bound list atomically, preserving a pending update and other accounts', async () => {
+  const storage = await setup()
+  const store = cloudAwareItemStore(storage, 'account-a')
+  const milk = createItem('groceries','Молоко'), bread = createItem('groceries','Хлеб')
+  await storage.importRemoteOnlyBatch('account-a',listId,[{item:milk,version:1},{item:bread,version:2}])
+  await storage.saveAccountItem('account-b',bread)
+  await store.save({...milk,quantity:3},true)
+  const [first] = await storage.readAccountPending('account-a')
+  await store.saveMany([{...milk,purchased:true},{...bread,purchased:true}],true)
+  expect(await store.read()).toEqual(expect.arrayContaining([{...milk,quantity:3,purchased:true},{...bread,purchased:true}]))
+  expect(await storage.readAccountPending('account-a')).toEqual(expect.arrayContaining([
+    expect.objectContaining({operationId:first.operationId,base:milk,item:{...milk,quantity:3,purchased:true}}),
+    expect.objectContaining({expectedVersion:2,item:{...bread,purchased:true}}),
+  ]))
+  await store.saveMany([{...milk,purchased:false},{...bread,purchased:false}],true)
+  expect(await store.read()).toEqual(expect.arrayContaining([{...milk,quantity:3},bread]))
+  expect(await storage.readAccountItems('account-b')).toEqual([bread])
+  const claimed = await storage.claimAccountPending('account-a',first.operationId)
+  const before = await store.read()
+  await expect(store.saveMany([{...bread,purchased:true},{...milk,purchased:true}],true)).rejects.toThrow('синхронизируется')
+  expect(await store.read()).toEqual(before)
+  expect(await storage.claimAccountPending('account-a',first.operationId)).toEqual(claimed)
+  await storage.close()
 })

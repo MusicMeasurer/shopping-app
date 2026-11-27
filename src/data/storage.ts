@@ -168,6 +168,18 @@ interface ScopedOperation {
   conflict?: ItemDeletionConflict
   deferred?: boolean
 }
+/** Ordinary edits can be coalesced only before the original payload is claimed.
+ * Cancellation, conflict, failed delivery and new-item semantics stay distinct. */
+function editableUnsentUpdate(row: ScopedOperation | undefined): row is ScopedOperation & {
+  operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }>
+} {
+  return !!row?.neverDispatched && !row.conflict && !row.deferred && !row.cancellationId &&
+    !row.syncError && row.operation.kind === 'cloud-update' && !!row.operation.base
+}
+function mergeUnsentUpdate(row: ScopedOperation & { operation: Extract<CloudPendingOperation, { kind: 'cloud-update' }> }, item: Item): ScopedOperation {
+  return { ...row, queuedAt: Date.now(), operation: { ...row.operation, item,
+    editTimes: recordEditTimes(row.operation.item, item, row.operation.editTimes) } }
+}
 interface ScopedVersion { key: string; accountId: string; itemId: string; remoteListId: string; version: number }
 interface ScopedItem { key: string; accountId: string; item: Item }
 export interface ShoppingListRecord {
@@ -350,7 +362,8 @@ export function createStorage(name = 'shopping-app') {
     }
     const key = accountKey(accountId, operation.operationId)
     const db = await database
-    const tx = db.transaction(['localProfileRegistry', 'accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountItemVersions'], 'readwrite')
+    const tx = db.transaction(['accountDeletions', 'localProfileRegistry', 'accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountItemVersions'], 'readwrite')
+    if (await tx.objectStore('accountDeletions').get(accountId)) { tx.abort(); await tx.done.catch(() => {}); throw new Error('Account data was deleted') }
     const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, operation.localListId))
     if (!mapping || mapping.remoteListId !== operation.remoteListId) {
       tx.abort()
@@ -394,10 +407,27 @@ export function createStorage(name = 'shopping-app') {
         throw error
       }
     }
+    const updateRow = queued.length === 1 ? queued[0] : undefined
+    if (!mergeOnly && operation.kind === 'cloud-update' && editableUnsentUpdate(updateRow)) {
+      const pending = updateRow.operation
+      const version = await tx.objectStore('accountItemVersions').get(accountKey(accountId, operation.itemId))
+      const current = await tx.objectStore('accountItems').get(accountKey(accountId, operation.itemId))
+      if (pending.remoteListId !== operation.remoteListId || pending.localListId !== operation.localListId ||
+          pending.expectedVersion !== operation.expectedVersion || version?.version !== pending.expectedVersion ||
+          version.remoteListId !== pending.remoteListId || !current || !sameItemSnapshot(current.item, pending.item)) {
+        tx.abort(); await tx.done.catch(() => {}); throw new ItemSaveError('Товар изменился. Повторите сохранение.')
+      }
+      await tx.objectStore('accountItems').put({ key: accountKey(accountId, operation.itemId), accountId, item: operation.item })
+      await operations.put(mergeUnsentUpdate(updateRow, operation.item))
+      await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
+      await tx.done
+      listSyncLedger.queued(accountId, pending.operationId, [operation.localListId], 'items', [operation.itemId])
+      return true
+    }
     if (mergeOnly) {
       const row = queued.length === 1 ? queued[0] : undefined
       const pending = row?.operation
-      if (row?.neverDispatched && !row.conflict && (pending?.kind === 'cloud-add' || pending?.kind === 'cloud-update') &&
+      if (row?.neverDispatched && !row.conflict && !row.deferred && !row.cancellationId && !row.syncError && (pending?.kind === 'cloud-add' || pending?.kind === 'cloud-update') &&
           operation.kind !== 'cloud-delete' && pending.remoteListId === operation.remoteListId &&
           pending.localListId === operation.localListId) {
         await tx.objectStore('accountItems').put({ key: accountKey(accountId, operation.itemId), accountId, item: operation.item })
@@ -416,7 +446,7 @@ export function createStorage(name = 'shopping-app') {
     if (queued.some(row => row.operation.kind !== 'delete')) {
       tx.abort()
       await tx.done.catch(() => {})
-      throw new Error('Item has an unconfirmed cloud change')
+      throw new ItemSaveError('Предыдущее изменение товара ещё синхронизируется. Сначала отмените его или дождитесь подтверждения.')
     }
     const itemKey = accountKey(accountId, operation.itemId)
     const items = tx.objectStore('accountItems')
@@ -480,7 +510,7 @@ export function createStorage(name = 'shopping-app') {
         if (work && (op.kind === 'cloud-add' || op.kind === 'cloud-update')) {
           work.itemChange = { operationId: op.operationId, after: op.item,
             before: op.kind === 'cloud-update' ? op.base : undefined,
-            addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId,
+            addition: op.kind === 'cloud-add', cancelling: !!row.cancellationId, editable: editableUnsentUpdate(row),
             canCancel: !row.conflict && (op.kind === 'cloud-add' || !!op.base) }
         }
       }
@@ -1151,7 +1181,7 @@ export function createStorage(name = 'shopping-app') {
       }
     },
     /** Batch import is atomic: a multiline add never saves only part of a list. */
-    async saveProfileItems(profileId: string, items: Item[]): Promise<void> {
+    async saveProfileItems(profileId: string, items: Item[], marksOnly = false): Promise<void> {
       const db = await database
       const tx = db.transaction(['localProfileRegistry', 'profileMigrations', 'profileItems', 'guestImports'], 'readwrite')
       if ((await tx.objectStore('guestImports').get(profileId))?.removeSource) {
@@ -1165,10 +1195,12 @@ export function createStorage(name = 'shopping-app') {
         if (!registry?.profiles.some(profile => profile.id === profileId)) throw new Error('Unknown local profile')
         if (!await tx.objectStore('profileMigrations').get('legacy-guest-v1')) throw new Error('Profile migration is incomplete')
         const store = tx.objectStore('profileItems')
-        checkItemNames((await store.index('byProfile').getAll(profileId)).map(row => row.record), items)
+        if (!marksOnly) checkItemNames((await store.index('byProfile').getAll(profileId)).map(row => row.record), items)
         for (const item of items) {
           const key = JSON.stringify([profileId, item.id])
-          await store.put({ key, profileId, record: item })
+          const previous = marksOnly ? (await store.get(key))?.record : undefined
+          if (marksOnly && (!previous || previous.listId !== item.listId)) throw new ItemSaveError('Список изменился. Повторите действие.')
+          await store.put({ key, profileId, record: previous ? { ...previous, purchased: item.purchased } : item })
         }
         await markListsChanged(tx.objectStore('localProfileRegistry'), { profileId })
         await done
@@ -1487,11 +1519,15 @@ export function createStorage(name = 'shopping-app') {
         for (const record of records) await tx.objectStore('lists').put(record)
       })
     },
-    async saveItems(items: Item[]): Promise<void> {
+    async saveItems(items: Item[], marksOnly = false): Promise<void> {
       await legacyMutation(['items'], async tx => {
         const store = tx.objectStore('items')
-        checkItemNames(await store.getAll(), items)
-        for (const item of items) await store.put(item)
+        if (!marksOnly) checkItemNames(await store.getAll(), items)
+        for (const item of items) {
+          const previous = marksOnly ? await store.get(item.id) : undefined
+          if (marksOnly && (!previous || previous.listId !== item.listId)) throw new ItemSaveError('Список изменился. Повторите действие.')
+          await store.put(previous ? { ...previous, purchased: item.purchased } : item)
+        }
       })
     },
     async readArchives(): Promise<ArchivedListRecord[]> { return (await database).getAll('archives') },
@@ -2715,12 +2751,12 @@ export function createStorage(name = 'shopping-app') {
       await tx.done
     },
     /** Persist an account edit and its cloud operation in one IndexedDB transaction. */
-    async saveAccountItemsToSync(accountId: string, items: Item[]): Promise<void> {
+    async saveAccountItemsToSync(accountId: string, items: Item[], marksOnly = false): Promise<void> {
       const listId = items[0]?.listId
       if (!listId || items.some(item => item.listId !== listId))
         throw new Error('Batch must belong to one list')
       const db = await database
-      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists'], 'readwrite')
+      const tx = db.transaction(['accountDeletions', 'accountItems', 'accountOperations', 'accountListMappings', 'accountCompletions', 'accountCompletionRequests', 'accountDraftLists', 'accountItemVersions', 'localProfileRegistry'], 'readwrite')
       if (await tx.objectStore('accountDeletions').get(accountId)) throw new Error('Account data was deleted')
       try {
         const mapping = await tx.objectStore('accountListMappings').get(accountKey(accountId, listId))
@@ -2735,11 +2771,43 @@ export function createStorage(name = 'shopping-app') {
         if (request || intents.some(row => row.intent.remoteListId === remoteListId))
           throw new Error('Completion pending; list edits are temporarily locked')
         const itemStore = tx.objectStore('accountItems')
-        checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
+        if (!marksOnly) checkItemNames((await itemStore.index('byAccount').getAll(accountId)).map(row => row.item), items)
         if (draft) await tx.objectStore('accountDraftLists').put({ ...draft, updatedAt: Date.now() })
         const queuedItems: { operationId: string; itemId: string }[] = []
+        const operations = tx.objectStore('accountOperations')
+        const pending = marksOnly ? await operations.index('byAccount').getAll(accountId) : []
         for (const item of items) {
-          await itemStore.add({ key: accountKey(accountId, item.id), accountId, item })
+          const key = accountKey(accountId, item.id)
+          if (marksOnly) {
+            const previous = (await itemStore.get(key))?.item
+            if (!previous || previous.listId !== listId) throw new ItemSaveError('Список изменился. Повторите действие.')
+            if (previous.purchased === item.purchased) continue
+            const updated = { ...previous, purchased: item.purchased }
+            if (mapping) {
+              const rows = pending.filter(row => (row.operation.kind === 'upsert' ? row.operation.item.id : row.operation.itemId) === item.id)
+              const row = rows.length === 1 ? rows[0] : undefined
+              const version = await tx.objectStore('accountItemVersions').get(key)
+              if (!version || version.remoteListId !== mapping.remoteListId)
+                throw new ItemSaveError('Версия товара ещё не подтверждена. Дождитесь синхронизации.')
+              if (rows.length) {
+                if (!editableUnsentUpdate(row) || row.operation.remoteListId !== mapping.remoteListId ||
+                    row.operation.localListId !== listId || row.operation.expectedVersion !== version.version ||
+                    !sameItemSnapshot(previous, row.operation.item))
+                  throw new ItemSaveError('Изменение товара ещё синхронизируется. Дождитесь подтверждения или отмените его.')
+                await operations.put(mergeUnsentUpdate(row, updated))
+                queuedItems.push({ operationId: row.operation.operationId, itemId: item.id })
+              } else {
+                const operation: CloudPendingOperation = { kind: 'cloud-update', operationId: crypto.randomUUID(),
+                  localListId: listId, remoteListId: mapping.remoteListId, itemId: item.id,
+                  expectedVersion: version.version, item: updated, base: previous, editTimes: recordEditTimes(previous, updated) }
+                await operations.add({ key: accountKey(accountId, operation.operationId), accountId, operation, queuedAt: Date.now(), neverDispatched: true })
+                queuedItems.push({ operationId: operation.operationId, itemId: item.id })
+              }
+            }
+            await itemStore.put({ key, accountId, item: updated })
+            continue
+          }
+          await itemStore.add({ key, accountId, item })
           if (!mapping) continue
           const operation: CloudPendingOperation = {
             kind: 'cloud-add', operationId: crypto.randomUUID(), localListId: listId,
@@ -2748,6 +2816,7 @@ export function createStorage(name = 'shopping-app') {
           await tx.objectStore('accountOperations').add({ key: accountKey(accountId, operation.operationId), accountId, operation, queuedAt: Date.now(), neverDispatched: true })
           queuedItems.push({ operationId: operation.operationId, itemId: item.id })
         }
+        await markListsChanged(tx.objectStore('localProfileRegistry'), { accountId })
         await tx.done
         for (const op of queuedItems) listSyncLedger.queued(accountId, op.operationId, [listId], 'items', [op.itemId])
       } catch (error) {
