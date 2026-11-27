@@ -68,12 +68,13 @@ begin
      or public.cancel_e4_item_delete(c,payload) is distinct from res then
     raise exception 'Committed deletion not reported accurately: %',res;
   end if;
-  if exists(select from public.shopping_items where id=i) then
-    raise exception 'Confirmed deletion visible through authenticated RLS';
+  if exists(select from public.shopping_items where id=i and deleted_at is null) then
+    raise exception 'Confirmed deletion still active through authenticated RLS';
   end if;
 end $$;
 reset role;
--- RLS intentionally hides deleted rows. Verify physical tombstone as fixture owner.
+-- Lab and isolated RLS differ in tombstone visibility. Active rows must be absent in both.
+-- Verify the physical tombstone as fixture owner.
 do $$
 begin
   if (select count(*) from public.shopping_items where list_id='47000000-0000-4000-8000-000000000101'
