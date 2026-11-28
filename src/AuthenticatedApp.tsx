@@ -1228,6 +1228,25 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
     setListOperations(rows => rows.filter(row => row.accountId !== accountId || row.localListId !== localListId))
   }
 
+  // The feed may already have advanced past a remote removal while the
+  // durable local operation fenced that list/item. Releasing the fence is a
+  // recovery trigger even when there is no new server event or outgoing edit.
+  // Use the existing account-scoped, coalescing recovery owner; never invent
+  // a receipt or remove a local list on the strength of a cancelled request.
+  function recoverAfterLocalResolution(accountId: string) {
+    if (activeAccount.current !== accountId) return
+    deferredCloudRefresh.current = accountId
+    requestRecovery.current?.(true)
+  }
+
+  async function cancelUnsentListRequest(request: CloudCompletionRequest) {
+    if (!await storage.cancelUnsentAccountCompletion(request)) return
+    storage.listSyncLedger.cancel(request.accountId, request.operationId)
+    storage.listSyncLedger.changed()
+    recoverAfterLocalResolution(request.accountId)
+    clearListOperation(request.accountId, request.localListId)
+  }
+
   async function syncLocalListChanges(accountId: string, client: SupabaseClient, stillActive: () => boolean, onlyListId?: string) {
     const queue = (await storage.readLocalListChanges(accountId)).filter(row => !onlyListId ||
       row.localListId === onlyListId || row.targetId === (cloudBindings[onlyListId] ?? onlyListId))
@@ -1475,10 +1494,13 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
                 : mode === 'delete_list' ? 'Не удалось подтвердить удаление' : 'Не удалось подтвердить завершение')
                 : (mode === 'delete_list' ? 'Список изменился. Проверьте его и подтвердите удаление заново.'
                   : 'Список изменился. Проверьте его и подтвердите завершение заново.'),
-              dismiss: unsent && !uncertain ? async () => {
-                if (await storage.cancelUnsentAccountCompletion(unsent)) clearListOperation(accountId, localListId)
-              } : retry ? undefined : () => clearListOperation(accountId, localListId),
+              dismiss: unsent && !uncertain ? () => cancelUnsentListRequest(unsent)
+                : retry ? undefined : () => clearListOperation(accountId, localListId),
             })
+            // A definite RPC rejection or an already cancelled request has
+            // also released the fence. Revisit deferred feed changes without
+            // waiting for an unrelated future mutation.
+            if (!retry) recoverAfterLocalResolution(accountId)
             if (showLabControls && cause instanceof Error) setCompletionPreflight(cause.message)
           } finally {
             if (!stillActive()) storage.listSyncLedger.cancel(accountId, operationId)
@@ -1508,7 +1530,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
       if (cancelled) return
       for (const request of requests) setListOperations(rows => rows.some(row =>
         row.accountId === account && row.localListId === request.localListId) ? rows : [...rows, { ...request, phase: 'queued',
-          dismiss: async () => { if (await storage.cancelUnsentAccountCompletion(request)) clearListOperation(account, request.localListId) },
+          dismiss: () => cancelUnsentListRequest(request),
         }])
       if (currentAccount === account) void processListOperations(account)
     }).catch(() => { if (!cancelled) setCompletionError('Не удалось прочитать очередь операций со списками.') })
@@ -1951,6 +1973,7 @@ export function AuthenticatedApp({ storage, client }: { storage: Storage; client
             isActive: () => activeAccount.current === currentAccount,
           }).resolveItemDeletion(conflict, keepItem)
           onQueued()
+          recoverAfterLocalResolution(currentAccount)
         } finally {
           setWorkspaceRevision(value => value + 1)
         }

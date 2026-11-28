@@ -198,6 +198,38 @@ describe('durable semantic synchronization', () => {
     expect((await storage.readAccountSemanticState(account))?.pending?.fate).toMatchObject({ nextListId: b })
     await storage.close()
   })
+  it('replays a deferred remote list removal at the same cursor after cancelling only its unsent local request', async () => {
+    const { storage, rpc, api } = await setup()
+    const request = { accountId: account, localListId: a, remoteListId: a, name: 'A',
+      mode: 'delete_list' as const, confirmedMarked: false, operationId: op2, createdAt: Date.parse(date) }
+    const unrelated = { ...request, localListId: b, remoteListId: b, name: 'B', operationId: uid(303) }
+    await storage.queueAccountCompletion(request)
+    await storage.queueAccountCompletion(unrelated)
+    rpc.mockResolvedValueOnce(page(12, [
+      rem(11, a),
+      { event_position: '12', list_id: a, entity_id: item, entity: 'item', deleted: true, snapshot: null },
+    ]))
+    await pullSemanticAccountFeed(api, storage, account, active)
+    expect(await storage.readAccountFeedPosition(account)).toBe('12')
+    expect((await storage.readAccountFeedLists(account)).map(row => row.id)).toContain(a)
+    expect((await storage.readAccountItems(account)).map(row => row.id)).toContain(item)
+    expect((await storage.readAccountSemanticState(account))?.pending).toBeUndefined()
+    expect(await storage.cancelUnsentAccountCompletion({ ...request, operationId: uid(999) })).toBe(false)
+    expect(await storage.cancelUnsentAccountCompletion({ ...request, accountId: foreign })).toBe(false)
+    expect(await storage.cancelUnsentAccountCompletion(request)).toBe(true)
+    expect(await storage.readAccountCompletionRequests(account)).toEqual([unrelated])
+    // No new remote change: the previously verified removal must be applied
+    // using the durable deferred batch, not a cursor reset or a new receipt.
+    rpc.mockResolvedValueOnce(page(12, []))
+    await pullSemanticAccountFeed(api, storage, account, active)
+    expect(await storage.readAccountFeedPosition(account)).toBe('12')
+    expect((await storage.readAccountFeedLists(account)).map(row => row.id).sort()).toEqual([b, c].sort())
+    expect((await storage.readAccountItems(account)).map(row => row.id)).not.toContain(item)
+    expect((await storage.readAccountSemanticState(account))?.pending?.fate.notice).toMatchObject({ sourceId: a, reason: 'deleted' })
+    expect(await storage.readAccountCompletionRequests(account)).toEqual([unrelated])
+    expect(await storage.cancelUnsentAccountCompletion(unrelated)).toBe(true)
+    await storage.close()
+  })
   it('retains deferred event evidence until a pending local edit is reconciled', async () => {
     const { storage, rpc, api } = await setup()
     await storage.recordAccountSyncContext(account, a, item)

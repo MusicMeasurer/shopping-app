@@ -230,9 +230,11 @@ test('INC-A1: remote deletion against an offline edit exposes review, converges 
     await expect(page.getByRole('checkbox', { name: itemName + ' · 2 л', exact: true })).toBeVisible()
     const { data, error } = await lab.client.from('shopping_items').select('version').eq('id', itemId).single()
     if (error) throw error
-    const deletion = await lab.client.rpc('apply_e4_item_change', {
+    // The attribute RPC supports add/update only. Use the same versioned
+    // deletion RPC as the established hosted regression.
+    const deletion = await lab.client.rpc('apply_item_change', {
       p_operation: crypto.randomUUID(), p_list: id, p_action: 'delete', p_item: itemId,
-      p_name: null, p_purchased: null, p_expected_version: data.version, p_quantity: null, p_unit: null,
+      p_name: null, p_purchased: null, p_expected_version: data.version,
     })
     expect(deletion.error).toBeNull()
     await expect.poll(() => lab.itemRows(id), { timeout: SERVER_WRITE_TIMEOUT }).toEqual([
@@ -242,6 +244,7 @@ test('INC-A1: remote deletion against an offline edit exposes review, converges 
     await context.setOffline(false)
     const conflict = page.getByRole('list', { name: 'Конфликты удаления' }).getByRole('button', { name: new RegExp(itemName) })
     await expect(conflict).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+    await expect(page.locator('.profile-menu-trigger').getByText('Синхронизировано', { exact: false })).not.toBeVisible()
     // Conflict must survive deferral, and the saved offline quantity must still be visible in the decision.
     await conflict.click()
     const review = page.getByRole('dialog', { name: 'Конфликт удаления' })
@@ -305,7 +308,11 @@ test('INC-A2: externally deleted list with a durable unsent deletion does not bl
       if (await cancel.isVisible()) return 'cancel'
       return 'blocked'
     }, { timeout: REMOTE_UPDATE_TIMEOUT }).not.toBe('blocked')
-    if (await notice.isVisible()) await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
+    let acknowledged = false
+    if (await notice.isVisible()) {
+      await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
+      acknowledged = true
+    }
     await expect.poll(async () => {
       const q = await incidentLocalQueue(page, lab.accountId, lostId)
       return q.requests === 0 && q.intents === 0 ? 'cleared' : await cancel.isVisible() ? 'cancel' : 'blocked'
@@ -317,6 +324,14 @@ test('INC-A2: externally deleted list with a durable unsent deletion does not bl
     }
     await expect.poll(() => incidentLocalQueue(page, lab.accountId, lostId), { timeout: SERVER_WRITE_TIMEOUT }).toEqual({ requests: 0, intents: 0 })
     await expect(page.getByRole('button', { name: lost, exact: true })).toHaveCount(0, { timeout: REMOTE_UPDATE_TIMEOUT })
+    // With a deferred removal, the semantic notice is published only after
+    // reconciliation, not necessarily before cancellation. Acknowledge it
+    // before testing independent shopping actions.
+    if (!acknowledged) {
+      await expect(notice).toBeVisible({ timeout: REMOTE_UPDATE_TIMEOUT })
+      await notice.getByRole('button', { name: 'Понятно', exact: true }).click()
+    }
+    await expect(notice).toHaveCount(0)
     await page.getByRole('button', { name: keep, exact: true }).click()
     await page.getByRole('checkbox', { name: keepItem + ' · 1 л', exact: true }).click()
     await expect.poll(() => lab.itemRows(keepId), { timeout: SERVER_WRITE_TIMEOUT }).toEqual([
